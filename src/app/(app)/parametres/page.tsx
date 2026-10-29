@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
-import { Alert, Button, Card, Field, Input, PageHeader, Spinner } from "@/components/ui";
+import { Alert, Button, Card, Field, Input, PageHeader, Spinner, Textarea } from "@/components/ui";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
 import { BUSINESS_PROFILES, BUSINESS_TYPE_ORDER } from "@/lib/business-profiles";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,10 @@ interface CompanySettings {
   defaultTaxRate: string;
   currency: string;
   invoicePrefix: string;
+  quotePrefix: string;
+  quoteValidityDays: number;
+  invoiceNotes: string | null;
+  requiresPickup: boolean;
 }
 
 // Paramètres de l'entreprise (cahier §4) : identité légale, métier, fiscalité
@@ -41,7 +45,7 @@ export default function SettingsPage() {
 
   if (!data) return error ? <Alert>{error}</Alert> : <Spinner />;
 
-  const set = (k: keyof CompanySettings) => (e: React.ChangeEvent<HTMLInputElement>) => {
+  const set = (k: keyof CompanySettings) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setSaved(false);
     setData({ ...data, [k]: e.target.value });
   };
@@ -65,6 +69,9 @@ export default function SettingsPage() {
           businessType: data.businessType,
           vatEnabled: data.vatEnabled,
           defaultTaxRate: Number(String(data.defaultTaxRate).replace(",", ".")),
+          quoteValidityDays: Number(data.quoteValidityDays) || 15,
+          invoiceNotes: data.invoiceNotes ?? "",
+          requiresPickup: data.requiresPickup,
         },
         "PATCH"
       );
@@ -152,7 +159,45 @@ export default function SettingsPage() {
         </Card>
 
         <Card className="p-4 sm:p-6 space-y-4">
+          <h2 className="font-semibold text-gray-900">Factures, devis et retrait de la marchandise</h2>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={data.requiresPickup}
+              disabled={!editable}
+              onChange={(e) => {
+                setSaved(false);
+                setData({ ...data, requiresPickup: e.target.checked });
+              }}
+            />
+            <span>
+              Le client se fait servir au magasin sur présentation de sa facture
+              <span className="block text-xs text-gray-500">
+                Dépôt de matériaux, ciment, fer, huile en gros… Le client paie à la caisse, puis le magasinier scanne la facture et enregistre ce
+                qu&apos;il remet (tout ou partie). Une facture ne peut pas servir deux fois. Menu « Retraits magasin ».
+              </span>
+            </span>
+          </label>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label="Numérotation des factures">
+              <Input value={`${data.invoicePrefix}-000001…`} disabled />
+            </Field>
+            <Field label="Numérotation des devis">
+              <Input value={`${data.quotePrefix}-000001…`} disabled />
+            </Field>
+            <Field label="Validité d'un devis (jours)">
+              <Input inputMode="numeric" value={String(data.quoteValidityDays)} onChange={set("quoteValidityDays")} disabled={!editable} />
+            </Field>
+          </div>
+          <Field label="Mentions en bas des factures et devis" hint="Ex. : coordonnées bancaires, « Les marchandises vendues ne sont ni reprises ni échangées ».">
+            <Textarea rows={3} value={data.invoiceNotes ?? ""} onChange={set("invoiceNotes")} disabled={!editable} />
+          </Field>
+        </Card>
+
+        <Card className="p-4 sm:p-6 space-y-4">
           <h2 className="font-semibold text-gray-900">Identité de l&apos;entreprise</h2>
+          <p className="text-sm text-gray-500">Ces informations figurent en en-tête des factures et devis (IFU et RCCM compris).</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Nom commercial">
               <Input value={data.tradeName} onChange={set("tradeName")} disabled={!editable} />

@@ -97,6 +97,5 @@ export const PAYMENT_METHOD_LABELS: Record<string, string> = {
   MOBILE_MONEY: "Mobile money",
   CARD: "Carte",
   TRANSFER: "Virement",
-  CREDIT: "Crédit",
   MIXED: "Mixte",
 };

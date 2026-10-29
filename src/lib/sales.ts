@@ -37,8 +37,16 @@ export function taxIncluded(amountTtc: Prisma.Decimal, rate: Prisma.Decimal): Pr
  * - quantités entières pour les unités qui ne se fractionnent pas (pièce, boîte…) ;
  * - quantités converties dans l'unité de base pour le stock ;
  * - TVA extraite des prix TTC selon le taux du produit.
+ * Le prix envoyé par le navigateur n'est jamais repris, sauf `fixedPrices`
+ * que seul le serveur active (vente issue d'un devis).
  */
-export async function priceLines(companyId: string, lines: SaleLineInput[], createdOffline: boolean) {
+export async function priceLines(
+  companyId: string,
+  lines: SaleLineInput[],
+  createdOffline: boolean,
+  /** Prix figés (lignes d'un devis accepté) : le prix et la remise de la ligne font foi. */
+  options: { fixedPrices?: boolean } = {}
+) {
   const productIds = [...new Set(lines.map((l) => l.productId))];
   const products = await prisma.product.findMany({
     where: { id: { in: productIds }, companyId, isActive: true },
@@ -95,6 +103,7 @@ export async function priceLines(companyId: string, lines: SaleLineInput[], crea
       allowsDecimal = conv.fromUnit.allowsDecimal;
       unitSymbol = conv.fromUnit.symbol;
     }
+    if (options.fixedPrices) unitPrice = new D(line.unitPrice);
     unitPrice = unitPrice.toDecimalPlaces(2);
 
     const qty = new D(line.quantity);
@@ -103,7 +112,7 @@ export async function priceLines(companyId: string, lines: SaleLineInput[], crea
     }
 
     const clientPrice = new D(line.unitPrice);
-    if (createdOffline && !clientPrice.equals(unitPrice)) {
+    if (createdOffline && !options.fixedPrices && !clientPrice.equals(unitPrice)) {
       // Le prix a changé pendant la période hors connexion : décision humaine requise
       throw new ApiError(409, `Le prix de « ${product.name} » a changé depuis la vente hors connexion`, "PRICE_MISMATCH");
     }

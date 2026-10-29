@@ -56,15 +56,16 @@ les unités, catégories et options ; tout reste réglable article par article
 | Supermarché | Caisse au code-barres (douchette), TVA incluse dans le prix, extraite sur le reçu |
 | Pharmacie / alimentaire | Suivi par lot, péremption obligatoire à la réception, vente « premier périmé, premier sorti », lots périmés jamais vendus, lot imprimé sur le reçu |
 | Caractéristiques libres | DCI, dosage, dimension, matière, espèce, contenance… |
-| Vente à crédit | Client obligatoire, plafond de crédit facultatif par client |
+| Dépôt de matériaux, gros | Le client paie à la caisse puis se fait servir au magasin sur présentation de sa facture, en une ou plusieurs fois |
+| Paiement | Toujours comptant : espèces, mobile money, carte, virement, ou plusieurs à la fois. Pas de vente à crédit |
 
 ## Finances
 
 | Écran | Contenu |
 |---|---|
-| *Finances* | Chiffre d'affaires TTC/HT, TVA, coût des marchandises vendues, marge brute, dépenses, résultat estimé ; encaissements par moyen ; créances et dettes à date ; par centre, par caissier, meilleurs articles ; comparaison à la période précédente ; export CSV (Excel) |
+| *Finances* | Chiffre d'affaires TTC/HT, TVA, coût des marchandises vendues, marge brute, dépenses, résultat estimé ; encaissements par moyen ; dettes fournisseurs à date ; par centre, par caissier, meilleurs articles ; comparaison à la période précédente ; export CSV (Excel) |
 | *Dépenses* | Par catégorie et par centre ; payées en espèces depuis une caisse ouverte (elles entrent dans sa clôture) ou hors caisse ; annulées avec motif, jamais supprimées |
-| *Clients & créances* | Qui doit combien, relevé ligne à ligne, plafond de crédit, règlements (espèces dans la caisse, mobile money, virement) |
+| *Clients* | Fiche (téléphone, adresse, IFU) et historique des factures et devis du client |
 | *Fournisseurs & dettes* | Une facture est créée à la validation de chaque réception (marchandise + frais d'approche), échéance selon le délai du fournisseur ; paiements imputés sur la plus ancienne échéance |
 
 Règles de calcul :
@@ -76,6 +77,18 @@ Règles de calcul :
 - **Clôture de caisse** : fond + ventes espèces − remboursements espèces + entrées
   (règlements clients, apports) − sorties (dépenses, paiements fournisseurs, avances).
 - **Dates** : les journées sont découpées dans le fuseau de l'entreprise (Africa/Porto-Novo par défaut).
+
+## Factures, devis et retrait au magasin
+
+| Document | Comment |
+|---|---|
+| **Ticket de caisse** (80 mm) | Imprimé à chaque vente ; numéro en code-barres |
+| **Facture A4** | Depuis la caisse (« Facture A4 » après la vente) ou *Ventes & factures*. En-tête légal (IFU, RCCM), client (avec son IFU), lignes, remises, TVA, règlement, montant en lettres, signatures, mentions de bas de page (*Paramètres*) |
+| **Devis A4** | *Devis* → « Nouveau devis » : prix du jour, remise réservée aux responsables, validité réglable. Le client le présente à la caisse : on scanne son code-barres (ou on saisit son n°), ses lignes et ses prix sont repris tels quels. Un devis ne s'encaisse qu'une fois ; annulé ou expiré, il est refusé |
+| **Bon pour retrait** | Si l'entreprise sert au magasin (*Paramètres*, activé d'office pour les matériaux de construction) : le client présente sa facture, le magasinier la scanne dans *Retraits magasin* et enregistre ce qu'il remet. Retraits partiels possibles ; une facture ne sert jamais deux fois ; rien n'est remis pour une facture annulée ou en cours d'annulation |
+
+Impression : bouton « Imprimer » du navigateur (format A4, une page pour une facture courante).
+Les factures normalisées e-MECeF (DGI Bénin) ne sont pas encore produites : voir *Étapes suivantes*.
 
 ## Fonctionnement hors connexion
 
@@ -102,3 +115,9 @@ Toute route API doit :
 
 Les vérifications de stock se font dans la base (mise à jour conditionnelle),
 jamais à partir de la quantité affichée à l'écran.
+
+## Étapes suivantes
+
+- Factures normalisées **e-MECeF** (DGI) pour les entreprises assujetties : signature de chaque facture par l'API de la DGI, code et QR code MECeF imprimés.
+- Envoi de la facture ou du devis en PDF par WhatsApp / e-mail.
+- Inventaires physiques et transferts de stock entre centres.

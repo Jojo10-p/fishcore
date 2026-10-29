@@ -18,10 +18,10 @@ import { hasPermission } from "@/lib/rbac";
 import { generateSaleNumber } from "@/lib/utils";
 import { priceLines, settlePayments } from "@/lib/sales";
 import { consumeStockForSale, type BatchAllocation } from "@/lib/stock";
-import { assertCreditAllowed } from "@/lib/finance";
 
 
-const saleInclude = { lines: true, payments: true } satisfies Prisma.SaleInclude;
+// Lignes dans l'ordre de saisie (identifiants croissants)
+const saleInclude = { lines: { orderBy: { id: "asc" } }, payments: true } satisfies Prisma.SaleInclude;
 
 // ─────────────────────────────────────────────
 // POST /api/sales — Créer une vente (cahier §9)
@@ -74,7 +74,36 @@ export async function POST(req: NextRequest) {
       throw new ApiError(403, "Vous n'avez pas accès à ce centre", "FORBIDDEN");
     }
 
-    // 3. Client éventuel : doit appartenir à l'entreprise
+    // 3. Vente issue d'un devis : lignes, prix, remises et client repris du devis
+    let quoteId: string | null = null;
+    let fixedPrices = false;
+    if (data.quoteId) {
+      const quote = await prisma.quote.findFirst({
+        where: { id: data.quoteId, companyId },
+        select: {
+          id: true,
+          number: true,
+          status: true,
+          validUntil: true,
+          customerId: true,
+          lines: { orderBy: { position: "asc" }, select: { productId: true, unitId: true, quantity: true, unitPrice: true, discount: true } },
+        },
+      });
+      if (!quote) throw new ApiError(404, "Devis introuvable");
+      assertQuoteConvertible(quote);
+      quoteId = quote.id;
+      fixedPrices = true;
+      data.customerId = quote.customerId;
+      data.lines = quote.lines.map((l) => ({
+        productId: l.productId,
+        unitId: l.unitId,
+        quantity: Number(l.quantity),
+        unitPrice: Number(l.unitPrice),
+        discount: Number(l.discount),
+      }));
+    }
+
+    // 3b. Client éventuel : doit appartenir à l'entreprise
     if (data.customerId) {
       const customer = await prisma.customer.findFirst({
         where: { id: data.customerId, companyId },
@@ -83,21 +112,18 @@ export async function POST(req: NextRequest) {
       if (!customer) throw new ApiError(400, "Client introuvable");
     }
 
-    // 4. Remises : réservées aux rôles autorisés
-    const hasDiscount = data.lines.some((l) => (l.discount ?? 0) > 0);
+    // 4. Remises : réservées aux rôles autorisés (celles d'un devis ont été
+    //    accordées par un rôle autorisé à sa création)
+    const hasDiscount = !fixedPrices && data.lines.some((l) => (l.discount ?? 0) > 0);
     if (hasDiscount) await requirePermission(user, "sale:discount");
 
     // 5. Calcul des lignes à partir des prix et unités EN BASE
-    const pricing = await priceLines(companyId, data.lines, data.createdOffline);
+    const pricing = await priceLines(companyId, data.lines, data.createdOffline, { fixedPrices });
+    const { requiresPickup } = await prisma.company.findUniqueOrThrow({ where: { id: companyId }, select: { requiresPickup: true } });
 
     // 6. Paiements : la somme doit couvrir le total ; l'excédent n'est admis
     //    que sous forme de rendu monnaie sur les espèces.
     const payments = settlePayments(data.payments, pricing.totalAmount);
-
-    // Vente à crédit : le client doit être identifié (suivi des créances)
-    if (payments.some((p) => p.method === "CREDIT") && !data.customerId) {
-      throw new ApiError(400, "Une vente à crédit doit être rattachée à un client", "CUSTOMER_REQUIRED");
-    }
 
     // 7. Transaction atomique
     const sale = await prisma.$transaction(async (tx) => {
@@ -111,9 +137,12 @@ export async function POST(req: NextRequest) {
         throw new ApiError(409, "La session de caisse est clôturée", "SESSION_CLOSED");
       }
 
-      // 7.1 Vente à crédit : plafond du client (fiche client verrouillée)
-      const credit = payments.filter((p) => p.method === "CREDIT").reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
-      if (credit.gt(0) && data.customerId) await assertCreditAllowed(tx, companyId, data.customerId, credit);
+      // 7.1 Devis verrouillé : deux caisses ne peuvent pas encaisser le même devis
+      if (quoteId) {
+        const [locked] = await tx.$queryRaw<{ status: string; validUntil: Date; number: string }[]>`
+          SELECT "status", "validUntil", "number" FROM "quotes" WHERE "id" = ${quoteId} FOR UPDATE`;
+        assertQuoteConvertible(locked);
+      }
 
       // 7a. Sortie de stock : réserve de la session d'abord, puis stock libre.
       //     Produits traités dans un ordre fixe pour éviter les interblocages.
@@ -139,11 +168,16 @@ export async function POST(req: NextRequest) {
         outputs.set(productId, { stockId, allocations, cost });
       }
 
-      // Coût réparti sur les lignes du même produit au prorata des quantités
+      // Coût réparti sur les lignes du même produit au prorata des quantités.
+      // Sans retrait au magasin, la marchandise est remise sur-le-champ.
       const linesWithCost = pricing.lines.map((l) => {
         const out = outputs.get(l.productId)!;
         const totalQty = pricing.baseQtyByProduct.get(l.productId)!;
-        return { ...l, costAmount: out.cost.mul(l.baseQuantity).div(totalQty).toDecimalPlaces(2) };
+        return {
+          ...l,
+          costAmount: out.cost.mul(l.baseQuantity).div(totalQty).toDecimalPlaces(2),
+          deliveredQuantity: requiresPickup ? new Prisma.Decimal(0) : l.quantity,
+        };
       });
 
       // 7b. Numéro de facture : incrément atomique (la ligne entreprise est verrouillée)
@@ -169,6 +203,7 @@ export async function POST(req: NextRequest) {
           totalAmount: pricing.totalAmount,
           taxAmount: pricing.taxAmount,
           notes: data.notes,
+          deliveryStatus: requiresPickup ? "PENDING" : "DELIVERED",
           createdOffline: data.createdOffline ?? false,
           deviceId: data.deviceId,
           syncedAt: new Date(),
@@ -206,6 +241,10 @@ export async function POST(req: NextRequest) {
         }),
       });
 
+      if (quoteId) {
+        await tx.quote.update({ where: { id: quoteId }, data: { status: "CONVERTED", saleId: newSale.id } });
+      }
+
       // 7e. Journal d'audit dans la même transaction
       await writeAuditLog(
         {
@@ -222,6 +261,7 @@ export async function POST(req: NextRequest) {
             discount: pricing.discountAmount.toString(),
             tax: pricing.taxAmount.toString(),
             createdOffline: data.createdOffline ?? false,
+            ...(quoteId ? { quoteId } : {}),
           },
           deviceId: data.deviceId,
           sessionId: cashSession.id,
@@ -250,6 +290,15 @@ export async function POST(req: NextRequest) {
   }
 }
 
+/** Un devis ne s'encaisse qu'une fois, s'il n'est ni annulé ni expiré. */
+function assertQuoteConvertible(quote: { status: string; validUntil: Date; number: string }) {
+  if (quote.status === "CONVERTED") throw new ApiError(409, `Le devis ${quote.number} a déjà été encaissé`, "QUOTE_CONVERTED");
+  if (quote.status === "CANCELLED") throw new ApiError(409, `Le devis ${quote.number} est annulé`, "QUOTE_CANCELLED");
+  if (quote.validUntil.getTime() < Date.now()) {
+    throw new ApiError(409, `Le devis ${quote.number} a expiré : établissez un nouveau devis aux prix du jour`, "QUOTE_EXPIRED");
+  }
+}
+
 async function findExistingSale(idempotencyKey: string, companyId: string) {
   const sale = await prisma.sale.findUnique({ where: { idempotencyKey }, include: saleInclude });
   if (!sale) return null;
@@ -269,6 +318,8 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const sessionId = searchParams.get("sessionId");
+    const search = searchParams.get("search")?.trim();
+    const delivery = searchParams.get("deliveryStatus");
     const dateFrom = searchParams.get("dateFrom");
     const dateTo = searchParams.get("dateTo");
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1") || 1);
@@ -282,6 +333,10 @@ export async function GET(req: NextRequest) {
       // Sans « voir toutes les ventes », un caissier ne voit que les siennes
       ...(hasPermission(user.role, "sale:view_all") ? {} : { cashierId: user.id }),
       ...(sessionId ? { sessionId } : {}),
+      ...(search
+        ? { OR: [{ saleNumber: { contains: search, mode: "insensitive" } }, { customer: { name: { contains: search, mode: "insensitive" } } }] }
+        : {}),
+      ...(delivery === "PENDING" ? { deliveryStatus: { in: ["PENDING", "PARTIAL"] }, status: { not: "CANCELLED" } } : {}),
       ...(dateFrom || dateTo
         ? {
             createdAt: {
@@ -296,9 +351,10 @@ export async function GET(req: NextRequest) {
       prisma.sale.findMany({
         where,
         include: {
-          lines: { include: { product: { select: { name: true } } } },
+          lines: { orderBy: { id: "asc" }, include: { product: { select: { name: true } } } },
           payments: true,
           cashier: { select: { firstName: true, lastName: true } },
+          customer: { select: { name: true, phone: true } },
         },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,

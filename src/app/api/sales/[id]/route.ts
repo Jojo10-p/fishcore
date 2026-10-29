@@ -10,34 +10,64 @@ import {
 } from "@/lib/auth";
 import { hasPermission } from "@/lib/rbac";
 
-// GET /api/sales/[id] — Détail d'une vente (reçu)
+// GET /api/sales/[id] — Détail d'une vente (ticket, facture A4, retrait au magasin)
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await getCurrentUser(req);
-    await requirePermission(user, "sale:view");
+    // Le magasinier consulte la facture présentée par le client pour le servir
+    const canDeliver = hasPermission(user.role, "sale:deliver");
+    if (!canDeliver) await requirePermission(user, "sale:view");
     const companyId = requireCompany(user);
     const { id } = await params;
 
     const sale = await prisma.sale.findFirst({
       where: { id, companyId },
       include: {
-        lines: { include: { product: { select: { name: true, baseUnit: { select: { symbol: true } } } } } },
+        lines: { orderBy: { id: "asc" }, include: { product: { select: { name: true, baseUnit: { select: { symbol: true } } } } } },
         payments: true,
         refunds: true,
         cashier: { select: { firstName: true, lastName: true } },
+        customer: { select: { name: true, phone: true, email: true, address: true, taxId: true } },
+        quote: { select: { id: true, number: true } },
+        deliveries: {
+          orderBy: { number: "asc" },
+          select: { id: true, number: true, createdAt: true, deliveredById: true, notes: true, lines: { select: { saleLineId: true, quantity: true } } },
+        },
         session: { select: { cashRegister: { select: { name: true, center: { select: { name: true, address: true, city: true, phone: true } } } } } },
       },
     });
     if (!sale) throw new ApiError(404, "Vente introuvable");
     await requireCenterAccess(user, sale.centerId);
-    if (!hasPermission(user.role, "sale:view_all") && sale.cashierId !== user.id) {
+    if (!hasPermission(user.role, "sale:view_all") && !canDeliver && sale.cashierId !== user.id) {
       throw new ApiError(404, "Vente introuvable");
     }
 
     const company = await prisma.company.findUniqueOrThrow({
       where: { id: companyId },
-      select: { tradeName: true, legalName: true, logoUrl: true, phone: true, address: true, city: true, taxId: true, tradeRegNumber: true, currency: true, vatEnabled: true },
+      select: {
+        tradeName: true,
+        legalName: true,
+        logoUrl: true,
+        phone: true,
+        email: true,
+        address: true,
+        city: true,
+        poBox: true,
+        taxId: true,
+        tradeRegNumber: true,
+        currency: true,
+        vatEnabled: true,
+        invoiceNotes: true,
+        requiresPickup: true,
+      },
     });
+    // Noms des personnes ayant servi la marchandise
+    const deliverers = await prisma.user.findMany({
+      where: { id: { in: [...new Set(sale.deliveries.map((d) => d.deliveredById))] } },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    const delivererName = new Map(deliverers.map((u) => [u.id, `${u.firstName} ${u.lastName}`]));
+    const deliveries = sale.deliveries.map((d) => ({ ...d, deliveredBy: delivererName.get(d.deliveredById) ?? "" }));
 
     // Symbole de l'unité vendue (unité de base ou conditionnement : carton, boîte…)
     const unitIds = [...new Set(sale.lines.map((l) => l.unitId).filter((u): u is string => !!u))];
@@ -56,7 +86,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         .map((m) => ({ lotNumber: m.batch!.lotNumber, expiresAt: m.batch!.expiresAt, quantity: m.quantity.negated().toString() })),
     }));
 
-    return NextResponse.json({ success: true, data: { ...sale, lines, company } });
+    return NextResponse.json({ success: true, data: { ...sale, lines, deliveries, company } });
   } catch (error) {
     return handleApiError(error, "SALES");
   }

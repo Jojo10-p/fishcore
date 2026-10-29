@@ -57,7 +57,15 @@ ALTER TABLE "purchases" ADD CONSTRAINT "purchases_paid_within_total"
   CHECK ("paidAmount" >= 0 AND "paidAmount" <= "totalAmount");
 ALTER TABLE "expenses" DROP CONSTRAINT IF EXISTS "expenses_amount_positive";
 ALTER TABLE "expenses" ADD CONSTRAINT "expenses_amount_positive" CHECK ("amount" > 0);
-ALTER TABLE "customer_payments" DROP CONSTRAINT IF EXISTS "customer_payments_amount_positive";
-ALTER TABLE "customer_payments" ADD CONSTRAINT "customer_payments_amount_positive" CHECK ("amount" > 0);
 ALTER TABLE "supplier_payments" DROP CONSTRAINT IF EXISTS "supplier_payments_amount_positive";
 ALTER TABLE "supplier_payments" ADD CONSTRAINT "supplier_payments_amount_positive" CHECK ("amount" > 0);
+
+-- Retraits : jamais plus que la quantité vendue
+ALTER TABLE "sale_lines" DROP CONSTRAINT IF EXISTS "sale_lines_delivered_within_sold";
+ALTER TABLE "sale_lines" ADD CONSTRAINT "sale_lines_delivered_within_sold"
+  CHECK ("deliveredQuantity" >= 0 AND "deliveredQuantity" <= "quantity");
+ALTER TABLE "delivery_lines" DROP CONSTRAINT IF EXISTS "delivery_lines_quantity_positive";
+ALTER TABLE "delivery_lines" ADD CONSTRAINT "delivery_lines_quantity_positive" CHECK ("quantity" > 0);
+-- Plus aucune vente à crédit
+ALTER TABLE "payments" DROP CONSTRAINT IF EXISTS "payments_no_credit";
+ALTER TABLE "payments" ADD CONSTRAINT "payments_no_credit" CHECK ("method" <> 'CREDIT') NOT VALID;

@@ -14,7 +14,9 @@ interface SaleRow {
   totalAmount: string;
   status: string;
   createdOffline: boolean;
+  deliveryStatus: "PENDING" | "PARTIAL" | "DELIVERED";
   cashier: { firstName: string; lastName: string };
+  customer: { name: string; phone: string | null } | null;
   payments: Array<{ method: string; amount: string }>;
 }
 
@@ -27,8 +29,10 @@ const SALE_STATUS: Record<string, { label: string; tone: "green" | "red" | "ambe
 };
 
 export default function SalesPage() {
-  const { centerId, currency, can } = useSession();
+  const { centerId, currency, can, session } = useSession();
+  const pickup = !!session?.company?.requiresPickup;
   const [day, setDay] = useState(() => new Date().toISOString().slice(0, 10));
+  const [search, setSearch] = useState("");
   const [sales, setSales] = useState<SaleRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cancelFor, setCancelFor] = useState<SaleRow | null>(null);
@@ -38,29 +42,34 @@ export default function SalesPage() {
     const from = new Date(`${day}T00:00:00`);
     const to = new Date(`${day}T23:59:59.999`);
     try {
-      const res = await apiGet<{ data: SaleRow[] }>(
-        `/api/sales?centerId=${centerId}&dateFrom=${from.toISOString()}&dateTo=${to.toISOString()}&limit=200`
-      );
+      // Recherche par n° de facture ou client : toutes dates confondues
+      const range = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : `&dateFrom=${from.toISOString()}&dateTo=${to.toISOString()}`;
+      const res = await apiGet<{ data: SaleRow[] }>(`/api/sales?centerId=${centerId}${range}&limit=200`);
       setSales(res.data);
       setError(null);
     } catch (e) {
       setError(errorMessage(e));
     }
-  }, [centerId, day]);
+  }, [centerId, day, search]);
 
   useEffect(() => {
-    const t = setTimeout(() => void load(), 0);
+    const t = setTimeout(() => void load(), search ? 300 : 0);
     return () => clearTimeout(t);
-  }, [load]);
+  }, [load, search]);
 
   const total = sales?.filter((s) => s.status !== "CANCELLED").reduce((sum, s) => sum + Number(s.totalAmount), 0) ?? 0;
 
   return (
     <>
       <PageHeader
-        title="Ventes"
+        title="Ventes & factures"
         description={sales ? `${sales.length} vente(s) · ${formatCurrency(total, currency)} hors annulations` : undefined}
-        actions={<Input type="date" aria-label="Jour" value={day} onChange={(e) => setDay(e.target.value)} className="w-auto" />}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Input placeholder="N° de facture ou client" value={search} onChange={(e) => setSearch(e.target.value)} className="w-56" aria-label="Rechercher une facture" />
+            <Input type="date" aria-label="Jour" value={day} onChange={(e) => setDay(e.target.value)} className="w-auto" disabled={!!search.trim()} />
+          </div>
+        }
       />
       {error && <Alert>{error}</Alert>}
       <Card>
@@ -69,16 +78,15 @@ export default function SalesPage() {
         ) : sales.length === 0 ? (
           <EmptyState title="Aucune vente ce jour-là" />
         ) : (
-          <Table head={["N°", "Heure", "Caissier", "Paiement", "Montant", "Statut", ""]}>
+          <Table head={["N°", "Date", "Client", "Caissier", "Paiement", "Montant", "Statut", "Documents", ""]}>
             {sales.map((s) => (
               <tr key={s.id}>
-                <Td>
-                  <Link href={`/recu/${s.id}`} target="_blank" className="text-blue-600 hover:underline">
-                    {s.saleNumber}
-                  </Link>
+                <Td className="font-medium">
+                  {s.saleNumber}
                   {s.createdOffline && <span className="ml-2"><Badge tone="purple">hors ligne</Badge></span>}
                 </Td>
-                <Td>{new Date(s.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</Td>
+                <Td>{new Date(s.createdAt).toLocaleString("fr-FR", { dateStyle: search ? "short" : undefined, timeStyle: "short" })}</Td>
+                <Td>{s.customer?.name ?? <span className="text-gray-400">—</span>}</Td>
                 <Td>
                   {s.cashier.firstName} {s.cashier.lastName}
                 </Td>
@@ -88,6 +96,19 @@ export default function SalesPage() {
                 </Td>
                 <Td>
                   <Badge tone={SALE_STATUS[s.status]?.tone ?? "gray"}>{SALE_STATUS[s.status]?.label ?? s.status}</Badge>
+                  {pickup && s.status !== "CANCELLED" && s.deliveryStatus !== "DELIVERED" && (
+                    <span className="ml-1">
+                      <Badge tone="amber">{s.deliveryStatus === "PARTIAL" ? "servie en partie" : "à servir"}</Badge>
+                    </span>
+                  )}
+                </Td>
+                <Td className="whitespace-nowrap">
+                  <Link href={`/facture/${s.id}`} target="_blank" className="text-sm font-medium text-blue-600 hover:underline">
+                    Facture
+                  </Link>
+                  <Link href={`/recu/${s.id}`} target="_blank" className="ml-3 text-sm text-blue-600 hover:underline">
+                    Ticket
+                  </Link>
                 </Td>
                 <Td>
                   {s.status === "COMPLETED" && can("sale:cancel_request") && (
@@ -107,6 +128,8 @@ export default function SalesPage() {
 }
 
 function CancelRequestModal({ sale, onClose, onDone }: { sale: SaleRow | null; onClose: () => void; onDone: () => Promise<void> }) {
+  const { session } = useSession();
+  const pickup = !!session?.company?.requiresPickup;
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,6 +167,11 @@ function CancelRequestModal({ sale, onClose, onDone }: { sale: SaleRow | null; o
       }
     >
       <p className="text-sm text-gray-600">La demande sera examinée par un responsable. La vente reste valide tant qu&apos;elle n&apos;est pas approuvée.</p>
+      {pickup && sale && sale.deliveryStatus !== "PENDING" && (
+        <Alert tone="amber">
+          Marchandise déjà remise au client : en cas d&apos;annulation, elle doit être rapportée au magasin (le stock est rétabli en totalité).
+        </Alert>
+      )}
       {error && <Alert>{error}</Alert>}
       <Field label="Motif" hint="Au moins 5 caractères.">
         <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />

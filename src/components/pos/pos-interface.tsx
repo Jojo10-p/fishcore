@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOfflineDB, type OfflinePackaging, type OfflineProduct } from "@/lib/offline/db";
 import { createOfflineSale } from "@/lib/offline/sales";
 import { cn, formatCurrency, generateIdempotencyKey } from "@/lib/utils";
+import { CustomerPicker } from "@/components/app/customer-picker";
 
 // ─────────────────────────────────────────────
 // Caisse — tous métiers (cahier §9.1)
@@ -12,9 +13,11 @@ import { cn, formatCurrency, generateIdempotencyKey } from "@/lib/utils";
 //   conditionnement : carton, pack, boîte…) au panier.
 // - Vente à l'unité de base (kg, L, m, pièce…) ou par conditionnement à prix propre.
 // - Quantités décimales uniquement pour les unités qui s'y prêtent.
+// - Devis : scanner son code-barres (ou saisir son numéro) charge ses lignes et
+//   ses prix, figés ; le serveur les reprend du devis, pas de l'écran.
 // Le serveur recalcule tout (prix, stock, TVA) : l'écran n'est jamais la référence.
 
-type PaymentMethod = "CASH" | "MOBILE_MONEY" | "CARD" | "TRANSFER" | "CREDIT";
+type PaymentMethod = "CASH" | "MOBILE_MONEY" | "CARD" | "TRANSFER";
 
 interface CartItem {
   key: string; // produit + unité vendue
@@ -43,6 +46,15 @@ interface Customer {
   phone: string | null;
 }
 
+interface LoadedQuote {
+  id: string;
+  number: string;
+  customerName: string;
+  total: number;
+  tax: number;
+  lines: Array<{ id: string; name: string; quantity: number; unitSymbol: string; lineTotal: number }>;
+}
+
 interface POSContextProps {
   sessionId: string;
   cashierId: string;
@@ -60,7 +72,6 @@ const METHODS: Record<PaymentMethod, string> = {
   MOBILE_MONEY: "Mobile money",
   CARD: "Carte",
   TRANSFER: "Virement",
-  CREDIT: "Crédit client",
 };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -84,6 +95,8 @@ export default function POSInterface({
   const [showCartMobile, setShowCartMobile] = useState(false);
   const [payments, setPayments] = useState<PaymentEntry[]>([{ method: "CASH", amount: 0 }]);
   const [customer, setCustomer] = useState<Customer | null>(null);
+  const [quote, setQuote] = useState<LoadedQuote | null>(null);
+  const [quoteInput, setQuoteInput] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [notification, setNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -182,8 +195,52 @@ export default function POSInterface({
     );
   }, []);
 
+  // Devis : chargé depuis le serveur (connexion requise), lignes et prix figés
+  const loadQuote = useCallback(
+    async (number: string): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/quotes?number=${encodeURIComponent(number.trim())}`);
+        const list = await res.json();
+        if (!res.ok) throw new Error(list.error ?? "Devis inaccessible");
+        const found = list.data?.[0];
+        if (!found) return false;
+        if (found.status === "CONVERTED") throw new Error(`Le devis ${found.number} a déjà été encaissé (${found.sale?.saleNumber ?? ""})`);
+        if (found.status === "CANCELLED") throw new Error(`Le devis ${found.number} est annulé`);
+        if (found.expired) throw new Error(`Le devis ${found.number} a expiré : faites établir un nouveau devis`);
+        const detail = await fetch(`/api/quotes/${found.id}`).then((r) => r.json());
+        if (!detail.success) throw new Error(detail.error ?? "Devis inaccessible");
+        const q = detail.data;
+        setQuote({
+          id: q.id,
+          number: q.number,
+          customerName: q.customer.name,
+          total: Number(q.totalAmount),
+          tax: Number(q.taxAmount),
+          lines: q.lines.map((l: { id: string; product: { name: string }; quantity: string; unitSymbol: string; lineTotal: string }) => ({
+            id: l.id,
+            name: l.product.name,
+            quantity: Number(l.quantity),
+            unitSymbol: l.unitSymbol,
+            lineTotal: Number(l.lineTotal),
+          })),
+        });
+        setCart([]);
+        setCustomer(null);
+        setShowPayment(false);
+        setQuoteInput(null);
+        saleKeyRef.current = null;
+        setNotification({ type: "success", message: `Devis ${q.number} chargé — ${q.customer.name}` });
+        return true;
+      } catch (err) {
+        setNotification({ type: "error", message: err instanceof Error ? err.message : "Devis inaccessible" });
+        return true; // trouvé mais refusé : ne pas afficher « aucun article »
+      }
+    },
+    []
+  );
+
   // Douchette / saisie : « Entrée » sur un code exact ajoute directement l'article
-  const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const onSearchKey = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter") return;
     const code = search.trim();
     if (!code) return;
@@ -193,32 +250,38 @@ export default function POSInterface({
       setSearch("");
       return;
     }
-    if (filteredProducts.length === 1) {
+    if (filteredProducts.length === 1 && !quote) {
       addToCart(filteredProducts[0]);
+      setSearch("");
+      return;
+    }
+    // Code-barres d'un devis (ex. DEV-000012)
+    if (isOnline && /^[A-Za-z]+-\d+$/.test(code) && (await loadQuote(code))) {
       setSearch("");
       return;
     }
     setNotification({ type: "error", message: `Aucun article pour « ${code} »` });
   };
 
+  // Montant à encaisser : celui du devis s'il y en a un, sinon celui du panier
+  const payTotal = quote ? quote.total : totals.total;
+  const hasItems = quote ? true : cart.length > 0;
   const paid = round2(payments.reduce((s, p) => s + (p.amount || 0), 0));
-  const change = Math.max(0, round2(paid - totals.total));
-  const needsCustomer = payments.some((p) => p.method === "CREDIT" && p.amount > 0);
+  const change = Math.max(0, round2(paid - payTotal));
   const cashPaid = payments.filter((p) => p.method === "CASH").reduce((s, p) => s + p.amount, 0);
   const paymentError =
-    paid < totals.total
-      ? `Il manque ${fmt(totals.total - paid)}`
+    quote && !isOnline
+      ? "L'encaissement d'un devis nécessite une connexion"
+      : paid < payTotal
+      ? `Il manque ${fmt(payTotal - paid)}`
       : change > cashPaid
         ? "Le rendu de monnaie n'est possible que sur les espèces"
-        : needsCustomer && !customer
-          ? "Choisissez le client pour une vente à crédit"
-          : needsCustomer && !isOnline
-            ? "La vente à crédit nécessite une connexion"
-            : null;
+        : null;
 
   const resetSale = () => {
     saleKeyRef.current = null;
     setCart([]);
+    setQuote(null);
     setPayments([{ method: "CASH", amount: 0 }]);
     setCustomer(null);
     setShowPayment(false);
@@ -227,7 +290,7 @@ export default function POSInterface({
   };
 
   const handleValidateSale = async () => {
-    if (cart.length === 0 || paymentError) return;
+    if (!hasItems || paymentError) return;
     setIsProcessing(true);
     const idempotencyKey = (saleKeyRef.current ??= generateIdempotencyKey("sale"));
     const lines = cart.map((i) => ({
@@ -259,20 +322,17 @@ export default function POSInterface({
           res = await fetch("/api/sales", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              sessionId,
-              lines,
-              payments: cleanPayments,
-              customerId: customer?.id,
-              idempotencyKey,
-              createdOffline: false,
-            }),
+            body: JSON.stringify(
+              quote
+                ? { sessionId, quoteId: quote.id, lines: [], payments: cleanPayments, idempotencyKey, createdOffline: false }
+                : { sessionId, lines, payments: cleanPayments, customerId: customer?.id, idempotencyKey, createdOffline: false }
+            ),
           });
         } catch {
           res = null; // réseau injoignable alors que le navigateur se croit en ligne
         }
         if (res === null || res.status >= 502) {
-          if (needsCustomer) throw new Error("Connexion perdue : la vente à crédit n'a pas pu être enregistrée");
+          if (quote) throw new Error("Connexion perdue : le devis n'a pas été encaissé, réessayez");
           saleId = await saveOffline();
           recordedOffline = true;
         } else {
@@ -339,7 +399,8 @@ export default function POSInterface({
           </p>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-3 sm:p-4">
+        {/* Un devis chargé fige le panier : le catalogue est grisé */}
+        <div className={cn("flex-1 overflow-y-auto p-3 sm:p-4", quote && "pointer-events-none opacity-40")} aria-disabled={!!quote}>
           {filteredProducts.length === 0 ? (
             <div className="text-center text-gray-400 py-16 text-sm">
               {search ? "Aucun article trouvé" : "Aucun article. Le catalogue se charge à la première connexion."}
@@ -385,8 +446,8 @@ export default function POSInterface({
         onClick={() => setShowCartMobile((v) => !v)}
         className="md:hidden flex items-center justify-between bg-blue-600 text-white px-4 py-3 text-sm font-semibold"
       >
-        <span>Panier ({cartCount})</span>
-        <span>{fmt(totals.total)}</span>
+        <span>{quote ? `Devis ${quote.number}` : `Panier (${cartCount})`}</span>
+        <span>{fmt(payTotal)}</span>
       </button>
 
       {/* ── Panier ── */}
@@ -398,16 +459,71 @@ export default function POSInterface({
       >
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
           <h2 className="font-semibold text-gray-900">
-            Panier
-            {cartCount > 0 && <span className="ml-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">{cartCount}</span>}
+            {quote ? `Devis ${quote.number}` : "Panier"}
+            {!quote && cartCount > 0 && <span className="ml-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">{cartCount}</span>}
           </h2>
+          {isOnline && !quote && cart.length === 0 && quoteInput === null && (
+            <button className="ml-auto mr-2 text-xs text-blue-600 hover:underline" onClick={() => setQuoteInput("")}>
+              Encaisser un devis
+            </button>
+          )}
           <button className="md:hidden text-gray-500 text-xl leading-none" onClick={() => setShowCartMobile(false)} aria-label="Fermer le panier">
             ×
           </button>
         </div>
 
+        {quoteInput !== null && !quote && (
+          <form
+            className="flex gap-2 border-b border-gray-200 p-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (quoteInput.trim() && !(await loadQuote(quoteInput))) {
+                setNotification({ type: "error", message: `Aucun devis n° « ${quoteInput.trim()} »` });
+              }
+            }}
+          >
+            <input
+              autoFocus
+              value={quoteInput}
+              onChange={(e) => setQuoteInput(e.target.value)}
+              placeholder="N° du devis (ex. DEV-000012)"
+              className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
+              aria-label="Numéro du devis"
+            />
+            <button className="rounded-lg bg-blue-600 px-3 text-sm text-white">Charger</button>
+            <button type="button" className="text-sm text-gray-500" onClick={() => setQuoteInput(null)}>
+              ✕
+            </button>
+          </form>
+        )}
+
         <div className="flex-1 overflow-y-auto">
-          {cart.length === 0 ? (
+          {quote ? (
+            <div>
+              <div className="flex items-center justify-between bg-blue-50 px-4 py-2 text-sm">
+                <span>
+                  Client : <strong>{quote.customerName}</strong>
+                </span>
+                <button className="text-xs text-red-600 hover:underline" onClick={resetSale}>
+                  Retirer le devis
+                </button>
+              </div>
+              <ul className="divide-y divide-gray-100">
+                {quote.lines.map((l) => (
+                  <li key={l.id} className="flex items-start justify-between gap-2 px-4 py-2.5 text-sm">
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-gray-900">{l.name}</span>
+                      <span className="text-xs text-gray-500">
+                        {fmtQty(l.quantity)} {l.unitSymbol}
+                      </span>
+                    </span>
+                    <span className="font-semibold tabular-nums">{fmt(l.lineTotal)}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="px-4 py-2 text-xs text-gray-500">Prix du devis, non modifiables. Le stock est vérifié à l&apos;encaissement.</p>
+            </div>
+          ) : cart.length === 0 ? (
             <div className="text-center text-gray-400 py-12 text-sm">
               <p>Panier vide</p>
               <p className="text-xs mt-1">Scannez ou touchez un article</p>
@@ -475,12 +591,12 @@ export default function POSInterface({
             )}
             <div className="flex justify-between font-bold text-base text-gray-900">
               <span>TOTAL</span>
-              <span className="text-blue-700 tabular-nums">{fmt(totals.total)}</span>
+              <span className="text-blue-700 tabular-nums">{fmt(payTotal)}</span>
             </div>
-            {totals.tax > 0 && (
+            {(quote ? quote.tax : totals.tax) > 0 && (
               <div className="flex justify-between text-xs text-gray-500">
                 <span>dont TVA</span>
-                <span>{fmt(totals.tax)}</span>
+                <span>{fmt(quote ? quote.tax : totals.tax)}</span>
               </div>
             )}
           </div>
@@ -489,27 +605,28 @@ export default function POSInterface({
             <div className="space-y-2">
               <button
                 onClick={() => {
-                  setPayments([{ method: "CASH", amount: totals.total }]);
+                  setPayments([{ method: "CASH", amount: payTotal }]);
                   setShowPayment(true);
                 }}
-                disabled={cart.length === 0}
+                disabled={!hasItems}
                 className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Encaisser {cart.length > 0 && fmt(totals.total)}
+                Encaisser {hasItems && fmt(payTotal)}
               </button>
-              <button onClick={() => setCart([])} disabled={cart.length === 0} className="w-full py-2 text-red-500 text-sm hover:text-red-700 disabled:opacity-40">
-                Vider le panier
-              </button>
+              {!quote && (
+                <button onClick={() => setCart([])} disabled={cart.length === 0} className="w-full py-2 text-red-500 text-sm hover:text-red-700 disabled:opacity-40">
+                  Vider le panier
+                </button>
+              )}
             </div>
           ) : (
             <PaymentPanel
               payments={payments}
               setPayments={setPayments}
-              total={totals.total}
+              total={payTotal}
               change={change}
               fmt={fmt}
-              online={isOnline}
-              needsCustomer={needsCustomer}
+              online={isOnline && !quote}
               customer={customer}
               setCustomer={setCustomer}
               error={paymentError}
@@ -531,7 +648,6 @@ function PaymentPanel({
   change,
   fmt,
   online,
-  needsCustomer,
   customer,
   setCustomer,
   error,
@@ -545,7 +661,6 @@ function PaymentPanel({
   change: number;
   fmt: (n: number) => string;
   online: boolean;
-  needsCustomer: boolean;
   customer: Customer | null;
   setCustomer: (c: Customer | null) => void;
   error: string | null;
@@ -567,7 +682,7 @@ function PaymentPanel({
             aria-label="Mode de paiement"
           >
             {(Object.keys(METHODS) as PaymentMethod[]).map((m) => (
-              <option key={m} value={m} disabled={m === "CREDIT" && !online}>
+              <option key={m} value={m}>
                 {METHODS[m]}
               </option>
             ))}
@@ -616,7 +731,8 @@ function PaymentPanel({
         + Paiement mixte (ajouter un mode)
       </button>
 
-      {needsCustomer && <CustomerPicker customer={customer} setCustomer={setCustomer} />}
+      {/* Client facultatif : la facture est alors établie à son nom (nécessite le réseau) */}
+      {online && <InvoiceCustomer customer={customer} setCustomer={setCustomer} />}
 
       {change > 0 && (
         <div className="bg-green-50 rounded-lg p-2 text-sm text-green-900">
@@ -641,76 +757,14 @@ function PaymentPanel({
   );
 }
 
-function CustomerPicker({ customer, setCustomer }: { customer: Customer | null; setCustomer: (c: Customer | null) => void }) {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Customer[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [phone, setPhone] = useState("");
-
-  useEffect(() => {
-    if (customer) return;
-    const t = setTimeout(() => {
-      fetch(`/api/customers?search=${encodeURIComponent(query)}`)
-        .then((r) => r.json())
-        .then((j) => setResults(j.data ?? []))
-        .catch(() => setResults([]));
-    }, 250);
-    return () => clearTimeout(t);
-  }, [query, customer]);
-
-  if (customer) {
+function InvoiceCustomer({ customer, setCustomer }: { customer: Customer | null; setCustomer: (c: Customer | null) => void }) {
+  const [open, setOpen] = useState(false);
+  if (!customer && !open) {
     return (
-      <div className="flex items-center justify-between rounded-lg bg-blue-50 px-3 py-2 text-sm">
-        <span>
-          Client : <strong>{customer.name}</strong> {customer.phone && <span className="text-gray-500">({customer.phone})</span>}
-        </span>
-        <button className="text-xs text-blue-700 hover:underline" onClick={() => setCustomer(null)}>
-          Changer
-        </button>
-      </div>
+      <button className="text-xs text-blue-600 hover:underline block" onClick={() => setOpen(true)}>
+        + Facture au nom d&apos;un client (facultatif)
+      </button>
     );
   }
-
-  const create = async () => {
-    const res = await fetch("/api/customers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: query, phone: phone || undefined }),
-    });
-    const j = await res.json();
-    if (res.ok) setCustomer(j.data);
-  };
-
-  return (
-    <div className="space-y-2 rounded-lg border border-gray-200 p-2">
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Client (nom ou téléphone)"
-        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-      />
-      <ul className="max-h-28 overflow-y-auto text-sm">
-        {results.map((c) => (
-          <li key={c.id}>
-            <button className="w-full text-left px-2 py-1 rounded hover:bg-gray-100" onClick={() => setCustomer(c)}>
-              {c.name} {c.phone && <span className="text-gray-500">· {c.phone}</span>}
-            </button>
-          </li>
-        ))}
-      </ul>
-      {query.trim().length >= 2 &&
-        (creating ? (
-          <div className="flex gap-2">
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Téléphone" className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
-            <button onClick={create} className="rounded-lg bg-blue-600 px-3 text-sm text-white">
-              Créer
-            </button>
-          </div>
-        ) : (
-          <button className="text-xs text-blue-600 hover:underline" onClick={() => setCreating(true)}>
-            + Nouveau client « {query.trim()} »
-          </button>
-        ))}
-    </div>
-  );
+  return <CustomerPicker customer={customer} setCustomer={setCustomer} />;
 }

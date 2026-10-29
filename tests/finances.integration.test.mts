@@ -1,6 +1,6 @@
 /**
  * Phase 2 — Gestion financière (cahier §12, §14, §15) : coût de revient,
- * marge, créances clients, dettes fournisseurs, dépenses, rapport.
+ * marge, dettes fournisseurs, dépenses, rapport. Toute vente est payée comptant.
  * Tous les montants attendus sont calculés à la main dans les commentaires.
  */
 import { test, before, after } from "node:test";
@@ -16,7 +16,6 @@ const supplierRoute = await import("@/app/api/suppliers/[id]/route");
 const supplierPaymentsRoute = await import("@/app/api/suppliers/[id]/payments/route");
 const customersRoute = await import("@/app/api/customers/route");
 const customerRoute = await import("@/app/api/customers/[id]/route");
-const customerPaymentsRoute = await import("@/app/api/customers/[id]/payments/route");
 const receiptsRoute = await import("@/app/api/goods-receipts/route");
 const validateRoute = await import("@/app/api/goods-receipts/[id]/validate/route");
 const cashRoute = await import("@/app/api/cash/sessions/route");
@@ -117,38 +116,27 @@ test("le coût des marchandises est figé sur chaque ligne de vente", async () =
   assert.equal(Number(s.json.data.lines[0].costAmount), 11250);
 });
 
-test("vente à crédit : plafond du client respecté", async () => {
-  const c = await call(customersRoute.POST, { path: "/api/customers", cookie: ctx.manager, body: { name: "Entreprise BTP Akpro", phone: "96000000", creditLimit: 30000 } });
+test("vente au nom d'un client, payée par mobile money ; fiche client", async () => {
+  const c = await call(customersRoute.POST, {
+    path: "/api/customers", cookie: ctx.cashier, body: { name: "Entreprise BTP Akpro", phone: "96000000", taxId: "3201900012345" },
+  });
   assert.equal(c.status, 201, JSON.stringify(c.json));
   ctx.customerId = c.json.data.id;
 
-  const noLimitForCashier = await call(customersRoute.POST, { path: "/api/customers", cookie: ctx.cashier, body: { name: "Autre", creditLimit: 1000000 } });
-  assert.equal(noLimitForCashier.status, 403, "seul un responsable fixe un plafond");
-
-  const ok = await sell(ctx.cashier, [{ productId: ctx.A.id, quantity: 10, unitPrice: 2000 }], [{ method: "CREDIT", amount: 20000 }], { customerId: ctx.customerId });
-  assert.equal(ok.status, 201, JSON.stringify(ok.json));
-  const over = await sell(ctx.cashier, [{ productId: ctx.A.id, quantity: 10, unitPrice: 2000 }], [{ method: "CREDIT", amount: 20000 }], { customerId: ctx.customerId });
-  assert.equal(over.status, 409);
-  assert.equal(over.json.code, "CREDIT_LIMIT", "20 000 + 20 000 > 30 000");
-});
-
-test("règlement client en espèces : encaissé dans la caisse, jamais au-delà de la dette", async () => {
-  const pay = await call(customerPaymentsRoute.POST, {
-    path: `/api/customers/${ctx.customerId}/payments`, cookie: ctx.cashier, params: { id: ctx.customerId },
-    body: { amount: 15000, method: "CASH", sessionId: ctx.sessionId, idempotencyKey: idem() },
+  const s = await sell(ctx.cashier, [{ productId: ctx.A.id, quantity: 10, unitPrice: 2000 }], [{ method: "MOBILE_MONEY", amount: 20000, reference: "MM-77" }], {
+    customerId: ctx.customerId,
   });
-  assert.equal(pay.status, 201, JSON.stringify(pay.json));
+  assert.equal(s.status, 201, JSON.stringify(s.json));
 
-  const over = await call(customerPaymentsRoute.POST, {
-    path: `/api/customers/${ctx.customerId}/payments`, cookie: ctx.cashier, params: { id: ctx.customerId },
-    body: { amount: 6000, method: "MOBILE_MONEY", idempotencyKey: idem() },
-  });
-  assert.equal(over.status, 400);
-  assert.equal(over.json.code, "OVERPAYMENT");
+  const detail = await call(customerRoute.GET, { path: `/api/customers/${ctx.customerId}`, cookie: ctx.manager, params: { id: ctx.customerId } });
+  assert.equal(detail.status, 200);
+  assert.equal(detail.json.data.taxId, "3201900012345");
+  assert.deepEqual(detail.json.data.sales.map((x: Json) => Number(x.totalAmount)), [20000]);
 
-  const statement = await call(customerRoute.GET, { path: `/api/customers/${ctx.customerId}`, cookie: ctx.manager, params: { id: ctx.customerId } });
-  assert.equal(Number(statement.json.data.balance), 5000);
-  assert.deepEqual(statement.json.data.statement.map((e: Json) => e.balance), [20000, 5000]);
+  const list = await call(customersRoute.GET, { path: "/api/customers?withStats=true", cookie: ctx.manager });
+  const row = list.json.data.find((x: Json) => x.id === ctx.customerId);
+  assert.equal(row.salesCount, 1);
+  assert.equal(Number(row.salesTotal), 20000);
 });
 
 test("dépenses : sortie de caisse, annulation qui remet l'argent", async () => {
@@ -205,20 +193,22 @@ test("paiement fournisseur imputé sur les factures les plus anciennes", async (
   assert.equal(detail.json.data.debt, 80000);
 });
 
-test("§15 — rapport financier : CA, marge, dépenses, encaissements, créances, dettes", async () => {
+test("§15 — rapport financier : CA, marge, dépenses, encaissements, dettes", async () => {
   const r = await call(financeRoute.GET, { path: "/api/reports/finance?compare=true", cookie: ctx.accountant });
   assert.equal(r.status, 200, JSON.stringify(r.json));
   const f = r.json.data.current;
-  // Ventes : 20 000 (espèces) + 20 000 (crédit) = 40 000 ; coût 2 × 11 250 = 22 500
+  // Ventes : 20 000 (espèces) + 20 000 (mobile money) = 40 000 ; coût 2 × 11 250 = 22 500
   assert.equal(f.revenueTTC, 40000);
   assert.equal(f.costOfSales, 22500);
   assert.equal(f.grossMargin, 17500);
   assert.equal(f.expenses.total, 3000, "la dépense annulée n'est pas comptée");
   assert.equal(f.netResult, 14500);
-  // Encaissements : 20 000 vente espèces + 15 000 règlement client
-  assert.equal(f.collections.total, 35000);
-  assert.equal(f.collections.creditGranted, 20000);
-  assert.equal(f.receivables, 5000);
+  // Encaissements : tout le chiffre d'affaires (aucun crédit)
+  assert.equal(f.collections.total, 40000);
+  assert.deepEqual(
+    Object.fromEntries((f.collections.byMethod as Json[]).map((m) => [m.method, m.amount])),
+    { CASH: 20000, MOBILE_MONEY: 20000 }
+  );
   assert.equal(f.payables.total, 80000);
   assert.equal(f.topProducts[0].name, "Article A");
   assert.ok(r.json.data.previous, "comparaison avec la période précédente");
@@ -240,13 +230,14 @@ test("export CSV : réservé, historisé", async () => {
   assert.equal(await prisma.auditLog.count({ where: { eventType: "DOCUMENT_EXPORTED" } }), before + 1);
 });
 
-test("clôture : la caisse tient compte du règlement client et des dépenses", async () => {
-  // Fond 0 + vente espèces 20 000 + règlement 15 000 − dépense 5 000 + annulation 5 000 − dépense 3 000 = 32 000
+test("clôture : la caisse tient compte des dépenses payées en espèces", async () => {
+  // Fond 0 + vente espèces 20 000 − dépense 5 000 + annulation 5 000 − dépense 3 000 = 17 000
+  // (la vente mobile money n'entre pas dans le tiroir)
   const close = await call(cashRoute.POST, {
-    path: "/api/cash/sessions", cookie: ctx.cashier, body: { action: "close", sessionId: ctx.sessionId, declaredBalance: 32000 },
+    path: "/api/cash/sessions", cookie: ctx.cashier, body: { action: "close", sessionId: ctx.sessionId, declaredBalance: 17000 },
   });
   assert.equal(close.status, 200, JSON.stringify(close.json));
-  assert.equal(Number(close.json.data.theoreticalBalance), 32000);
+  assert.equal(Number(close.json.data.theoreticalBalance), 17000);
   assert.equal(Number(close.json.data.discrepancy), 0);
 });
 

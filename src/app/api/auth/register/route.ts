@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
           businessType: data.businessType,
           vatEnabled: getBusinessProfile(data.businessType).tax.vatEnabled,
           defaultTaxRate: getBusinessProfile(data.businessType).tax.defaultTaxRate,
+          requiresPickup: getBusinessProfile(data.businessType).pickupByDefault ?? false,
         },
       });
 

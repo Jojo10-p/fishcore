@@ -17,10 +17,9 @@ interface FinanceReport {
   marginRate: number;
   expenses: { total: number; byCategory: Array<{ category: string; amount: number; count: number }> };
   netResult: number;
-  collections: { total: number; byMethod: Array<{ method: string; amount: number }>; creditGranted: number; customerPayments: number; refunds: number };
+  collections: { total: number; byMethod: Array<{ method: string; amount: number }>; refunds: number };
   cancelled: { count: number; amount: number };
   cashDiscrepancy: { total: number; sessions: number };
-  receivables: number;
   payables: { total: number; overdue: number };
   byCenter: Array<{ centerId: string; name: string; count: number; revenueTTC: number; grossMargin: number }>;
   byCashier: Array<{ cashierId: string; name: string; count: number; revenueTTC: number }>;
@@ -179,10 +178,6 @@ export default function FinancesPage() {
                 <Row label="Total encaissé" value={r.collections.total} currency={currency} bold />
               </dl>
               <div className="mt-3 space-y-1 text-xs text-gray-500">
-                <p>
-                  Crédit accordé : <Money value={r.collections.creditGranted} currency={currency} /> · Règlements clients :{" "}
-                  <Money value={r.collections.customerPayments} currency={currency} />
-                </p>
                 {r.collections.refunds > 0 && (
                   <p>
                     Remboursements : <Money value={r.collections.refunds} currency={currency} /> ({r.cancelled.count} vente(s) annulée(s))
@@ -218,9 +213,8 @@ export default function FinancesPage() {
             </Card>
 
             <Card className="p-4 sm:p-5">
-              <h2 className="font-semibold text-gray-900 mb-3">À ce jour</h2>
+              <h2 className="font-semibold text-gray-900 mb-3">Fournisseurs — à ce jour</h2>
               <dl className="space-y-2 text-sm">
-                <Row label="Créances clients (crédits à encaisser)" value={r.receivables} currency={currency} />
                 <Row label="Dettes fournisseurs" value={r.payables.total} currency={currency} />
                 {r.payables.overdue > 0 && <Row label="dont échues" value={r.payables.overdue} currency={currency} danger />}
               </dl>

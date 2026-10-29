@@ -33,6 +33,10 @@ const companySelect = {
   businessType: true,
   vatEnabled: true,
   defaultTaxRate: true,
+  quotePrefix: true,
+  quoteValidityDays: true,
+  invoiceNotes: true,
+  requiresPickup: true,
 } as const;
 
 const settingsSchema = z
@@ -51,6 +55,9 @@ const settingsSchema = z
       .optional(),
     vatEnabled: z.boolean().optional(),
     defaultTaxRate: z.coerce.number().min(0).max(100).optional(),
+    quoteValidityDays: z.coerce.number().int().min(1).max(365).optional(),
+    invoiceNotes: z.string().trim().max(600).optional(),
+    requiresPickup: z.boolean().optional(),
   })
   .refine((d) => Object.keys(d).length > 0, "Aucune modification");
 

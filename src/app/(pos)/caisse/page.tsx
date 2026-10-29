@@ -308,9 +308,15 @@ function ActiveRegister({
           </Link>
         )}
         {lastSale && !lastSale.offline && (
-          <Link href={`/recu/${lastSale.id}`} target="_blank" className="text-sm text-blue-600 hover:underline">
-            Reçu
-          </Link>
+          <span className="flex items-center gap-2 text-sm">
+            <span className="text-gray-500">Dernière vente :</span>
+            <Link href={`/recu/${lastSale.id}`} target="_blank" className="text-blue-600 hover:underline">
+              Ticket
+            </Link>
+            <Link href={`/facture/${lastSale.id}`} target="_blank" className="font-medium text-blue-600 hover:underline">
+              Facture A4
+            </Link>
+          </span>
         )}
         <Button variant="secondary" className="px-3 py-1.5" onClick={() => setShowReserve(true)}>
           Réserve hors ligne

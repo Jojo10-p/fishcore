@@ -83,7 +83,19 @@ enum PaymentMethod {
   CARD              // Carte bancaire
   TRANSFER          // Virement
   MIXED             // Paiement mixte
-  CREDIT            // Crédit client
+  CREDIT            // Historique uniquement : la vente à crédit n'est plus acceptée
+}
+
+enum DeliveryStatus {
+  PENDING           // À servir
+  PARTIAL           // Servie en partie
+  DELIVERED         // Entièrement servie
+}
+
+enum QuoteStatus {
+  OPEN              // Valable (sauf si la date de validité est passée)
+  CONVERTED         // Transformé en vente
+  CANCELLED         // Annulé
 }
 
 enum SaleStatus {
@@ -157,6 +169,10 @@ enum AuditEventType {
   PRICE_CHANGED
   // Documents
   DOCUMENT_EXPORTED
+  // Devis & retraits
+  QUOTE_CREATED
+  QUOTE_CANCELLED
+  GOODS_DELIVERED
   // Finances
   EXPENSE_RECORDED
   EXPENSE_CANCELLED
@@ -214,6 +230,13 @@ model Company {
   defaultTaxRate  Decimal   @db.Decimal(5, 2) @default(0)   // ex. 18.00 (TVA Bénin)
   invoicePrefix   String    @default("FACT")
   invoiceCounter  Int       @default(1)
+  quotePrefix     String    @default("DEV")
+  quoteCounter    Int       @default(1)
+  quoteValidityDays Int     @default(15)
+  invoiceNotes    String?                  // Mentions en bas de facture (banque, conditions…)
+  // Retrait au magasin : le client paie à la caisse puis se fait servir
+  // sur présentation de sa facture (dépôts de matériaux, quincailleries…).
+  requiresPickup  Boolean   @default(false)
 
   // Statut
   isActive        Boolean   @default(true)
@@ -406,6 +429,7 @@ model Product {
   // Relations
   stocks          Stock[]
   saleLines       SaleLine[]
+  quoteLines      QuoteLine[]
   receiptLines    GoodsReceiptLine[]
   priceHistory    ProductPriceHistory[]
   unitConversions UnitConversion[]
@@ -654,23 +678,78 @@ model SupplierPayment {
 }
 
 /// Règlement d'un client sur ses achats à crédit (cahier §14 : créances).
-model CustomerPayment {
-  id              String    @id @default(cuid())
-  createdAt       DateTime  @default(now())
-  idempotencyKey  String    @unique
+/// Devis : proposition de prix, transformée en vente à la caisse
+model Quote {
+  id              String      @id @default(cuid())
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
   companyId       String
+  centerId        String
+  number          String
   customerId      String
-  customer        Customer  @relation(fields: [customerId], references: [id])
-  amount          Decimal   @db.Decimal(12, 2)
-  method          PaymentMethod
-  reference       String?
-  sessionId       String?                     // Encaissé dans une caisse ouverte
-  cashMovementId  String?   @unique
-  receivedById    String
+  customer        Customer    @relation(fields: [customerId], references: [id])
+  createdById     String
+  status          QuoteStatus @default(OPEN)
+  validUntil      DateTime
+  subtotal        Decimal     @db.Decimal(12, 2)
+  discountAmount  Decimal     @db.Decimal(12, 2) @default(0)
+  totalAmount     Decimal     @db.Decimal(12, 2)
+  taxAmount       Decimal     @db.Decimal(12, 2) @default(0)
   notes           String?
+  saleId          String?     @unique
+  sale            Sale?       @relation(fields: [saleId], references: [id])
+  cancelledAt     DateTime?
+  cancelReason    String?
+  lines           QuoteLine[]
 
-  @@index([companyId, customerId])
-  @@map("customer_payments")
+  @@unique([companyId, number])
+  @@index([companyId, createdAt])
+  @@map("quotes")
+}
+
+model QuoteLine {
+  id          String   @id @default(cuid())
+  quoteId     String
+  quote       Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  position    Int
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  unitId      String
+  quantity    Decimal  @db.Decimal(12, 3)
+  unitPrice   Decimal  @db.Decimal(12, 2)
+  discount    Decimal  @db.Decimal(12, 2) @default(0)   // Remise par unité
+  lineTotal   Decimal  @db.Decimal(12, 2)
+  taxRate     Decimal  @db.Decimal(5, 2) @default(0)
+  taxAmount   Decimal  @db.Decimal(12, 2) @default(0)
+
+  @@map("quote_lines")
+}
+
+/// Retrait de marchandise au magasin (bon de sortie), total ou partiel
+model Delivery {
+  id            String          @id @default(cuid())
+  createdAt     DateTime        @default(now())
+  companyId     String
+  saleId        String
+  sale          Sale            @relation(fields: [saleId], references: [id])
+  deliveredById String
+  number        Int                              // N° de bon pour cette vente (1, 2…)
+  notes         String?
+  lines         DeliveryLine[]
+
+  @@unique([saleId, number])
+  @@index([companyId, createdAt])
+  @@map("deliveries")
+}
+
+model DeliveryLine {
+  id          String   @id @default(cuid())
+  deliveryId  String
+  delivery    Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  saleLineId  String
+  quantity    Decimal  @db.Decimal(12, 3)
+
+  @@map("delivery_lines")
 }
 
 /// Réception de marchandises
@@ -745,10 +824,9 @@ model Customer {
   email       String?
   address     String?
   isActive    Boolean   @default(true)
-  // Plafond de crédit (null = pas de plafond). Une vente à crédit qui le dépasse est refusée.
-  creditLimit Decimal?  @db.Decimal(12, 2)
+  taxId       String?                     // IFU du client (facture à une entreprise)
   sales       Sale[]
-  payments    CustomerPayment[]
+  quotes      Quote[]
 
   @@index([companyId, name])
   @@map("customers")
@@ -886,6 +964,9 @@ model Sale {
 
   notes           String?
 
+  // Retrait de la marchandise (si l'entreprise sert sur présentation de la facture)
+  deliveryStatus  DeliveryStatus @default(DELIVERED)
+
   // Offline
   createdOffline  Boolean     @default(false)
   deviceId        String?
@@ -896,6 +977,8 @@ model Sale {
   cancellations   Cancellation[]
   refunds         Refund[]
   documents       Document[]
+  deliveries      Delivery[]
+  quote           Quote?
 
   @@unique([companyId, saleNumber])
   @@index([companyId, centerId, createdAt])
@@ -919,6 +1002,7 @@ model SaleLine {
   taxRate       Decimal   @db.Decimal(5, 2) @default(0)
   taxAmount     Decimal   @db.Decimal(12, 2) @default(0)
   costAmount    Decimal   @db.Decimal(12, 2) @default(0)   // Coût de revient des marchandises vendues (figé à la vente)
+  deliveredQuantity Decimal @db.Decimal(12, 3) @default(0)   // Quantité remise au client (unité vendue)
 
   @@map("sale_lines")
 }

@@ -1,11 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { use, useEffect, useState } from "react";
+import { Barcode } from "@/components/documents/a4-document";
 import { apiGet, errorMessage } from "@/lib/client/api";
 import { formatCurrency } from "@/lib/utils";
 
 interface ReceiptData {
+  id: string;
   saleNumber: string;
+  deliveryStatus: "PENDING" | "PARTIAL" | "DELIVERED";
+  customer: { name: string; phone: string | null } | null;
   createdAt: string;
   status: string;
   subtotal: string;
@@ -18,7 +23,7 @@ interface ReceiptData {
   refunds: Array<{ id: string; amount: string }>;
   cashier: { firstName: string; lastName: string };
   session: { cashRegister: { name: string; center: { name: string; address: string | null; city: string | null; phone: string | null } } };
-  company: { tradeName: string; legalName: string | null; phone: string; address: string | null; city: string | null; taxId: string | null; tradeRegNumber: string | null; currency: string };
+  company: { tradeName: string; legalName: string | null; phone: string; address: string | null; city: string | null; taxId: string | null; tradeRegNumber: string | null; currency: string; requiresPickup: boolean };
 }
 
 const METHODS: Record<string, string> = {
@@ -26,11 +31,10 @@ const METHODS: Record<string, string> = {
   MOBILE_MONEY: "Mobile money",
   CARD: "Carte",
   TRANSFER: "Virement",
-  CREDIT: "Crédit client",
   MIXED: "Mixte",
 };
 
-// Reçu imprimable (ticket 80 mm ou A4) — cahier §9.1, §13
+// Ticket de caisse 80 mm — cahier §9.1. La facture A4 est sur /facture/[id].
 export default function ReceiptPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [sale, setSale] = useState<ReceiptData | null>(null);
@@ -68,6 +72,12 @@ export default function ReceiptPage({ params }: { params: Promise<{ id: string }
         <p>
           {sale.session.cashRegister.name} — {sale.cashier.firstName} {sale.cashier.lastName}
         </p>
+        {sale.customer && (
+          <p>
+            Client : {sale.customer.name}
+            {sale.customer.phone && ` (${sale.customer.phone})`}
+          </p>
+        )}
         {sale.status === "CANCELLED" && <p className="mt-1 font-bold">*** VENTE ANNULÉE ***</p>}
         <hr className="my-3 border-dashed border-black" />
 
@@ -130,7 +140,13 @@ export default function ReceiptPage({ params }: { params: Promise<{ id: string }
         )}
 
         <hr className="my-3 border-dashed border-black" />
-        <p className="text-center">Merci de votre visite !</p>
+        {sale.company.requiresPickup && sale.status !== "CANCELLED" && sale.deliveryStatus !== "DELIVERED" && (
+          <p className="mb-2 text-center font-bold">À PRÉSENTER AU MAGASIN POUR ÊTRE SERVI</p>
+        )}
+        <div className="flex justify-center">
+          <Barcode value={sale.saleNumber} height={34} />
+        </div>
+        <p className="mt-2 text-center">Merci de votre visite !</p>
         {sale.createdOffline && <p className="text-center text-[10px] mt-1">Vente enregistrée hors connexion</p>}
       </div>
 
@@ -138,6 +154,9 @@ export default function ReceiptPage({ params }: { params: Promise<{ id: string }
         <button onClick={() => window.print()} className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white">
           Imprimer
         </button>
+        <Link href={`/facture/${sale.id}`} className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm">
+          Facture A4
+        </Link>
         <button onClick={() => window.close()} className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm">
           Fermer
         </button>

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import {
   getCurrentUser,
@@ -10,70 +9,69 @@ import {
   requirePermission,
 } from "@/lib/auth";
 import { hasPermission } from "@/lib/rbac";
-import { customerBalances } from "@/lib/finance";
+import { customerSchema } from "@/lib/validations";
 
-const customerSchema = z.object({
-  name: z.string().trim().min(2, "Nom du client requis").max(100),
-  phone: z.string().trim().max(30).optional(),
-  email: z.string().trim().toLowerCase().email("Email invalide").optional().or(z.literal("")),
-  address: z.string().trim().max(200).optional(),
-  creditLimit: z.coerce.number().min(0).nullable().optional(),
-});
+const customerSelect = { id: true, name: true, phone: true, email: true, address: true, taxId: true, createdAt: true } as const;
 
-// GET /api/customers?search=…&withBalance=true — Clients (et leur encours de crédit)
+// GET /api/customers?search=…&withStats=true — Répertoire clients
+// (withStats : nombre d'achats, montant total, dernier achat — pour l'écran Clients)
 export async function GET(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
+    // La caisse et les devis recherchent un client sans avoir accès à l'écran Clients
     if (!hasPermission(user.role, "customer:view")) await requirePermission(user, "sale:create");
     const companyId = requireCompany(user);
     const sp = req.nextUrl.searchParams;
     const search = sp.get("search")?.trim();
-    const withBalance = sp.get("withBalance") === "true" && hasPermission(user.role, "customer:view");
+    const withStats = sp.get("withStats") === "true" && hasPermission(user.role, "customer:view");
 
     const customers = await prisma.customer.findMany({
       where: {
         companyId,
         isActive: true,
-        ...(search ? { OR: [{ name: { contains: search, mode: "insensitive" } }, { phone: { contains: search } }] } : {}),
+        ...(search
+          ? { OR: [{ name: { contains: search, mode: "insensitive" } }, { phone: { contains: search } }, { taxId: { contains: search } }] }
+          : {}),
       },
-      select: { id: true, name: true, phone: true, email: true, address: true, creditLimit: true, createdAt: true },
+      select: customerSelect,
       orderBy: { name: "asc" },
-      take: withBalance ? 500 : 50,
+      take: withStats ? 500 : 30,
     });
+    if (!withStats || customers.length === 0) return NextResponse.json({ success: true, data: customers });
 
-    if (!withBalance) return NextResponse.json({ success: true, data: customers });
-
-    const balances = await prisma.$transaction((tx) => customerBalances(tx, companyId, customers.map((c) => c.id)));
-    const data = customers
-      .map((c) => {
-        const b = balances.get(c.id);
-        return {
-          ...c,
-          balance: b?.balance.toString() ?? "0",
-          creditSales: b?.creditSales.toString() ?? "0",
-          payments: b?.payments.toString() ?? "0",
-          lastCreditAt: b?.lastCreditAt ?? null,
-        };
-      })
-      .sort((a, b) => Number(b.balance) - Number(a.balance) || a.name.localeCompare(b.name));
+    const stats = await prisma.sale.groupBy({
+      by: ["customerId"],
+      where: { companyId, customerId: { in: customers.map((c) => c.id) }, status: { not: "CANCELLED" } },
+      _count: { _all: true },
+      _sum: { totalAmount: true },
+      _max: { createdAt: true },
+    });
+    const byId = new Map(stats.map((s) => [s.customerId, s]));
+    const data = customers.map((c) => {
+      const st = byId.get(c.id);
+      return {
+        ...c,
+        salesCount: st?._count._all ?? 0,
+        salesTotal: st?._sum.totalAmount?.toString() ?? "0",
+        lastPurchaseAt: st?._max.createdAt ?? null,
+      };
+    });
     return NextResponse.json({ success: true, data });
   } catch (error) {
     return handleApiError(error, "CUSTOMERS");
   }
 }
 
-// POST /api/customers — Enregistrer un client (le plafond de crédit est réservé aux responsables)
+// POST /api/customers — Enregistrer un client (depuis la caisse, un devis ou l'écran Clients)
 export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
-    // Le caissier crée un client depuis la caisse ; un responsable depuis la fiche clients
     if (!hasPermission(user.role, "customer:edit")) await requirePermission(user, "sale:create");
     const companyId = requireCompany(user);
-    const { creditLimit, ...data } = parseBody(customerSchema, await readJson(req));
-    if (creditLimit !== undefined && creditLimit !== null) await requirePermission(user, "customer:edit");
+    const data = parseBody(customerSchema, await readJson(req));
     const customer = await prisma.customer.create({
-      data: { companyId, ...data, email: data.email || null, creditLimit: creditLimit ?? null },
-      select: { id: true, name: true, phone: true, email: true, address: true, creditLimit: true },
+      data: { companyId, ...data, email: data.email || null },
+      select: customerSelect,
     });
     return NextResponse.json({ success: true, data: customer }, { status: 201 });
   } catch (error) {

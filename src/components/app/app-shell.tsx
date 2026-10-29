@@ -17,13 +17,17 @@ interface NavItem {
   icon: string;
   /** Visible si l'utilisateur a AU MOINS une de ces permissions (vide = tout le monde). */
   any: Permission[];
+  /** Seulement si l'entreprise sert la marchandise au magasin sur présentation de la facture. */
+  pickupOnly?: boolean;
 }
 
 // Chaque rôle ne voit que ce qui sert à son travail (cahier §2.1, §20)
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Tableau de bord", icon: "📊", any: ["report:view"] },
   { href: "/caisse", label: "Caisse", icon: "🛒", any: ["sale:create"] },
-  { href: "/ventes", label: "Ventes", icon: "🧾", any: ["sale:view"] },
+  { href: "/ventes", label: "Ventes & factures", icon: "🧾", any: ["sale:view"] },
+  { href: "/devis", label: "Devis", icon: "📝", any: ["quote:view"] },
+  { href: "/retraits", label: "Retraits magasin", icon: "📤", any: ["sale:deliver"], pickupOnly: true },
   { href: "/annulations", label: "Annulations", icon: "↩️", any: ["sale:cancel_request", "sale:cancel_approve"] },
   { href: "/produits", label: "Articles", icon: "🏷️", any: ["product:create", "product:edit"] },
   { href: "/stock", label: "Stock", icon: "📦", any: ["stock:view"] },
@@ -31,7 +35,7 @@ const NAV: NavItem[] = [
   { href: "/caisses", label: "Caisses & clôtures", icon: "💰", any: ["cash:view_all_sessions"] },
   { href: "/finances", label: "Finances", icon: "📈", any: ["report:view"] },
   { href: "/depenses", label: "Dépenses", icon: "💸", any: ["expense:view"] },
-  { href: "/clients", label: "Clients & créances", icon: "👤", any: ["customer:view"] },
+  { href: "/clients", label: "Clients", icon: "👤", any: ["customer:view"] },
   { href: "/fournisseurs", label: "Fournisseurs & dettes", icon: "🏭", any: ["purchase:view"] },
   { href: "/utilisateurs", label: "Utilisateurs", icon: "👥", any: ["user:view"] },
   { href: "/parametres", label: "Paramètres", icon: "⚙️", any: ["company:edit"] },
@@ -45,7 +49,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  const items = NAV.filter((n) => n.any.length === 0 || n.any.some((p) => can(p)));
+  const pickup = !!session?.company?.requiresPickup;
+  const items = NAV.filter((n) => (!n.pickupOnly || pickup) && (n.any.length === 0 || n.any.some((p) => can(p))));
 
   if (loading) return <Spinner />;
   if (!session) {

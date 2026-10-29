@@ -33,6 +33,10 @@ export type Permission =
   | "sale:cancel_approve"
   | "sale:refund"
   | "sale:discount"
+  | "sale:deliver"
+  | "quote:view"
+  | "quote:create"
+  | "quote:cancel"
   | "cash:open_session"
   | "cash:close_session"
   | "cash:close_session_validate"
@@ -50,7 +54,6 @@ export type Permission =
   | "expense:cancel"
   | "customer:view"
   | "customer:edit"
-  | "customer:payment"
   | "supplier:payment"
   | "document:create"
   | "document:export"
@@ -80,7 +83,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "supplier:view", "supplier:create", "supplier:edit",
     "purchase:view", "purchase:create",
     "expense:view", "expense:create", "expense:cancel",
-    "customer:view", "customer:edit", "customer:payment", "supplier:payment",
+    "customer:view", "customer:edit", "supplier:payment",
+    "quote:view", "quote:create", "quote:cancel", "sale:deliver",
     "document:create", "document:export",
     "report:view", "report:export",
     "audit:view",
@@ -101,7 +105,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "supplier:view", "supplier:create",
     "purchase:view", "purchase:create",
     "expense:view", "expense:create", "expense:cancel",
-    "customer:view", "customer:edit", "customer:payment", "supplier:payment",
+    "customer:view", "customer:edit", "supplier:payment",
+    "quote:view", "quote:create", "quote:cancel", "sale:deliver",
     "document:create", "document:export",
     "report:view", "report:export",
     "notification:view",
@@ -114,7 +119,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "sale:create", "sale:view",
     "sale:cancel_request",
     "cash:open_session", "cash:close_session", "cash:view_session",
-    "customer:view", "customer:payment",
+    "customer:view", "customer:edit",
+    "quote:view", "quote:create",
     "document:create",
     "notification:view",
   ],
@@ -128,6 +134,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "purchase:view",
     "expense:view",
     "customer:view",
+    "quote:view",
     "document:export",
     "report:view", "report:export",
     "notification:view",
@@ -139,6 +146,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "inventory:start", "inventory:validate",
     "supplier:view", "supplier:create",
     "purchase:view", "purchase:create",
+    "sale:deliver", "quote:view",
     "notification:view",
   ],
 
@@ -147,6 +155,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "stock:view",
     "sale:create", "sale:view",
     "sale:cancel_request",
+    "customer:view", "customer:edit",
+    "quote:view", "quote:create", "sale:deliver",
     "document:create",
     "notification:view",
   ],

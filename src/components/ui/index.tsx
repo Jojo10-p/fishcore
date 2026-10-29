@@ -69,7 +69,7 @@ export function Field({ label, hint, error, children }: { label: string; hint?: 
 export const inputClass =
   "w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100";
 
-export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+export function Input(props: React.ComponentProps<"input">) {
   return <input {...props} className={cn(inputClass, props.className)} />;
 }
 
@@ -142,12 +142,16 @@ export function Spinner({ label = "Chargement…" }: { label?: string }) {
   );
 }
 
-export function Modal({ open, title, onClose, children, footer }: {
+export function Modal({ open, title, onClose, children, footer, size = "md", closeOnBackdrop = true }: {
   open: boolean;
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  /** md : formulaire court ; xl : saisie de lignes (devis…) */
+  size?: "md" | "lg" | "xl";
+  /** false pour les longues saisies : un clic à côté ne fait pas perdre le travail */
+  closeOnBackdrop?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -157,12 +161,12 @@ export function Modal({ open, title, onClose, children, footer }: {
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4" onClick={closeOnBackdrop ? onClose : undefined}>
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="w-full sm:max-w-lg max-h-[90dvh] overflow-y-auto bg-white rounded-t-2xl sm:rounded-2xl shadow-xl"
+        className={`w-full ${size === "xl" ? "sm:max-w-4xl" : size === "lg" ? "sm:max-w-2xl" : "sm:max-w-lg"} max-h-[90dvh] overflow-y-auto bg-white rounded-t-2xl sm:rounded-2xl shadow-xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">

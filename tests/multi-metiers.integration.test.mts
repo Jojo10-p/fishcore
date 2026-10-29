@@ -260,10 +260,9 @@ test("supermarché : TVA 18 % incluse dans le prix, extraite sur la vente", asyn
   ctx.lait = p.json.data;
 });
 
-test("vente à crédit : client obligatoire", async () => {
+test("la vente à crédit n'existe plus : paiement « CREDIT » refusé", async () => {
   const s = await sell(ctx.super, [{ productId: ctx.lait.id, quantity: 1, unitPrice: 1180 }], [{ method: "CREDIT", amount: 1180 }]);
   assert.equal(s.status, 400);
-  assert.equal(s.json.code, "CUSTOMER_REQUIRED");
 });
 
 test("changement de métier : seul le propriétaire, les unités s'ajoutent sans rien supprimer", async () => {

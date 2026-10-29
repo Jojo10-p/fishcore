@@ -148,10 +148,12 @@ export const saleLineSchema = z.object({
 export const createSaleSchema = z.object({
   sessionId: z.string().min(1),
   customerId: z.string().optional(),
-  lines: z.array(saleLineSchema).min(1, "Au moins un produit"),
+  // Vente issue d'un devis : les lignes et les prix sont repris du devis par le serveur
+  quoteId: z.string().optional(),
+  lines: z.array(saleLineSchema).default([]),
   payments: z.array(
     z.object({
-      method: z.enum(["CASH", "MOBILE_MONEY", "CARD", "TRANSFER", "MIXED", "CREDIT"]),
+      method: z.enum(["CASH", "MOBILE_MONEY", "CARD", "TRANSFER"]),
       amount: z.coerce.number().positive(),
       reference: z.string().optional(),
     })
@@ -160,6 +162,37 @@ export const createSaleSchema = z.object({
   idempotencyKey: z.string().min(1),
   createdOffline: z.boolean().default(false),
   deviceId: z.string().optional(),
+}).refine((d) => d.lines.length > 0 || !!d.quoteId, { message: "Au moins un produit", path: ["lines"] });
+
+// ─────────────────────────────────────────────
+// Clients, devis, retraits
+// ─────────────────────────────────────────────
+
+export const customerSchema = z.object({
+  name: z.string().trim().min(2, "Nom du client requis").max(100),
+  phone: z.string().trim().max(30).optional(),
+  email: z.string().trim().toLowerCase().email("Email invalide").optional().or(z.literal("")),
+  address: z.string().trim().max(200).optional(),
+  taxId: z.string().trim().max(30).optional(),
+});
+
+export const customerUpdateSchema = customerSchema
+  .partial()
+  .refine((d) => Object.keys(d).length > 0, "Aucune modification");
+
+export const quoteSchema = z.object({
+  centerId: z.string().min(1),
+  customerId: z.string().min(1, "Client requis"),
+  validityDays: z.coerce.number().int().min(1).max(365).optional(),
+  notes: z.string().trim().max(1000).optional(),
+  lines: z.array(saleLineSchema).min(1, "Au moins un article").max(200),
+});
+
+export const deliverySchema = z.object({
+  lines: z
+    .array(z.object({ saleLineId: z.string().min(1), quantity: z.coerce.number().positive() }))
+    .min(1, "Rien à remettre"),
+  notes: z.string().trim().max(500).optional(),
 });
 
 // ─────────────────────────────────────────────

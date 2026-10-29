@@ -15,6 +15,8 @@ export interface SessionData {
     timezone: string;
     businessType: string;
     vatEnabled: boolean;
+    /** Le client se fait servir au magasin sur présentation de sa facture. */
+    requiresPickup?: boolean;
   } | null;
   centers: Array<{ id: string; name: string; code: string; status: string }>;
   permissions: Permission[];

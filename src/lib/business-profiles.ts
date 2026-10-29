@@ -35,6 +35,8 @@ export interface BusinessProfile {
   tax: { vatEnabled: boolean; defaultTaxRate: number };
   /** En caisse, la douchette code-barres est le mode de saisie principal. */
   barcodeFirst: boolean;
+  /** Le client paie à la caisse puis se fait servir au magasin sur présentation de sa facture. */
+  pickupByDefault?: boolean;
 }
 
 const U = (name: string, symbol: string, kind: UnitKind, allowsDecimal = false): UnitPreset => ({ name, symbol, kind, allowsDecimal });
@@ -118,6 +120,7 @@ export const BUSINESS_PROFILES: Record<BusinessType, BusinessProfile> = {
     suggestedAttributes: ["Diamètre", "Dimension", "Classe / qualité"],
     productDefaults: { trackBatches: false, requiresExpiry: false, requiresPrescription: false },
     tax: { vatEnabled: false, defaultTaxRate: 0 },
+    pickupByDefault: true,
     barcodeFirst: false,
   },
   OIL_DISTRIBUTION: {
