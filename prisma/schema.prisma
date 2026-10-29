@@ -1,0 +1,1019 @@
+// ═══════════════════════════════════════════════════════════════════
+// fishcore — Schéma Prisma (PostgreSQL via Supabase)
+// Modèle de données complet — Phase 1
+// ═══════════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────
+// ÉNUMÉRATIONS
+// ─────────────────────────────────────────────
+
+enum UserRole {
+  PLATFORM_ADMIN    // Super admin de la plateforme
+  COMPANY_OWNER     // Propriétaire de l'entreprise
+  CENTER_MANAGER    // Gérant de centre/agence
+  CASHIER           // Caissier
+  ACCOUNTANT        // Comptable
+  STOCK_MANAGER     // Gestionnaire de stock
+  SALES_EMPLOYEE    // Employé vendeur
+}
+
+enum CenterStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum CashRegisterState {
+  ACTIVE
+  INACTIVE
+  OPEN
+  CLOSED
+}
+
+enum ProductType {
+  FRESH     // Frais
+  FROZEN    // Congelé
+  SMOKED    // Fumé
+  DRIED     // Séché
+  OTHER
+}
+
+enum StockMovementType {
+  RECEPTION         // Réception fournisseur
+  SALE              // Vente
+  CUSTOMER_RETURN   // Retour client
+  TRANSFER_IN       // Transfert entrant
+  TRANSFER_OUT      // Transfert sortant
+  LOSS              // Perte
+  DETERIORATION     // Détérioration
+  INVENTORY_ADJUST  // Ajustement inventaire
+  CORRECTION        // Correction autorisée
+}
+
+enum PaymentMethod {
+  CASH              // Espèces
+  MOBILE_MONEY      // Mobile money (MTN, Moov...)
+  CARD              // Carte bancaire
+  TRANSFER          // Virement
+  MIXED             // Paiement mixte
+  CREDIT            // Crédit client
+}
+
+enum SaleStatus {
+  DRAFT             // Brouillon
+  COMPLETED         // Finalisée
+  CANCELLED         // Annulée
+  PARTIALLY_REFUNDED
+  FULLY_REFUNDED
+}
+
+enum CancellationStatus {
+  PENDING           // En attente d'approbation
+  APPROVED          // Approuvée
+  REJECTED          // Rejetée
+}
+
+enum DocumentType {
+  QUOTE             // Devis
+  PURCHASE_ORDER    // Bon de commande
+  DELIVERY_NOTE     // Bon de livraison
+  RECEIPT_NOTE      // Bon de réception
+  INVOICE           // Facture
+  RECEIPT           // Reçu de caisse
+  CREDIT_NOTE       // Avoir
+  REFUND_RECEIPT    // Justificatif de remboursement
+}
+
+enum SyncStatus {
+  PENDING           // En attente
+  SYNCING           // En cours
+  SYNCED            // Synchronisé
+  FAILED            // Échec
+  CONFLICT          // Conflit détecté
+}
+
+enum AuditEventType {
+  // Auth
+  USER_LOGIN
+  USER_LOGOUT
+  LOGIN_FAILED
+  PASSWORD_CHANGED
+  // Caisse
+  CASH_SESSION_OPENED
+  CASH_SESSION_CLOSED
+  // Ventes
+  SALE_CREATED
+  SALE_CANCELLED
+  SALE_REFUNDED
+  // Annulations
+  CANCELLATION_REQUESTED
+  CANCELLATION_APPROVED
+  CANCELLATION_REJECTED
+  // Stock
+  STOCK_RECEIVED
+  STOCK_ADJUSTED
+  STOCK_TRANSFERRED
+  STOCK_LOSS_RECORDED
+  // Inventaire
+  INVENTORY_STARTED
+  INVENTORY_VALIDATED
+  // Utilisateurs & Droits
+  USER_CREATED
+  USER_DEACTIVATED
+  ROLE_CHANGED
+  PERMISSION_CHANGED
+  // Prix
+  PRICE_CHANGED
+  // Documents
+  DOCUMENT_EXPORTED
+  // Agences
+  CENTER_CREATED
+  INSTALL_LINK_GENERATED
+  INSTALL_LINK_USED
+  // Système
+  SYNC_COMPLETED
+  SYNC_FAILED
+  UNAUTHORIZED_ACCESS_ATTEMPT
+  BACKUP_CREATED
+}
+
+// ─────────────────────────────────────────────
+// PLATEFORME
+// ─────────────────────────────────────────────
+
+/// Entreprise cliente (locataire SaaS)
+model Company {
+  id              String    @id @default(cuid())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Identité
+  tradeName       String                   // Nom commercial (affiché partout — white label)
+  legalName       String?                  // Dénomination sociale
+  logoUrl         String?                  // Logo (Cloudinary)
+  ownerName       String
+  phone           String
+  email           String    @unique
+  address         String?
+  city            String?
+  commune         String?
+  country         String    @default("BJ")
+  poBox           String?
+
+  // Légal & fiscal
+  taxId           String?                  // IFU
+  tradeRegNumber  String?                  // RCCM
+  fiscalInfo      Json?                    // Infos fiscales complémentaires
+
+  // Paramètres
+  currency        String    @default("XOF")
+  timezone        String    @default("Africa/Porto-Novo")
+  invoicePrefix   String    @default("FACT")
+  invoiceCounter  Int       @default(1)
+
+  // Statut
+  isActive        Boolean   @default(true)
+  suspendedAt     DateTime?
+  suspendedReason String?
+
+  // Relations
+  centers         Center[]
+  users           User[]
+  products        Product[]
+  suppliers       Supplier[]
+  customers       Customer[]
+  auditLogs       AuditLog[]
+  installLinks    AgencyInstallLink[]
+  notifications   Notification[]
+
+  @@map("companies")
+}
+
+// ─────────────────────────────────────────────
+// CENTRES / AGENCES
+// ─────────────────────────────────────────────
+
+/// Centre de vente / agence
+model Center {
+  id          String        @id @default(cuid())
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  companyId   String
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  name        String
+  code        String                        // Code unique interne
+  address     String?
+  city        String?
+  phone       String?
+  managerId   String?                       // FK vers User (gérant)
+
+  status      CenterStatus  @default(ACTIVE)
+
+  // Relations
+  users       UserCenter[]                  // Utilisateurs affectés à ce centre
+  cashRegisters CashRegister[]
+  stocks      Stock[]
+  receipts    GoodsReceipt[]
+  purchases   Purchase[]
+  transfers   StockTransfer[]
+  expenses    Expense[]
+  inventories Inventory[]
+  auditLogs   AuditLog[]
+  installLinks AgencyInstallLink[]
+
+  @@unique([companyId, code])
+  @@map("centers")
+}
+
+/// Lien d'installation pour une nouvelle agence
+model AgencyInstallLink {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime
+  usedAt        DateTime?
+
+  companyId     String
+  company       Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  centerId      String
+  center        Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
+
+  token         String    @unique                // Token signé (JWT)
+  isUsed        Boolean   @default(false)
+  createdById   String                           // Qui a généré le lien
+
+  @@map("agency_install_links")
+}
+
+// ─────────────────────────────────────────────
+// UTILISATEURS & AUTORISATIONS
+// ─────────────────────────────────────────────
+
+/// Compte utilisateur
+model User {
+  id              String      @id @default(cuid())
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  companyId       String?                        // null = plateforme admin
+  company         Company?    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  email           String      @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  phone           String?
+  avatarUrl       String?
+  role            UserRole
+
+  isActive        Boolean     @default(true)
+  deactivatedAt   DateTime?
+  lastLoginAt     DateTime?
+  loginAttempts   Int         @default(0)
+  lockedUntil     DateTime?
+
+  // Relations
+  centers         UserCenter[]                   // Centres autorisés
+  cashSessions    CashSession[]
+  sales           Sale[]
+  auditLogs       AuditLog[]
+  cancellationRequests  Cancellation[]  @relation("CancellationRequester")
+  cancellationApprovals Cancellation[]  @relation("CancellationApprover")
+  sessions        AuthSession[]
+
+  @@map("users")
+}
+
+/// Table de jointure Utilisateur ↔ Centre
+model UserCenter {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  centerId    String
+  center      Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  assignedAt  DateTime  @default(now())
+  isActive    Boolean   @default(true)
+
+  @@unique([userId, centerId])
+  @@map("user_centers")
+}
+
+/// Sessions d'authentification
+model AuthSession {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionToken String   @unique
+  expires     DateTime
+  createdAt   DateTime  @default(now())
+  ipAddress   String?
+  userAgent   String?
+
+  @@map("auth_sessions")
+}
+
+// ─────────────────────────────────────────────
+// PRODUITS & UNITÉS
+// ─────────────────────────────────────────────
+
+/// Produit (espèce de poisson, type de produit)
+model Product {
+  id              String      @id @default(cuid())
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  companyId       String
+  company         Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  name            String
+  internalCode    String?
+  barcode         String?
+  species         String?                        // Espèce (tilapia, carpe, etc.)
+  type            ProductType @default(FRESH)
+  description     String?
+
+  // Unité principale
+  baseUnitId      String
+  baseUnit        Unit        @relation("ProductBaseUnit", fields: [baseUnitId], references: [id])
+
+  // Prix
+  purchasePrice   Decimal     @db.Decimal(12, 2) @default(0)
+  sellingPrice    Decimal     @db.Decimal(12, 2) @default(0)
+
+  // Alertes
+  stockAlertQty   Decimal     @db.Decimal(12, 3) @default(0)
+
+  isActive        Boolean     @default(true)
+
+  // Relations
+  stocks          Stock[]
+  saleLines       SaleLine[]
+  receiptLines    GoodsReceiptLine[]
+  priceHistory    ProductPriceHistory[]
+  unitConversions UnitConversion[]
+
+  @@map("products")
+}
+
+/// Unité de mesure
+model Unit {
+  id          String    @id @default(cuid())
+  companyId   String?                            // null = unité globale plateforme
+  name        String                             // "Kilogramme"
+  symbol      String                             // "kg"
+  isBaseUnit  Boolean   @default(false)
+
+  products        Product[]       @relation("ProductBaseUnit")
+  conversionsFrom UnitConversion[] @relation("ConversionFrom")
+  conversionsTo   UnitConversion[] @relation("ConversionTo")
+
+  @@map("units")
+}
+
+/// Conversion entre unités (ex: 1 carton = 12.5 kg)
+model UnitConversion {
+  id          String    @id @default(cuid())
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  fromUnitId  String
+  fromUnit    Unit      @relation("ConversionFrom", fields: [fromUnitId], references: [id])
+  toUnitId    String
+  toUnit      Unit      @relation("ConversionTo", fields: [toUnitId], references: [id])
+  factor      Decimal   @db.Decimal(12, 6)       // 1 fromUnit = factor toUnit
+
+  @@map("unit_conversions")
+}
+
+/// Historique des prix
+model ProductPriceHistory {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  purchasePrice Decimal   @db.Decimal(12, 2)
+  sellingPrice  Decimal   @db.Decimal(12, 2)
+  changedById   String
+
+  @@map("product_price_history")
+}
+
+// ─────────────────────────────────────────────
+// STOCKS
+// ─────────────────────────────────────────────
+
+/// Stock par produit et par centre
+model Stock {
+  id            String    @id @default(cuid())
+  updatedAt     DateTime  @updatedAt
+
+  centerId      String
+  center        Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  quantity      Decimal   @db.Decimal(12, 3) @default(0)   // Stock disponible total
+  reservedQty   Decimal   @db.Decimal(12, 3) @default(0)   // Réservé aux caisses offline
+  version       Int       @default(0)                        // Verrou optimiste
+
+  movements     StockMovement[]
+
+  @@unique([centerId, productId])
+  @@map("stocks")
+}
+
+/// Mouvement de stock (toute modification passe ici)
+model StockMovement {
+  id            String            @id @default(cuid())
+  createdAt     DateTime          @default(now())
+
+  stockId       String
+  stock         Stock             @relation(fields: [stockId], references: [id])
+
+  type          StockMovementType
+  quantity      Decimal           @db.Decimal(12, 3)   // + entrant / - sortant
+  unitId        String?
+  batchId       String?
+  batch         Batch?            @relation(fields: [batchId], references: [id])
+
+  referenceType String?           // "Sale", "GoodsReceipt", etc.
+  referenceId   String?           // ID de la vente / réception
+
+  notes         String?
+  performedById String
+  centerId      String
+
+  @@map("stock_movements")
+}
+
+/// Lot de marchandise
+model Batch {
+  id              String    @id @default(cuid())
+  createdAt       DateTime  @default(now())
+  receiptId       String?
+  receipt         GoodsReceipt? @relation(fields: [receiptId], references: [id])
+  lotNumber       String?
+  cartonCount     Int?
+  grossWeight     Decimal?  @db.Decimal(12, 3)
+  netWeight       Decimal?  @db.Decimal(12, 3)
+  receivedAt      DateTime  @default(now())
+  expiresAt       DateTime?
+  notes           String?
+  movements       StockMovement[]
+
+  @@map("batches")
+}
+
+// ─────────────────────────────────────────────
+// FOURNISSEURS & ACHATS
+// ─────────────────────────────────────────────
+
+/// Fournisseur
+model Supplier {
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  taxId       String?
+  isActive    Boolean   @default(true)
+
+  purchases   Purchase[]
+  receipts    GoodsReceipt[]
+
+  @@map("suppliers")
+}
+
+/// Achat fournisseur
+model Purchase {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  companyId     String
+  centerId      String
+  center        Center    @relation(fields: [centerId], references: [id])
+  supplierId    String
+  supplier      Supplier  @relation(fields: [supplierId], references: [id])
+
+  reference     String?
+  totalAmount   Decimal   @db.Decimal(12, 2)
+  paidAmount    Decimal   @db.Decimal(12, 2) @default(0)
+  dueDate       DateTime?
+  notes         String?
+  createdById   String
+
+  receipts      GoodsReceipt[]
+
+  @@map("purchases")
+}
+
+/// Réception de marchandises
+model GoodsReceipt {
+  id              String    @id @default(cuid())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  centerId        String
+  center          Center    @relation(fields: [centerId], references: [id])
+  supplierId      String?
+  supplier        Supplier? @relation(fields: [supplierId], references: [id])
+  purchaseId      String?
+  purchase        Purchase? @relation(fields: [purchaseId], references: [id])
+
+  reference       String?
+  receivedAt      DateTime  @default(now())
+  isValidated     Boolean   @default(false)   // Validation = augmentation du stock
+  validatedAt     DateTime?
+  validatedById   String?
+
+  transportCost   Decimal   @db.Decimal(12, 2) @default(0)
+  iceCost         Decimal   @db.Decimal(12, 2) @default(0)
+  handlingCost    Decimal   @db.Decimal(12, 2) @default(0)
+  otherCosts      Decimal   @db.Decimal(12, 2) @default(0)
+
+  notes           String?
+  createdById     String
+
+  // Brouillon (sauvegarde progressive)
+  isDraft         Boolean   @default(true)
+  draftData       Json?
+
+  lines           GoodsReceiptLine[]
+  batches         Batch[]
+
+  @@map("goods_receipts")
+}
+
+/// Ligne de réception
+model GoodsReceiptLine {
+  id              String    @id @default(cuid())
+  receiptId       String
+  receipt         GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product   @relation(fields: [productId], references: [id])
+
+  cartonCount     Int?
+  grossWeight     Decimal?  @db.Decimal(12, 3)
+  netWeight       Decimal   @db.Decimal(12, 3)
+  unitId          String?
+  unitPrice       Decimal   @db.Decimal(12, 2)
+  totalPrice      Decimal   @db.Decimal(12, 2)
+
+  @@map("goods_receipt_lines")
+}
+
+// ─────────────────────────────────────────────
+// CLIENTS
+// ─────────────────────────────────────────────
+
+model Customer {
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  isActive    Boolean   @default(true)
+  sales       Sale[]
+
+  @@map("customers")
+}
+
+// ─────────────────────────────────────────────
+// CAISSES & SESSIONS
+// ─────────────────────────────────────────────
+
+/// Caisse enregistreuse
+model CashRegister {
+  id          String              @id @default(cuid())
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  centerId    String
+  center      Center              @relation(fields: [centerId], references: [id], onDelete: Cascade)
+
+  name        String
+  state       CashRegisterState   @default(ACTIVE)
+  isActive    Boolean             @default(true)
+
+  sessions    CashSession[]
+
+  @@map("cash_registers")
+}
+
+/// Session de caisse (shift d'un caissier)
+model CashSession {
+  id              String    @id @default(cuid())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  cashRegisterId  String
+  cashRegister    CashRegister @relation(fields: [cashRegisterId], references: [id])
+  cashierId       String
+  cashier         User      @relation(fields: [cashierId], references: [id])
+
+  openedAt        DateTime  @default(now())
+  closedAt        DateTime?
+
+  openingBalance  Decimal   @db.Decimal(12, 2)   // Fond de caisse déclaré
+  closingBalance  Decimal?  @db.Decimal(12, 2)   // Montant réellement compté
+  theoreticalBalance Decimal? @db.Decimal(12, 2) // Calculé par le système
+  discrepancy     Decimal?  @db.Decimal(12, 2)   // Écart
+
+  isValidated     Boolean   @default(false)
+  validatedById   String?
+  notes           String?
+
+  // Connexion au moment de l'ouverture
+  deviceId        String?
+  connectionState String?
+
+  sales           Sale[]
+  cashMovements   CashMovement[]
+  closure         CashClosure?
+
+  @@map("cash_sessions")
+}
+
+/// Mouvement de caisse (sortie autorisée, fond d'appoint, etc.)
+model CashMovement {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  sessionId     String
+  session       CashSession @relation(fields: [sessionId], references: [id])
+  type          String    // "CASH_OUT", "CASH_IN", "ADVANCE"
+  amount        Decimal   @db.Decimal(12, 2)
+  reason        String
+  approvedById  String?
+  performedById String
+
+  @@map("cash_movements")
+}
+
+/// Clôture de caisse (historique immuable)
+model CashClosure {
+  id                  String    @id @default(cuid())
+  createdAt           DateTime  @default(now())
+
+  sessionId           String    @unique
+  session             CashSession @relation(fields: [sessionId], references: [id])
+
+  openingBalance      Decimal   @db.Decimal(12, 2)
+  totalSales          Decimal   @db.Decimal(12, 2)
+  totalCash           Decimal   @db.Decimal(12, 2)
+  totalMobileMoney    Decimal   @db.Decimal(12, 2)
+  totalCard           Decimal   @db.Decimal(12, 2)
+  totalOther          Decimal   @db.Decimal(12, 2)
+  totalRefunds        Decimal   @db.Decimal(12, 2)
+  totalCashOut        Decimal   @db.Decimal(12, 2)
+  theoreticalBalance  Decimal   @db.Decimal(12, 2)
+  declaredBalance     Decimal   @db.Decimal(12, 2)
+  discrepancy         Decimal   @db.Decimal(12, 2)
+
+  cashierId           String
+  validatedById       String?
+  notes               String?
+
+  @@map("cash_closures")
+}
+
+// ─────────────────────────────────────────────
+// VENTES
+// ─────────────────────────────────────────────
+
+/// Vente
+model Sale {
+  id              String      @id @default(cuid())
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Clé d'idempotence (anti-doublon sync offline)
+  idempotencyKey  String      @unique
+
+  companyId       String
+  centerId        String
+  sessionId       String
+  session         CashSession @relation(fields: [sessionId], references: [id])
+  cashierId       String
+  cashier         User        @relation(fields: [cashierId], references: [id])
+  customerId      String?
+  customer        Customer?   @relation(fields: [customerId], references: [id])
+
+  saleNumber      String      @unique                  // Numéro affiché
+  status          SaleStatus  @default(COMPLETED)
+
+  subtotal        Decimal     @db.Decimal(12, 2)
+  discountAmount  Decimal     @db.Decimal(12, 2) @default(0)
+  totalAmount     Decimal     @db.Decimal(12, 2)
+
+  notes           String?
+
+  // Offline
+  createdOffline  Boolean     @default(false)
+  deviceId        String?
+  syncedAt        DateTime?
+
+  lines           SaleLine[]
+  payments        Payment[]
+  cancellations   Cancellation[]
+  refunds         Refund[]
+  documents       Document[]
+
+  @@map("sales")
+}
+
+/// Ligne de vente
+model SaleLine {
+  id            String    @id @default(cuid())
+  saleId        String
+  sale          Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id])
+
+  quantity      Decimal   @db.Decimal(12, 3)
+  unitId        String?
+  unitPrice     Decimal   @db.Decimal(12, 2)
+  discount      Decimal   @db.Decimal(12, 2) @default(0)
+  lineTotal     Decimal   @db.Decimal(12, 2)
+
+  @@map("sale_lines")
+}
+
+/// Paiement
+model Payment {
+  id              String        @id @default(cuid())
+  createdAt       DateTime      @default(now())
+
+  // Idempotence
+  idempotencyKey  String        @unique
+
+  saleId          String
+  sale            Sale          @relation(fields: [saleId], references: [id])
+
+  method          PaymentMethod
+  amount          Decimal       @db.Decimal(12, 2)
+  reference       String?       // Référence mobile money, etc.
+  notes           String?
+
+  @@map("payments")
+}
+
+// ─────────────────────────────────────────────
+// ANNULATIONS & REMBOURSEMENTS
+// ─────────────────────────────────────────────
+
+/// Demande d'annulation d'une vente
+model Cancellation {
+  id              String              @id @default(cuid())
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  saleId          String
+  sale            Sale                @relation(fields: [saleId], references: [id])
+
+  requesterId     String                          // Qui demande
+  requester       User                @relation("CancellationRequester", fields: [requesterId], references: [id])
+  approverId      String?                         // Qui approuve (≠ demandeur obligatoire)
+  approver        User?               @relation("CancellationApprover", fields: [approverId], references: [id])
+
+  status          CancellationStatus  @default(PENDING)
+  requestReason   String
+  rejectionReason String?
+
+  decidedAt       DateTime?
+  stockImpact     Json?               // Détail des mouvements de stock liés
+  cashImpact      Decimal?   @db.Decimal(12, 2)
+
+  @@map("cancellations")
+}
+
+/// Remboursement
+model Refund {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  saleId        String
+  sale          Sale      @relation(fields: [saleId], references: [id])
+  amount        Decimal   @db.Decimal(12, 2)
+  method        PaymentMethod
+  reason        String
+  approvedById  String
+  performedById String
+
+  @@map("refunds")
+}
+
+// ─────────────────────────────────────────────
+// INVENTAIRES
+// ─────────────────────────────────────────────
+
+model Inventory {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  centerId      String
+  center        Center    @relation(fields: [centerId], references: [id])
+  startedById   String
+  validatedById String?
+  isValidated   Boolean   @default(false)
+  validatedAt   DateTime?
+  notes         String?
+
+  lines         InventoryLine[]
+
+  @@map("inventories")
+}
+
+model InventoryLine {
+  id              String    @id @default(cuid())
+  inventoryId     String
+  inventory       Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  productId       String
+  theoreticalQty  Decimal   @db.Decimal(12, 3)
+  countedQty      Decimal   @db.Decimal(12, 3)
+  discrepancy     Decimal   @db.Decimal(12, 3)
+  discrepancyReason String?
+
+  @@map("inventory_lines")
+}
+
+// ─────────────────────────────────────────────
+// TRANSFERTS INTER-CENTRES
+// ─────────────────────────────────────────────
+
+model StockTransfer {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  fromCenterId  String
+  fromCenter    Center    @relation(fields: [fromCenterId], references: [id])
+  toCenterId    String
+  isValidated   Boolean   @default(false)
+  validatedAt   DateTime?
+  notes         String?
+  createdById   String
+  validatedById String?
+
+  lines         StockTransferLine[]
+
+  @@map("stock_transfers")
+}
+
+model StockTransferLine {
+  id          String        @id @default(cuid())
+  transferId  String
+  transfer    StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  productId   String
+  quantity    Decimal       @db.Decimal(12, 3)
+  unitId      String?
+
+  @@map("stock_transfer_lines")
+}
+
+// ─────────────────────────────────────────────
+// DÉPENSES
+// ─────────────────────────────────────────────
+
+model Expense {
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  centerId    String
+  center      Center    @relation(fields: [centerId], references: [id])
+  category    String
+  amount      Decimal   @db.Decimal(12, 2)
+  description String?
+  date        DateTime  @default(now())
+  createdById String
+
+  @@map("expenses")
+}
+
+// ─────────────────────────────────────────────
+// DOCUMENTS COMMERCIAUX
+// ─────────────────────────────────────────────
+
+model Document {
+  id          String        @id @default(cuid())
+  createdAt   DateTime      @default(now())
+  companyId   String
+  centerId    String?
+  saleId      String?
+  sale        Sale?         @relation(fields: [saleId], references: [id])
+  type        DocumentType
+  number      String        @unique
+  pdfUrl      String?
+  data        Json                              // Snapshot des données au moment de la création
+  isVoided    Boolean       @default(false)
+  voidedAt    DateTime?
+  voidedById  String?
+
+  @@map("documents")
+}
+
+// ─────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────
+
+model Notification {
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId      String?
+  centerId    String?
+  type        String
+  title       String
+  message     String
+  data        Json?
+  isRead      Boolean   @default(false)
+  readAt      DateTime?
+
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────────
+// SYNCHRONISATION OFFLINE
+// ─────────────────────────────────────────────
+
+/// File d'opérations à synchroniser
+model SyncOperation {
+  id              String      @id @default(cuid())
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  companyId       String
+  centerId        String?
+  deviceId        String
+
+  idempotencyKey  String      @unique              // Clé anti-doublon
+  operationType   String                           // "SALE", "RECEIPT", etc.
+  payload         Json                             // Données de l'opération
+  status          SyncStatus  @default(PENDING)
+  attempts        Int         @default(0)
+  lastError       String?
+  resolvedAt      DateTime?
+  dependsOn       String?                          // ID d'une autre SyncOperation
+
+  @@map("sync_operations")
+}
+
+// ─────────────────────────────────────────────
+// JOURNAL D'AUDIT (protégé — jamais modifiable)
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id              String          @id @default(cuid())
+  createdAt       DateTime        @default(now())
+
+  companyId       String?
+  company         Company?        @relation(fields: [companyId], references: [id])
+  centerId        String?
+  center          Center?         @relation(fields: [centerId], references: [id])
+  userId          String?
+  user            User?           @relation(fields: [userId], references: [id])
+
+  eventType       AuditEventType
+  referenceType   String?         // "Sale", "CashSession", etc.
+  referenceId     String?
+
+  // Timestamps double (appareil + serveur)
+  deviceTimestamp DateTime?
+  serverTimestamp DateTime        @default(now())
+
+  result          String?         // "SUCCESS", "FAILED", "DENIED"
+  reason          String?
+  oldValues       Json?
+  newValues       Json?
+  metadata        Json?
+
+  // Intégrité : hash du log précédent (chaîne de hachage)
+  previousHash    String?
+  hash            String?
+
+  ipAddress       String?
+  userAgent       String?
+  deviceId        String?
+  sessionId       String?
+
+  @@map("audit_logs")
+}
