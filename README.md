@@ -109,7 +109,7 @@ Les factures normalisées e-MECeF (DGI Bénin) ne sont pas encore produites : vo
 - Sans boîte de dialogue (comme Sage) : XP-80C en imprimante par défaut de Windows, et Chrome lancé avec
   `--kiosk-printing` (voir DEPLOIEMENT.md).
 - **Sans connexion, l'impression continue à l'identique** : chaque caisse garde d'avance une plage de
-  numéros de facture (100) et l'en-tête des tickets (IFU, adresse…). Le ticket porte le numéro définitif ;
+  numéros de facture (150 à 250 d’avance) et l’en-tête des tickets (IFU, adresse…). Le ticket porte le numéro définitif ;
   la vente part au serveur au retour du réseau, avec son heure réelle. À la clôture, les numéros non utilisés
   sont rendus : pas de trou, pas de doublon.
 
@@ -121,13 +121,17 @@ Voir **DEPLOIEMENT.md** : base Supabase, variables, région, premier déploiemen
 
 - **Application installable (PWA)** : `public/sw.js` garde les pages et les fichiers
   de l'application ; la caisse s'ouvre même sans réseau après un redémarrage.
-- **Réserve par caisse** : avant une coupure, chaque caisse réserve des quantités
-  (bouton « Réserve hors ligne »). Hors ligne, elle ne vend que dans cette limite :
-  deux caisses ne peuvent jamais vendre le même poisson. La réserve non vendue
-  revient au stock à la clôture.
-- **Synchronisation** : automatique (retour du réseau + toutes les 30 s), dans l'ordre,
-  sans doublon. Une vente refusée (stock, prix, caisse clôturée) passe en « conflit »
-  et reste visible dans *Synchronisation* pour décision d'un responsable.
+- **Rien à préparer** : la caisse se tient à jour seule. Toutes les 5 secondes, elle compare
+  une empreinte légère du stock et du catalogue avec le serveur (`/api/sync/state`) ;
+  réception validée, vente d'une autre caisse, prix modifié → rechargement immédiat
+  (le stock seul si seul le stock a changé).
+- **Coupure** : la caisse continue sur l'appareil, avec le dernier stock connu ; facture
+  imprimée avec son numéro définitif. Si un article est vendu au-delà du stock enregistré
+  (le poisson était là, l'enregistrement non), la vente passe : à l'envoi, le serveur
+  régularise l'écart et le trace (mouvement « ajustement d'inventaire » + journal d'audit).
+- **Retour du réseau** : les ventes partent aussitôt, dans l'ordre, sans doublon, avec leur
+  heure réelle. Une vente refusée (prix modifié pendant la coupure, caisse déjà clôturée)
+  passe en « conflit » et reste visible dans *Synchronisation* pour décision d'un responsable.
 - **Brouillons** : la saisie d'une réception est sauvegardée sur l'appareil au fil de
   l'eau et proposée à la réouverture (coupure de courant, fermeture du navigateur).
 

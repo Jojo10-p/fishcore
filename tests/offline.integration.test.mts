@@ -135,10 +135,17 @@ test("§26.3 — ventes hors ligne synchronisées une seule fois, prises sur la 
   assert.equal(Number(res.quantity), 1);
 });
 
-test("au-delà de sa réserve, la vente hors ligne passe en conflit", async () => {
+test("vente hors ligne au-delà du stock disponible : acceptée (marchandise partie), écart régularisé et tracé", async () => {
+  // Stock 5, réservé 5 (c1 : 1, c2 : 4). c1 vend 2 hors ligne : 1 pris sur sa réserve,
+  // 1 au-delà → écart de 1 régularisé, puis sortie de 2 : stock 5 + 1 − 2 = 4.
   const r = await sell("c1", ctx.sessions[0], 2);
-  assert.equal(r.status, 409);
-  assert.equal(r.json.code, "INSUFFICIENT_STOCK");
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  const stock = await stockRow();
+  assert.equal(Number(stock.quantity), 4);
+  assert.equal(Number(stock.reservedQty), 4, "la réserve de c2 n'est pas touchée");
+  const adj = await prisma.stockMovement.findFirstOrThrow({ where: { stockId: stock.id, type: "INVENTORY_ADJUST", referenceId: r.json.data.id } });
+  assert.equal(Number(adj.quantity), 1);
+  assert.match(adj.notes ?? "", /hors connexion/);
 });
 
 test("prix modifié pendant la coupure : conflit à arbitrer", async () => {
@@ -153,7 +160,8 @@ test("prix modifié pendant la coupure : conflit à arbitrer", async () => {
 test("la clôture rend au stock libre la réserve non consommée", async () => {
   const close = await call(cashRoute.POST, {
     path: "/api/cash/sessions", cookie: ctx.cookies.c1,
-    body: { action: "close", sessionId: ctx.sessions[0], declaredBalance: 20000 },
+    // 20 000 (5 kg) + 8 000 (2 kg) encaissés en espèces
+    body: { action: "close", sessionId: ctx.sessions[0], declaredBalance: 28000 },
   });
   assert.equal(close.status, 200, JSON.stringify(close.json));
   assert.equal(Number(close.json.data.discrepancy), 0);
@@ -186,9 +194,9 @@ test("remboursement imputé à la caisse qui rend l'argent", async () => {
   assert.equal(Number(close.json.data.theoreticalBalance), -20000);
   assert.equal(Number(close.json.data.totalRefunds), 20000);
 
-  // Stock : 5 restants + 5 rendus ; plus aucune réserve active
+  // Stock : 4 restants + 5 rendus ; plus aucune réserve active
   const stock = await stockRow();
-  assert.equal(Number(stock.quantity), 10);
+  assert.equal(Number(stock.quantity), 9);
   assert.equal(Number(stock.reservedQty), 0);
 });
 

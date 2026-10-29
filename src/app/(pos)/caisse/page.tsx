@@ -9,12 +9,11 @@ import type { TicketHeader } from "@/lib/offline/db";
 import { getNumbering, refreshNumbering, remainingOf } from "@/lib/offline/numbering";
 import { SessionProvider, useSession } from "@/components/app/session-provider";
 import { ConnectionBadge, useOnline } from "@/components/app/connection-badge";
-import { Alert, Badge, Button, Field, Input, Modal, Money, Qty, Select, Spinner } from "@/components/ui";
+import { Alert, Badge, Button, Field, Input, Modal, Money, Select, Spinner } from "@/components/ui";
 import { currencyLabel } from "@/lib/utils";
 import { useOfflineSync } from "@/hooks/use-offline-sync";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
-import { getOfflineDB } from "@/lib/offline/db";
-import { getDeviceId, getOfflineAvailability, hasUnsyncedSales } from "@/lib/offline/sales";
+import { getDeviceId, hasUnsyncedSales } from "@/lib/offline/sales";
 
 // ─────────────────────────────────────────────
 // Caisse (cahier §7, §9, §11) — fonctionne aussi sans réseau :
@@ -352,10 +351,13 @@ function ActiveRegister({
     },
     [autoPrint, printLast, cashSession.id]
   );
-  const [showReserve, setShowReserve] = useState(false);
   const [showClose, setShowClose] = useState(false);
 
-  const onSyncComplete = useCallback(() => setCatalogVersion((v) => v + 1), []);
+  // Après chaque synchro : catalogue rechargé, réserve de numéros complétée si besoin
+  const onSyncComplete = useCallback(() => {
+    setCatalogVersion((v) => v + 1);
+    void refreshNumbers();
+  }, [refreshNumbers]);
   const sync = useOfflineSync({ centerId: cashSession.centerId, sessionId: cashSession.id, onSyncComplete });
 
   return (
@@ -387,7 +389,7 @@ function ActiveRegister({
           <input type="checkbox" checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />
           Impression auto
         </label>
-        {numbersLeft !== null && numbersLeft < 30 && (
+        {numbersLeft !== null && numbersLeft < 20 && (
           <Badge tone={numbersLeft < 10 ? "red" : "amber"}>
             {numbersLeft} facture(s) d&apos;avance — {numbersLeft === 0 ? "connectez la caisse" : "reconnectez bientôt"}
           </Badge>
@@ -404,9 +406,6 @@ function ActiveRegister({
             )}
           </span>
         )}
-        <Button variant="secondary" className="px-3 py-1.5" onClick={() => setShowReserve(true)}>
-          Réserve hors ligne
-        </Button>
         <Button variant="danger" className="px-3 py-1.5" onClick={() => setShowClose(true)}>
           Clôturer
         </Button>
@@ -424,16 +423,6 @@ function ActiveRegister({
         />
       </div>
 
-      <ReserveModal
-        open={showReserve}
-        onClose={() => setShowReserve(false)}
-        sessionId={cashSession.id}
-        centerId={cashSession.centerId}
-        onSaved={async () => {
-          await sync.syncNow();
-          setCatalogVersion((v) => v + 1);
-        }}
-      />
       <CloseModal
         open={showClose}
         onClose={() => setShowClose(false)}
@@ -445,124 +434,6 @@ function ActiveRegister({
     </div>
     {printJob && <PrintArea key={printJob.nonce} ticket={printJob.ticket} />}
     </>
-  );
-}
-
-// ── Réserve hors ligne (cahier §9.4) ─────────
-function ReserveModal({
-  open,
-  onClose,
-  sessionId,
-  centerId,
-  onSaved,
-}: {
-  open: boolean;
-  onClose: () => void;
-  sessionId: string;
-  centerId: string;
-  onSaved: () => Promise<void>;
-}) {
-  const online = useOnline();
-  const [rows, setRows] = useState<Array<{ productId: string; name: string; unit: string; free: number; reserved: number; available: number }>>([]);
-  const [targets, setTargets] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const load = async () => {
-      const db = getOfflineDB();
-      const [products, stocks, reservations, availability] = await Promise.all([
-        db.products.toArray(),
-        db.stocks.where("centerId").equals(centerId).toArray(),
-        db.reservations.where("sessionId").equals(sessionId).toArray(),
-        getOfflineAvailability(sessionId),
-      ]);
-      const stockBy = new Map(stocks.map((s) => [s.productId, s]));
-      const resBy = new Map(reservations.map((r) => [r.productId, r.serverQuantity]));
-      const list = products
-        .filter((p) => p.isActive && stockBy.has(p.id))
-        .map((p) => {
-          const st = stockBy.get(p.id)!;
-          const reserved = resBy.get(p.id) ?? 0;
-          return {
-            productId: p.id,
-            name: p.name,
-            unit: p.baseUnitSymbol,
-            // Libre pour cette caisse = non réservé par personne + ce qu'elle détient déjà
-            free: Math.max(0, st.quantity - st.reservedQty) + reserved,
-            reserved,
-            available: availability.get(p.id) ?? 0,
-          };
-        })
-        .sort((a, b) => a.name.localeCompare(b.name));
-      setRows(list);
-      setTargets(Object.fromEntries(list.map((r) => [r.productId, String(r.reserved)])));
-    };
-    void load();
-  }, [open, centerId, sessionId]);
-
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const items = rows
-        .map((r) => ({ productId: r.productId, quantity: Number(targets[r.productId] || 0) }))
-        .filter((it, i) => it.quantity !== rows[i].reserved);
-      if (items.length > 0) await apiSend("/api/stock/reservations", { sessionId, items });
-      await onSaved();
-      onClose();
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Réserve hors ligne de cette caisse"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Fermer
-          </Button>
-          <Button onClick={save} loading={busy} disabled={!online}>
-            Enregistrer la réserve
-          </Button>
-        </>
-      }
-    >
-      <p className="text-sm text-gray-600">
-        Hors connexion, cette caisse ne peut vendre que les quantités réservées ici. Réservez avant une coupure prévue ;
-        ce qui n&apos;est pas vendu revient au stock à la clôture.
-      </p>
-      {!online && <Alert tone="amber">Modification impossible hors connexion.</Alert>}
-      {error && <Alert>{error}</Alert>}
-      <div className="divide-y divide-gray-100 -mx-1">
-        {rows.length === 0 && <p className="text-sm text-gray-500 py-4">Aucun produit en stock dans ce centre.</p>}
-        {rows.map((r) => (
-          <div key={r.productId} className="flex items-center gap-3 py-2 px-1">
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 truncate">{r.name}</p>
-              <p className="text-xs text-gray-500">
-                Max <Qty value={r.free} unit={r.unit} /> · reste à vendre <Qty value={r.available} unit={r.unit} />
-              </p>
-            </div>
-            <Input
-              className="w-24 text-right"
-              inputMode="decimal"
-              aria-label={`Réserve ${r.name}`}
-              value={targets[r.productId] ?? ""}
-              onChange={(e) => setTargets((t) => ({ ...t, [r.productId]: e.target.value.replace(",", ".") }))}
-              disabled={!online}
-            />
-          </div>
-        ))}
-      </div>
-    </Modal>
   );
 }
 

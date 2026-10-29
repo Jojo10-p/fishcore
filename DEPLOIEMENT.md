@@ -53,14 +53,16 @@ Chaque `git push` sur la branche principale redéploie. Les caisses se mettent �
    ```
    Lors de la première impression manuelle, choisir la XP-80C et *Marges : Aucune* : Chrome retient ces réglages.
 4. Ouvrir la caisse **avec connexion** : elle reçoit sa plage de numéros de facture, l'en-tête des tickets
-   et le catalogue. Avant une coupure annoncée, « Réserve hors ligne » pour réserver du stock à cette caisse.
+   et le catalogue. Ensuite, elle se tient à jour toute seule (stock, prix, articles), rien à préparer.
 
 ## 4. Pendant une coupure d'Internet
 
 - La caisse continue : ventes, **facture imprimée avec son numéro définitif**, monnaie rendue.
-- Limites : le stock vendable est celui réservé à la caisse ; un devis ne s'encaisse pas hors ligne ;
-  la caisse dispose de 100 numéros d'avance (un avertissement s'affiche sous 30).
-- Au retour du réseau, les ventes partent automatiquement au serveur, avec leur heure réelle.
+- Rien à préparer avant : la caisse vend avec le dernier stock reçu. Un article vendu au-delà du stock
+  enregistré est signalé (« stock à vérifier ») et l'écart est régularisé et tracé à l'envoi.
+- La caisse garde 150 à 250 numéros de facture d'avance, renouvelés à chaque synchronisation.
+- Seul un devis ne s'encaisse pas hors ligne (son prix doit être vérifié sur le serveur).
+- Au retour du réseau, les ventes partent aussitôt au serveur, avec leur heure réelle.
 - La clôture de caisse se fait avec connexion (toutes les ventes doivent être envoyées).
 
 ## 5. Sauvegardes

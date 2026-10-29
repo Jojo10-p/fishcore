@@ -16,6 +16,7 @@ const cashRoute = await import("@/app/api/cash/sessions/route");
 const numbersRoute = await import("@/app/api/cash/sessions/[id]/numbers/route");
 const salesRoute = await import("@/app/api/sales/route");
 const companyRoute = await import("@/app/api/company/route");
+const syncStateRoute = await import("@/app/api/sync/state/route");
 const { verifyAuditChain } = await import("@/lib/audit");
 const { unusedRanges } = await import("@/lib/invoice-numbers");
 
@@ -155,6 +156,45 @@ test("avance limitée par caisse ; nouveau préfixe : numéros rendus abandonné
   const s5 = await open(ctx.c1, ctx.reg1);
   const b = (await block(ctx.c1, s5)).json.data.block;
   assert.equal(b.prefix, "CPF27");
+});
+
+test("vente hors connexion au-delà du stock enregistré : acceptée, écart tracé ; en ligne : refusée", async () => {
+  const kg = (await prisma.unit.findFirstOrThrow({ where: { symbol: "kg", OR: [{ companyId: ctx.companyId }, { companyId: null }] } })).id;
+  const p = (await call(productsRoute.POST, { path: "/api/products", cookie: ctx.owner, body: { name: "Thon", baseUnitId: kg, purchasePrice: 2000, sellingPrice: 3000, stockAlertQty: 0 } })).json.data;
+  const session = await prisma.cashSession.findFirstOrThrow({ where: { cashierId: (await prisma.user.findFirstOrThrow({ where: { email: "c1@num.bj" } })).id, closedAt: null } });
+  const line = { productId: p.id, quantity: 2, unitPrice: 3000 };
+
+  const online = await call(salesRoute.POST, {
+    path: "/api/sales", cookie: ctx.c1, body: { sessionId: session.id, idempotencyKey: idem(), lines: [line], payments: [{ method: "CASH", amount: 6000 }] },
+  });
+  assert.equal(online.status, 409, "en ligne, pas de vente sans stock");
+
+  const offline = await call(salesRoute.POST, {
+    path: "/api/sales", cookie: ctx.c1,
+    body: { sessionId: session.id, idempotencyKey: idem(), lines: [line], payments: [{ method: "CASH", amount: 6000 }], createdOffline: true, soldAt: new Date().toISOString() },
+  });
+  assert.equal(offline.status, 201, JSON.stringify(offline.json));
+  const stock = await prisma.stock.findFirstOrThrow({ where: { productId: p.id }, include: { movements: { orderBy: { createdAt: "asc" } } } });
+  assert.equal(Number(stock.quantity), 0, "stock jamais négatif");
+  assert.deepEqual(stock.movements.map((m) => [m.type, Number(m.quantity)]).sort(), [["INVENTORY_ADJUST", 2], ["SALE", -2]]);
+  const audit = await prisma.auditLog.findFirst({ where: { companyId: ctx.companyId, eventType: "STOCK_ADJUSTED", referenceId: offline.json.data.id } });
+  assert.ok(audit, "écart tracé au journal");
+  assert.equal(Number(offline.json.data.lines[0].costAmount), 4000, "coût de revient : prix d'achat à défaut de CMP");
+});
+
+test("empreinte de synchro : change dès que le stock ou un prix change", async () => {
+  const stamp = async () => {
+    const r = await call(syncStateRoute.GET, { path: `/api/sync/state?centerId=${ctx.centerId}`, cookie: ctx.c1 });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    return r.json.data.stamp as string;
+  };
+  const a = await stamp();
+  assert.equal(await stamp(), a, "rien n'a changé : même empreinte");
+  await sell(ctx.c1, (await prisma.cashSession.findFirstOrThrow({ where: { closedAt: null, cashRegisterId: ctx.reg1 } })).id);
+  const b = await stamp();
+  assert.notEqual(b, a, "une vente change le stock");
+  await prisma.product.update({ where: { id: ctx.p.id }, data: { sellingPrice: 1300 } });
+  assert.notEqual(await stamp(), b, "un prix modifié change le catalogue");
 });
 
 test("journal d'audit intègre ; la clôture trace les numéros rendus", async () => {

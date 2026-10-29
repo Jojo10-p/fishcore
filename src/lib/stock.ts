@@ -17,18 +17,38 @@ type Decimal = Prisma.Decimal;
 
 /**
  * Sort `qty` du stock pour une vente rattachée à `sessionId`.
- * Consomme d'abord la réserve de cette session (vente préparée pour le hors
- * ligne), puis le stock libre. Lève 409 INSUFFICIENT_STOCK sinon.
+ * Consomme d'abord la réserve de cette session, puis le stock libre.
+ * Lève 409 INSUFFICIENT_STOCK sinon — sauf `regularizeShortfall` : vente déjà
+ * faite hors connexion, la marchandise est partie. Le stock enregistré était
+ * donc trop bas ; l'écart est d'abord régularisé (renvoyé dans `regularized`,
+ * à tracer par l'appelant), puis la vente est sortie.
  */
 export async function consumeStockForSale(
   tx: Tx,
-  params: { centerId: string; productId: string; qty: Decimal; sessionId: string; productName: string; trackBatches?: boolean }
-): Promise<{ stockId: string; fromReservation: Decimal; allocations: BatchAllocation[]; avgCost: Decimal }> {
+  params: {
+    centerId: string;
+    productId: string;
+    qty: Decimal;
+    sessionId: string;
+    productName: string;
+    trackBatches?: boolean;
+    regularizeShortfall?: boolean;
+  }
+): Promise<{ stockId: string; fromReservation: Decimal; allocations: BatchAllocation[]; avgCost: Decimal; regularized: Decimal }> {
   const { centerId, productId, qty, sessionId, productName, trackBatches = false } = params;
+  // Produits suivis par lot : un écart ne se régularise pas sans n° de lot
+  const regularize = !!params.regularizeShortfall && !trackBatches;
+
+  if (regularize) {
+    await tx.$executeRaw`
+      INSERT INTO "stocks" ("id", "centerId", "productId", "quantity", "reservedQty", "avgCost", "version", "updatedAt")
+      VALUES (md5(random()::text || clock_timestamp()::text), ${centerId}, ${productId}, 0, 0, 0, 0, NOW())
+      ON CONFLICT ("centerId", "productId") DO NOTHING`;
+  }
 
   // Verrouille la ligne de stock (sérialise les ventes concurrentes du produit)
-  const stocks = await tx.$queryRaw<{ id: string; avgCost: Prisma.Decimal }[]>`
-    SELECT "id", "avgCost" FROM "stocks" WHERE "centerId" = ${centerId} AND "productId" = ${productId} FOR UPDATE`;
+  const stocks = await tx.$queryRaw<{ id: string; avgCost: Prisma.Decimal; quantity: Prisma.Decimal; reservedQty: Prisma.Decimal }[]>`
+    SELECT "id", "avgCost", "quantity", "reservedQty" FROM "stocks" WHERE "centerId" = ${centerId} AND "productId" = ${productId} FOR UPDATE`;
   if (stocks.length === 0) {
     throw new ApiError(409, `Stock insuffisant pour « ${productName} »`, "INSUFFICIENT_STOCK");
   }
@@ -49,6 +69,18 @@ export async function consumeStockForSale(
        WHERE "id" = ${reservations[0].id}`;
   }
 
+  // 1b. Vente hors connexion au-delà du stock enregistré : l'écart est remis
+  //     d'abord (ajustement tracé par l'appelant), la vente passe ensuite
+  let regularized = new D(0);
+  if (regularize) {
+    const free = new D(stocks[0].quantity).sub(stocks[0].reservedQty);
+    if (fromFree.gt(free)) {
+      regularized = fromFree.sub(free);
+      await tx.$executeRaw`
+        UPDATE "stocks" SET "quantity" = "quantity" + ${regularized.toString()}::numeric, "updatedAt" = NOW() WHERE "id" = ${stockId}`;
+    }
+  }
+
   // 2. Sortie : la part réservée diminue quantity ET reservedQty ; la part libre
   //    n'est acceptée que si le stock non réservé suffit.
   const rows = await tx.$queryRaw<{ id: string }[]>`
@@ -67,7 +99,7 @@ export async function consumeStockForSale(
   // 3. Produits suivis par lot : sortie des lots non périmés, le plus proche de la péremption d'abord
   const allocations = trackBatches ? await allocateBatchesFefo(tx, { centerId, productId, qty, productName }) : [];
 
-  return { stockId, fromReservation, allocations, avgCost: new D(stocks[0].avgCost) };
+  return { stockId, fromReservation, allocations, avgCost: new D(stocks[0].avgCost), regularized };
 }
 
 export interface BatchAllocation {

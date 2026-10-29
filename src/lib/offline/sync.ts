@@ -154,18 +154,19 @@ export async function retryOperation(opId: string): Promise<void> {
  * Le stock local = stock serveur − ventes locales non encore confirmées :
  * une vente hors ligne en attente n'est jamais « effacée » par le rafraîchissement.
  */
-export async function syncCatalogFromServer(centerId: string, sessionId?: string): Promise<boolean> {
+export async function syncCatalogFromServer(centerId: string, sessionId?: string, options: { stockOnly?: boolean } = {}): Promise<boolean> {
   const db = getOfflineDB();
   try {
     const [productsRes, stockRes, reservationsRes] = await Promise.all([
-      fetch(`/api/products?centerId=${encodeURIComponent(centerId)}`),
+      // stockOnly : seul le stock a changé (vente, réception…) — le catalogue n'est pas rechargé
+      options.stockOnly ? Promise.resolve(null) : fetch(`/api/products?centerId=${encodeURIComponent(centerId)}`),
       fetch(`/api/stock?centerId=${encodeURIComponent(centerId)}`),
       sessionId ? fetch(`/api/stock/reservations?sessionId=${encodeURIComponent(sessionId)}`) : Promise.resolve(null),
     ]);
-    if (!productsRes.ok || !stockRes.ok) return false;
+    if ((productsRes && !productsRes.ok) || !stockRes.ok) return false;
 
     // offlineData : nombres (et non chaînes Decimal) au format attendu par IndexedDB
-    const { offlineData: products } = (await productsRes.json()) as { offlineData: OfflineProduct[] };
+    const products = productsRes ? ((await productsRes.json()) as { offlineData: OfflineProduct[] }).offlineData : null;
     const { offlineData: stocks } = (await stockRes.json()) as {
       offlineData: Array<{ id: string; centerId: string; productId: string; quantity: number; reservedQty: number; version: number }>;
     };

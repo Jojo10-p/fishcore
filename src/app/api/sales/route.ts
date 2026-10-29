@@ -160,17 +160,21 @@ export async function POST(req: NextRequest) {
       //     Produits traités dans un ordre fixe pour éviter les interblocages.
       //     Produits suivis par lot : lots non périmés, premier périmé premier sorti.
       const outputs = new Map<string, { stockId: string; allocations: BatchAllocation[]; cost: Prisma.Decimal }>();
+      const regularizations: Array<{ stockId: string; productId: string; qty: Prisma.Decimal }> = [];
       const productOrder = [...pricing.baseQtyByProduct.keys()].sort();
       for (const productId of productOrder) {
         const qty = pricing.baseQtyByProduct.get(productId)!;
-        const { stockId, allocations, avgCost } = await consumeStockForSale(tx, {
+        const { stockId, allocations, avgCost, regularized } = await consumeStockForSale(tx, {
           centerId,
           productId,
           qty,
           sessionId: cashSession.id,
           productName: pricing.productNames.get(productId) ?? productId,
           trackBatches: pricing.productInfo.get(productId)?.trackBatches ?? false,
+          // Vente faite hors connexion : la marchandise est partie, on ne la refuse pas
+          regularizeShortfall: data.createdOffline,
         });
+        if (regularized.gt(0)) regularizations.push({ stockId, productId, qty: regularized });
         // Coût des marchandises vendues : coût du lot si suivi par lot, sinon CMP du stock
         // (à défaut, prix d'achat de la fiche produit)
         const fallback = avgCost.gt(0) ? avgCost : pricing.productInfo.get(productId)!.purchasePrice;
@@ -256,6 +260,41 @@ export async function POST(req: NextRequest) {
 
       if (quoteId) {
         await tx.quote.update({ where: { id: quoteId }, data: { status: "CONVERTED", saleId: newSale.id } });
+      }
+
+      // 7d-bis. Écart constaté par une vente hors connexion : ajustement tracé, à vérifier à l'inventaire
+      if (regularizations.length > 0) {
+        await tx.stockMovement.createMany({
+          data: regularizations.map((r) => ({
+            stockId: r.stockId,
+            type: "INVENTORY_ADJUST" as const,
+            quantity: r.qty,
+            unitId: pricing.baseUnitByProduct.get(r.productId),
+            referenceType: "Sale",
+            referenceId: newSale.id,
+            notes: `Écart constaté : vendu hors connexion au-delà du stock enregistré (facture ${saleNumber})`,
+            performedById: user.id,
+            centerId,
+          })),
+        });
+        await writeAuditLog(
+          {
+            eventType: "STOCK_ADJUSTED",
+            companyId,
+            centerId,
+            userId: user.id,
+            referenceType: "Sale",
+            referenceId: newSale.id,
+            result: "SUCCESS",
+            reason: `Vente hors connexion ${saleNumber} au-delà du stock enregistré : écart régularisé`,
+            newValues: Object.fromEntries(regularizations.map((r) => [pricing.productNames.get(r.productId) ?? r.productId, r.qty.toString()])),
+            deviceId: data.deviceId,
+            sessionId: cashSession.id,
+            ipAddress: user.ipAddress,
+            userAgent: user.userAgent,
+          },
+          tx
+        );
       }
 
       // 7e. Journal d'audit dans la même transaction

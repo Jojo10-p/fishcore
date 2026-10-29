@@ -1,6 +1,7 @@
 "use client";
 
-import { getOfflineDB, getUnconfirmedQuantities, type OfflineSale, type OfflineSaleLine, type OfflinePayment } from "./db";
+import Dexie from "dexie";
+import { getOfflineDB, type OfflineSale, type OfflineSaleLine, type OfflinePayment } from "./db";
 import { queueSaleForSync } from "./sync";
 import { commitNumber } from "./numbering";
 import { generateIdempotencyKey } from "@/lib/utils";
@@ -21,33 +22,29 @@ interface CreateOfflineSaleParams {
 }
 
 /**
- * Disponible hors ligne pour la session : réserve confirmée par le serveur
- * moins les ventes locales non encore synchronisées.
+ * Stock local du centre (dernier état reçu du serveur, moins les ventes de cet
+ * appareil pas encore confirmées) : affiché à la caisse, sert d'alerte hors ligne.
  */
-export async function getOfflineAvailability(sessionId: string): Promise<Map<string, number>> {
+export async function getLocalStock(centerId: string): Promise<Map<string, number>> {
   const db = getOfflineDB();
-  const [reservations, unconfirmed] = await Promise.all([
-    db.reservations.where("sessionId").equals(sessionId).toArray(),
-    getUnconfirmedQuantities(sessionId),
-  ]);
-  const available = new Map<string, number>();
-  for (const r of reservations) {
-    available.set(r.productId, Math.max(0, r.serverQuantity - (unconfirmed.get(r.productId) ?? 0)));
-  }
-  return available;
+  const rows = await db.stocks.where("centerId").equals(centerId).toArray();
+  return new Map(rows.map((r) => [r.productId, r.quantity]));
 }
 
 /**
  * Crée une vente hors connexion (cahier §9.4).
- * La caisse ne peut vendre que dans la limite de SA réserve : sans réserve
- * suffisante, la vente est bloquée (pas de survente possible entre caisses).
- * La vente et son opération de synchronisation sont écrites dans la même
- * transaction locale (une coupure de courant ne peut pas les séparer).
+ * La caisse vend comme en ligne : la marchandise est devant le client. Si le
+ * stock local paraît insuffisant, la vente passe quand même (avertissement) ;
+ * à l'envoi, le serveur régularise l'écart et le trace pour l'inventaire.
+ * La vente, son numéro et son opération de synchronisation sont écrits dans la
+ * même transaction locale (une coupure de courant ne peut pas les séparer).
  */
 export async function createOfflineSale(params: CreateOfflineSaleParams): Promise<{
   success: boolean;
   saleId?: string;
   error?: string;
+  /** Articles vendus au-delà du stock local connu (à vérifier à l'inventaire). */
+  shortfalls?: string[];
 }> {
   const db = getOfflineDB();
   const idempotencyKey = params.idempotencyKey ?? generateIdempotencyKey("sale");
@@ -64,26 +61,14 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
   }
 
   const soldAt = new Date().toISOString();
+  const shortfalls: string[] = [];
   try {
-    await db.transaction("rw", [db.reservations, db.stocks, db.sales, db.syncQueue, db.numbering], async () => {
-      // Contrôle dans la transaction : deux validations rapides ne peuvent pas
-      // consommer deux fois la même réserve
-      const available = await getOfflineAvailability(params.sessionId);
+    await db.transaction("rw", [db.stocks, db.sales, db.syncQueue, db.numbering], async () => {
+      // Stock local du centre : diminué tout de suite (la vérité reste côté serveur)
       for (const [productId, { qty, name }] of requested) {
-        const left = available.get(productId) ?? 0;
-        if (left < qty) {
-          throw new Error(
-            left <= 0
-              ? `Aucune réserve hors ligne pour « ${name} ». Réservez du stock pour cette caisse quand la connexion est disponible.`
-              : `Réserve hors ligne insuffisante pour « ${name} » : ${left} disponible(s), ${qty} demandé(s).`
-          );
-        }
-      }
-
-      // Affichage local du stock du centre (la vérité reste côté serveur)
-      for (const [productId, { qty }] of requested) {
         const stockId = `${params.centerId}_${productId}`;
         const stock = await db.stocks.get(stockId);
+        if (!stock || stock.quantity < qty) shortfalls.push(name);
         if (stock) await db.stocks.update(stockId, { quantity: Math.max(0, stock.quantity - qty) });
       }
 
@@ -134,7 +119,7 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
     return { success: false, error: error instanceof Error ? error.message : "Erreur d'enregistrement local" };
   }
 
-  return { success: true, saleId: idempotencyKey };
+  return { success: true, saleId: idempotencyKey, shortfalls };
 }
 
 /** Vrai s'il reste des ventes de cette session à envoyer (à vérifier avant la clôture). */
@@ -178,4 +163,21 @@ export function getDeviceId(): string {
     localStorage.setItem("fishcore-device-id", deviceId);
   }
   return deviceId;
+}
+
+/**
+ * Vente confirmée en ligne : le stock local du centre baisse tout de suite
+ * (affichage et ventes hors ligne à venir), sans attendre le prochain relevé.
+ */
+export async function applySaleToLocalStock(centerId: string, lines: Array<{ productId: string; baseQuantity: number }>) {
+  const db = getOfflineDB();
+  await Dexie.ignoreTransaction(() =>
+    db.transaction("rw", db.stocks, async () => {
+      for (const l of lines) {
+        const id = `${centerId}_${l.productId}`;
+        const stock = await db.stocks.get(id);
+        if (stock) await db.stocks.update(id, { quantity: Math.max(0, stock.quantity - l.baseQuantity) });
+      }
+    })
+  );
 }

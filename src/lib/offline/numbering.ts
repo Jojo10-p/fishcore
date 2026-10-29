@@ -13,7 +13,7 @@ import { generateSaleNumber } from "@/lib/utils";
 // la vente est enregistrée — une vente refusée ne consomme pas de numéro.
 
 /** La caisse se réapprovisionne quand il reste moins de numéros que ceci. */
-export const REFILL_BELOW = 100;
+export const REFILL_BELOW = 150;
 
 export interface NextNumber {
   seq: number;

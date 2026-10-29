@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOfflineDB, type OfflinePackaging, type OfflineProduct } from "@/lib/offline/db";
-import { createOfflineSale } from "@/lib/offline/sales";
+import { applySaleToLocalStock, createOfflineSale } from "@/lib/offline/sales";
 import { commitNumber, peekNextNumber, refreshNumbering } from "@/lib/offline/numbering";
 import { cn, formatCurrency, generateIdempotencyKey } from "@/lib/utils";
 import { CustomerPicker } from "@/components/app/customer-picker";
@@ -365,6 +365,7 @@ export default function POSInterface({
         throw new Error("Plus de numéro de facture disponible sur cette caisse : reconnectez-la au réseau quelques secondes.");
       }
       let saleNumber = invoice?.saleNumber ?? "";
+      let shortfalls: string[] = [];
 
       const saveOffline = async () => {
         if (!invoice) throw new Error("Connexion perdue et aucun numéro de facture disponible : réessayez.");
@@ -380,6 +381,7 @@ export default function POSInterface({
           invoice: { seq: invoice.seq, saleNumber: invoice.saleNumber },
         });
         if (!result.success) throw new Error(result.error);
+        shortfalls = result.shortfalls ?? [];
         return result.saleId!;
       };
 
@@ -413,6 +415,7 @@ export default function POSInterface({
           saleId = data.data.id;
           saleNumber = data.data.saleNumber;
           if (invoice) await commitNumber(sessionId, invoice.seq);
+          if (!quote) await applySaleToLocalStock(centerId, lines);
         }
       } else {
         saleId = await saveOffline();
@@ -446,7 +449,9 @@ export default function POSInterface({
       onSaleRecorded?.({ id: saleId, offline: recordedOffline, snapshot });
       setNotification({
         type: "success",
-        message: `Facture ${saleNumber} enregistrée${change > 0 ? ` — rendre ${fmt(change)}` : ""}${recordedOffline ? " (sera envoyée au retour du réseau)" : ""}`,
+        message:
+          `Facture ${saleNumber} enregistrée${change > 0 ? ` — rendre ${fmt(change)}` : ""}` +
+          (shortfalls.length ? ` · Stock à vérifier : ${shortfalls.join(", ")}` : ""),
       });
       resetSale();
     } catch (err) {
@@ -492,7 +497,7 @@ export default function POSInterface({
             </span>
           </div>
           <p className={cn("mt-2 text-xs", isOnline ? "text-gray-400" : "text-red-600 font-medium")}>
-            {isOnline ? "Connecté — ventes envoyées immédiatement" : "Hors connexion — ventes limitées à la réserve de cette caisse"}
+            {isOnline ? "Connecté — ventes envoyées immédiatement" : "Hors connexion — les ventes continuent et partiront au retour du réseau"}
           </p>
         </div>
 

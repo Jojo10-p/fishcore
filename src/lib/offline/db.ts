@@ -100,7 +100,8 @@ export interface OfflineCashSession {
 }
 
 /**
- * Réserve hors ligne de la session de caisse (miroir de StockReservation).
+ * Réserve de stock d'une session (miroir de StockReservation). Plus demandée à la
+ * caisse depuis la synchronisation continue ; conservée pour les données existantes.
  * serverQuantity = valeur confirmée par le serveur à la dernière synchro ;
  * le disponible local = serverQuantity − ventes hors ligne non encore confirmées.
  */
