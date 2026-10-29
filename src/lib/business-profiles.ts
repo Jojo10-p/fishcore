@@ -67,7 +67,8 @@ export const BUSINESS_PROFILES: Record<BusinessType, BusinessProfile> = {
     description: "Poisson frais, congelé, fumé, fruits de mer",
     icon: "🐟",
     productLabel: { singular: "produit", plural: "produits" },
-    units: [KG, GRAM, CARTON, U("Caisse", "caisse", "PACKAGING"), PIECE, SAC],
+    // En poissonnerie, le carton se vend aussi au quart ou au demi (¼, ½, ¾)
+    units: [KG, GRAM, U("Carton", "carton", "PACKAGING", true), U("Caisse", "caisse", "PACKAGING"), PIECE, SAC],
     defaultUnit: "kg",
     categories: ["Frais", "Congelé", "Fumé", "Séché", "Fruits de mer"],
     suggestedAttributes: ["Espèce", "Calibre", "Origine"],

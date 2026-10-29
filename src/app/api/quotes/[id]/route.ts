@@ -17,7 +17,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         sale: { select: { id: true, saleNumber: true } },
         lines: {
           orderBy: { position: "asc" },
-          include: { product: { select: { name: true, barcode: true, baseUnitId: true, baseUnit: { select: { symbol: true } } } } },
+          include: { product: { select: { name: true, internalCode: true, barcode: true, baseUnitId: true, baseUnit: { select: { symbol: true } } } } },
         },
       },
     });

@@ -66,7 +66,12 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
   }, [id]);
 
   useEffect(() => {
-    if (sale) document.title = `Facture ${sale.saleNumber}`;
+    if (!sale) return;
+    document.title = `Facture ${sale.saleNumber}`;
+    // ?print=1 : impression lancée depuis la caisse
+    if (new URLSearchParams(window.location.search).get("print") !== "1") return;
+    const t = setTimeout(() => window.print(), 300);
+    return () => clearTimeout(t);
   }, [sale]);
 
   if (error) return <p className="p-8 text-center text-sm text-red-700">{error}</p>;

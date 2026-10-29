@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const sale = await prisma.sale.findFirst({
       where: { id, companyId },
       include: {
-        lines: { orderBy: { id: "asc" }, include: { product: { select: { name: true, baseUnit: { select: { symbol: true } } } } } },
+        lines: { orderBy: { id: "asc" }, include: { product: { select: { name: true, internalCode: true, baseUnit: { select: { symbol: true } } } } } },
         payments: true,
         refunds: true,
         cashier: { select: { firstName: true, lastName: true } },

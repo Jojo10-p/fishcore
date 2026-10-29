@@ -234,6 +234,7 @@ model Company {
   quoteCounter    Int       @default(1)
   quoteValidityDays Int     @default(15)
   invoiceNotes    String?                  // Mentions en bas de facture (banque, conditions…)
+  invoiceFormat   String    @default("TICKET_80")  // Facture imprimée à la caisse : TICKET_80 (thermique) ou A4
   // Retrait au magasin : le client paie à la caisse puis se fait servir
   // sur présentation de sa facture (dépôts de matériaux, quincailleries…).
   requiresPickup  Boolean   @default(false)

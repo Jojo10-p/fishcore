@@ -90,6 +90,27 @@ Règles de calcul :
 Impression : bouton « Imprimer » du navigateur (format A4, une page pour une facture courante).
 Les factures normalisées e-MECeF (DGI Bénin) ne sont pas encore produites : voir *Étapes suivantes*.
 
+## Passer de Sage (ou d'un autre logiciel) à fishcore
+
+1. **Articles et stock** : *Articles → Importer (Sage, Excel)*. Dans Sage, *Structure → Articles*,
+   Ctrl + A puis Ctrl + C, et coller. Les colonnes (Référence, Désignation, Stock réel, Prix de vente,
+   Prix d'achat, Unité, Famille) sont reconnues ; « Vérifier » montre le résultat sans rien enregistrer.
+   Le stock du magasin choisi est amené aux quantités importées (ajustement d'inventaire tracé).
+2. **Numérotation** : *Paramètres → Factures* : préfixe (ex. `CPF26`) et prochain numéro (ex. 2769
+   après la facture 2768 de Sage). La numérotation ne recule jamais.
+3. **Références** : à la caisse, taper la référence (ex. `S08`) puis Entrée ajoute l'article.
+4. **Quarts** : une unité « fractionnable » (*Articles → Unités*) se vend au ¼, ½, ¾ (boutons à la caisse).
+   En poissonnerie, le carton l'est d'office.
+
+## Imprimante ticket (XP-80C et équivalentes)
+
+- *Paramètres → Facture imprimée à la caisse* : **Ticket 80 mm** (par défaut) ou **A4**.
+- Propriétés de l'imprimante : papier **80(72.1) x 3276 mm** ; dans Chrome, marges **Aucune**.
+- Caisse : bouton « 🖨 Imprimer la facture » après chaque vente, ou case **Impression auto** (réglage du poste).
+- Sans boîte de dialogue (comme Sage) : mettre la XP-80C en imprimante par défaut de Windows et lancer
+  Chrome avec l'option `--kiosk-printing` (raccourci : `chrome.exe --kiosk-printing https://…/caisse`).
+- Hors connexion : un **reçu provisoire** s'imprime ; la facture numérotée est disponible au retour du réseau.
+
 ## Fonctionnement hors connexion
 
 - **Application installable (PWA)** : `public/sw.js` garde les pages et les fichiers

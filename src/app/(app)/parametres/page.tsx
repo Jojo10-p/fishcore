@@ -26,6 +26,8 @@ interface CompanySettings {
   quoteValidityDays: number;
   invoiceNotes: string | null;
   requiresPickup: boolean;
+  invoiceFormat: "TICKET_80" | "A4";
+  invoiceCounter: number;
 }
 
 // Paramètres de l'entreprise (cahier §4) : identité légale, métier, fiscalité
@@ -36,6 +38,7 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [nextNumber, setNextNumber] = useState("");
 
   useEffect(() => {
     apiGet<{ data: CompanySettings }>("/api/company")
@@ -72,10 +75,15 @@ export default function SettingsPage() {
           quoteValidityDays: Number(data.quoteValidityDays) || 15,
           invoiceNotes: data.invoiceNotes ?? "",
           requiresPickup: data.requiresPickup,
+          invoiceFormat: data.invoiceFormat,
+          invoicePrefix: data.invoicePrefix,
+          quotePrefix: data.quotePrefix,
+          ...(nextNumber ? { nextInvoiceNumber: Number(nextNumber) } : {}),
         },
         "PATCH"
       );
       setData(res.data);
+      setNextNumber("");
       setSaved(true);
       await refresh();
     } catch (e) {
@@ -179,17 +187,61 @@ export default function SettingsPage() {
               </span>
             </span>
           </label>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Field label="Numérotation des factures">
-              <Input value={`${data.invoicePrefix}-000001…`} disabled />
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium text-gray-700">Facture imprimée à la caisse</legend>
+            {(
+              [
+                ["TICKET_80", "Ticket 80 mm", "Imprimante thermique (XP-80C…) : la facture sort sur le rouleau, comme un ticket."],
+                ["A4", "Page A4", "Imprimante de bureau : facture complète avec en-tête, signatures et montant en lettres."],
+              ] as const
+            ).map(([value, label, hint]) => (
+              <label key={value} className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="invoiceFormat"
+                  className="mt-1"
+                  checked={data.invoiceFormat === value}
+                  disabled={!editable}
+                  onChange={() => {
+                    setSaved(false);
+                    setData({ ...data, invoiceFormat: value });
+                  }}
+                />
+                <span>
+                  {label}
+                  <span className="block text-xs text-gray-500">{hint}</span>
+                </span>
+              </label>
+            ))}
+            <p className="text-xs text-gray-500">L&apos;autre format reste disponible à tout moment depuis la facture.</p>
+          </fieldset>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+            <Field label="Préfixe des factures">
+              <Input value={data.invoicePrefix} onChange={set("invoicePrefix")} disabled={!editable} maxLength={10} />
             </Field>
-            <Field label="Numérotation des devis">
-              <Input value={`${data.quotePrefix}-000001…`} disabled />
+            <Field label="Prochain n° de facture" hint={`Actuellement ${data.invoicePrefix}-${String(data.invoiceCounter).padStart(6, "0")}`}>
+              <Input
+                inputMode="numeric"
+                value={nextNumber}
+                placeholder={String(data.invoiceCounter)}
+                onChange={(e) => {
+                  setSaved(false);
+                  setNextNumber(e.target.value.replace(/\D/g, ""));
+                }}
+                disabled={!editable}
+              />
+            </Field>
+            <Field label="Préfixe des devis">
+              <Input value={data.quotePrefix} onChange={set("quotePrefix")} disabled={!editable} maxLength={10} />
             </Field>
             <Field label="Validité d'un devis (jours)">
               <Input inputMode="numeric" value={String(data.quoteValidityDays)} onChange={set("quoteValidityDays")} disabled={!editable} />
             </Field>
           </div>
+          <p className="text-xs text-gray-500">
+            Vous quittez un autre logiciel ? Indiquez le numéro qui suit votre dernière facture pour continuer la même suite. Le numéro ne peut
+            jamais revenir en arrière.
+          </p>
           <Field label="Mentions en bas des factures et devis" hint="Ex. : coordonnées bancaires, « Les marchandises vendues ne sont ni reprises ni échangées ».">
             <Textarea rows={3} value={data.invoiceNotes ?? ""} onChange={set("invoiceNotes")} disabled={!editable} />
           </Field>

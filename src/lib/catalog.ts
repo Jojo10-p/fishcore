@@ -47,6 +47,19 @@ export async function assertBarcodeFree(tx: Tx, companyId: string, barcode: stri
   if (owner) throw new ApiError(409, `Le code-barres ${barcode} est déjà utilisé par « ${owner} »`, "BARCODE_TAKEN");
 }
 
+/** Une référence article (ex. « S08 ») désigne un seul article : elle se tape à la caisse. */
+export async function assertReferenceFree(tx: Tx, companyId: string, internalCode: string, exceptProductId?: string) {
+  const other = await tx.product.findFirst({
+    where: {
+      companyId,
+      internalCode: { equals: internalCode, mode: "insensitive" },
+      ...(exceptProductId ? { id: { not: exceptProductId } } : {}),
+    },
+    select: { name: true },
+  });
+  if (other) throw new ApiError(409, `La référence ${internalCode} est déjà utilisée par « ${other.name} »`, "REFERENCE_TAKEN");
+}
+
 export interface PackagingInput {
   unitId: string;
   factor: number;

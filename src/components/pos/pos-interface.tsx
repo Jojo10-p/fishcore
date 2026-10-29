@@ -55,6 +55,17 @@ interface LoadedQuote {
   lines: Array<{ id: string; name: string; quantity: number; unitSymbol: string; lineTotal: number }>;
 }
 
+/** Ce qui a été vendu, pour imprimer un reçu même sans réseau. */
+export interface SaleSnapshot {
+  at: string;
+  quoteNumber?: string;
+  customerName?: string;
+  lines: Array<{ name: string; ref?: string; quantity: number; unitSymbol: string; unitPrice: number; lineTotal: number }>;
+  total: number;
+  payments: Array<{ method: string; amount: number; reference?: string }>;
+  change: number;
+}
+
 interface POSContextProps {
   sessionId: string;
   cashierId: string;
@@ -62,7 +73,7 @@ interface POSContextProps {
   companyId: string;
   currency: string;
   /** Appelé après chaque vente (id serveur, ou clé locale si hors ligne). */
-  onSaleRecorded?: (sale: { id: string; offline: boolean }) => void;
+  onSaleRecorded?: (sale: { id: string; offline: boolean; snapshot: SaleSnapshot }) => void;
   /** Change après chaque rafraîchissement du catalogue local : recharge les produits. */
   catalogVersion?: number;
 }
@@ -250,13 +261,20 @@ export default function POSInterface({
       setSearch("");
       return;
     }
+    // Référence article saisie au clavier (ex. « S08 »), comme dans Sage
+    const byRef = products.find((p) => p.internalCode && p.internalCode.toLowerCase() === code.toLowerCase());
+    if (byRef && !quote) {
+      addToCart(byRef);
+      setSearch("");
+      return;
+    }
     if (filteredProducts.length === 1 && !quote) {
       addToCart(filteredProducts[0]);
       setSearch("");
       return;
     }
     // Code-barres d'un devis (ex. DEV-000012)
-    if (isOnline && /^[A-Za-z]+-\d+$/.test(code) && (await loadQuote(code))) {
+    if (isOnline && /^[A-Za-z0-9]+-\d+$/.test(code) && (await loadQuote(code))) {
       setSearch("");
       return;
     }
@@ -344,7 +362,26 @@ export default function POSInterface({
         saleId = await saveOffline();
       }
 
-      onSaleRecorded?.({ id: saleId, offline: recordedOffline });
+      const refOf = new Map(products.map((p) => [p.id, p.internalCode]));
+      const snapshot: SaleSnapshot = {
+        at: new Date().toISOString(),
+        quoteNumber: quote?.number,
+        customerName: quote?.customerName ?? customer?.name,
+        lines: quote
+          ? quote.lines.map((l) => ({ name: l.name, quantity: l.quantity, unitSymbol: l.unitSymbol, unitPrice: l.quantity ? l.lineTotal / l.quantity : 0, lineTotal: l.lineTotal }))
+          : cart.map((i) => ({
+              name: i.productName,
+              ref: refOf.get(i.productId) ?? undefined,
+              quantity: i.quantity,
+              unitSymbol: i.unitSymbol,
+              unitPrice: i.unitPrice - i.discount,
+              lineTotal: lineTotal(i),
+            })),
+        total: payTotal,
+        payments: cleanPayments.map((p) => ({ method: p.method, amount: p.amount, reference: p.reference })),
+        change,
+      };
+      onSaleRecorded?.({ id: saleId, offline: recordedOffline, snapshot });
       setNotification({
         type: "success",
         message: recordedOffline
@@ -410,7 +447,10 @@ export default function POSInterface({
               {filteredProducts.map((p) => (
                 <div key={p.id} className="bg-white border border-gray-200 rounded-xl p-3 flex flex-col">
                   <button onClick={() => addToCart(p)} className="text-left flex-1 active:scale-[0.98] transition-transform">
-                    <p className="font-medium text-gray-900 text-sm leading-tight">{p.name}</p>
+                    <p className="font-medium text-gray-900 text-sm leading-tight">
+                      {p.internalCode && <span className="mr-1 font-mono text-xs text-gray-400">{p.internalCode}</span>}
+                      {p.name}
+                    </p>
                     <p className="text-xs text-gray-500 mt-0.5 truncate">
                       {[p.brand, p.categoryName, ...Object.values(p.attributes ?? {}).slice(0, 2)].filter(Boolean).join(" · ") || " "}
                     </p>
@@ -575,6 +615,34 @@ export default function POSInterface({
                     </div>
                     <span className="font-bold text-gray-900 text-sm tabular-nums">{fmt(lineTotal(item))}</span>
                   </div>
+                  {/* Quarts : ¼, ½, ¾ de carton / de kg… (unités fractionnables) */}
+                  {item.allowsDecimal && (
+                    <div className="mt-1.5 flex gap-1">
+                      {[
+                        [0.25, "¼"],
+                        [0.5, "½"],
+                        [0.75, "¾"],
+                      ].map(([v, label]) => (
+                        <button
+                          key={label}
+                          onClick={() => setQuantity(item.key, v as number)}
+                          className={cn(
+                            "rounded-md border px-2 py-0.5 text-xs",
+                            item.quantity === v ? "border-blue-600 bg-blue-50 text-blue-800" : "border-gray-300 text-gray-700 hover:bg-gray-50"
+                          )}
+                          aria-label={`Quantité ${label} ${item.unitSymbol}`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setQuantity(item.key, round2(item.quantity + 0.25))}
+                        className="rounded-md border border-gray-300 px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        +¼
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

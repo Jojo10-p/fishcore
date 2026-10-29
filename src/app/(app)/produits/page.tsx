@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, Money, PageHeader, Select, Spinner, Table, Td } from "@/components/ui";
@@ -11,6 +12,7 @@ interface Unit {
   name: string;
   symbol: string;
   allowsDecimal: boolean;
+  companyId?: string | null;
 }
 interface Category {
   id: string;
@@ -51,6 +53,7 @@ export default function ProductsPage() {
   const [categoryId, setCategoryId] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<Product | "new" | null>(null);
+  const [showUnits, setShowUnits] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -89,7 +92,19 @@ export default function ProductsPage() {
       <PageHeader
         title={label.plural.charAt(0).toUpperCase() + label.plural.slice(1)}
         description="Catalogue commun à tous vos centres. Les changements de prix sont historisés."
-        actions={can("product:create") && <Button onClick={() => setEditing("new")}>{newLabel(label.singular)}</Button>}
+        actions={
+          can("product:create") && (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => setShowUnits(true)}>
+                Unités
+              </Button>
+              <Link href="/produits/import">
+                <Button variant="secondary">Importer (Sage, Excel)</Button>
+              </Link>
+              <Button onClick={() => setEditing("new")}>{newLabel(label.singular)}</Button>
+            </div>
+          )
+        }
       />
       <div className="flex flex-col sm:flex-row gap-3 mb-4">
         <Input placeholder="Rechercher (nom, référence, code-barres, marque…)" value={search} onChange={(e) => setSearch(e.target.value)} className="sm:max-w-sm" />
@@ -113,13 +128,14 @@ export default function ProductsPage() {
         ) : products.length === 0 ? (
           <EmptyState title={`Aucun ${label.singular}`}>Créez votre premier {label.singular} pour commencer à vendre.</EmptyState>
         ) : (
-          <Table head={["Désignation", "Catégorie", "Vente", "Prix d'achat", "Prix de vente", "Suivi", ""]}>
+          <Table head={["Réf.", "Désignation", "Catégorie", "Vente", "Prix d'achat", "Prix de vente", "Suivi", ""]}>
             {products.map((p) => (
               <tr key={p.id} className={p.isActive ? "" : "opacity-60"}>
+                <Td className="font-mono text-xs text-gray-600">{p.internalCode ?? "—"}</Td>
                 <Td className="whitespace-normal min-w-56">
                   <p className="font-medium">{p.name}</p>
                   <p className="text-xs text-gray-500">
-                    {[p.brand, p.internalCode, p.barcode, ...Object.entries(p.attributes ?? {}).map(([k, v]) => `${k} : ${v}`)].filter(Boolean).join(" · ")}
+                    {[p.brand, p.barcode, ...Object.entries(p.attributes ?? {}).map(([k, v]) => `${k} : ${v}`)].filter(Boolean).join(" · ")}
                   </p>
                 </Td>
                 <Td>{p.category?.name ?? "—"}</Td>
@@ -159,6 +175,16 @@ export default function ProductsPage() {
           </Table>
         )}
       </Card>
+      {showUnits && (
+        <UnitsModal
+          units={units}
+          onClose={() => setShowUnits(false)}
+          onChanged={async () => {
+            await loadRefs();
+            await load();
+          }}
+        />
+      )}
       {editing && (
         <ProductModal
           product={editing === "new" ? null : editing}
@@ -442,6 +468,47 @@ function ProductModal({
           Actif (vendable)
         </label>
       )}
+    </Modal>
+  );
+}
+
+/** Unités de l'entreprise : fractionnables ou non (¼ de carton, 1,5 kg…). */
+function UnitsModal({ units, onClose, onChanged }: { units: Unit[]; onClose: () => void; onChanged: () => Promise<void> }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const own = units.filter((u) => u.companyId);
+  const toggle = async (u: Unit) => {
+    setBusy(u.id);
+    setError(null);
+    try {
+      await apiSend(`/api/units/${u.id}`, { allowsDecimal: !u.allowsDecimal }, "PATCH");
+      await onChanged();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} title="Unités de vente">
+      {error && <Alert>{error}</Alert>}
+      <p className="text-sm text-gray-600">
+        Une unité <strong>fractionnable</strong> se vend aussi au quart ou au demi (0,25 carton, 1,5 kg). À la caisse, les boutons ¼ ½ ¾
+        apparaissent pour ces unités.
+      </p>
+      <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200">
+        {own.map((u) => (
+          <li key={u.id} className="flex items-center justify-between px-3 py-2 text-sm">
+            <span>
+              <span className="font-medium">{u.name}</span> <span className="text-gray-500">({u.symbol})</span>
+            </span>
+            <label className="flex items-center gap-2 text-gray-700">
+              <input type="checkbox" checked={u.allowsDecimal} disabled={busy === u.id} onChange={() => toggle(u)} />
+              Fractionnable
+            </label>
+          </li>
+        ))}
+      </ul>
     </Modal>
   );
 }

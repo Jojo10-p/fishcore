@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import POSInterface from "@/components/pos/pos-interface";
+import POSInterface, { type SaleSnapshot } from "@/components/pos/pos-interface";
+import { ProvisionalTicket, invoiceUrl, printInFrame, useAutoPrint } from "@/components/pos/printing";
 import { SessionProvider, useSession } from "@/components/app/session-provider";
 import { ConnectionBadge, useOnline } from "@/components/app/connection-badge";
 import { Alert, Badge, Button, Field, Input, Modal, Money, Qty, Select, Spinner } from "@/components/ui";
@@ -276,7 +277,37 @@ function ActiveRegister({
   onClosed: () => void;
 }) {
   const [catalogVersion, setCatalogVersion] = useState(0);
-  const [lastSale, setLastSale] = useState<{ id: string; offline: boolean } | null>(null);
+  const [lastSale, setLastSale] = useState<{ id: string; offline: boolean; snapshot: SaleSnapshot } | null>(null);
+  const [autoPrint, setAutoPrint] = useAutoPrint();
+  const [provisional, setProvisional] = useState<SaleSnapshot | null>(null);
+  const { session } = useSession();
+  const format = session?.company?.invoiceFormat ?? "TICKET_80";
+  const otherFormat = format === "A4" ? "TICKET_80" : "A4";
+  const centerName = session?.centers.find((c) => c.id === cashSession.centerId)?.name ?? "";
+
+  // Reçu provisoire (hors connexion) : imprimé dès qu'il est affiché
+  useEffect(() => {
+    if (!provisional) return;
+    const t = setTimeout(() => window.print(), 100);
+    return () => clearTimeout(t);
+  }, [provisional]);
+
+  const printLast = useCallback(
+    (sale = lastSale) => {
+      if (!sale) return;
+      if (sale.offline) setProvisional({ ...sale.snapshot });
+      else printInFrame(invoiceUrl(sale.id, format));
+    },
+    [lastSale, format]
+  );
+
+  const onSaleRecorded = useCallback(
+    (sale: { id: string; offline: boolean; snapshot: SaleSnapshot }) => {
+      setLastSale(sale);
+      if (autoPrint) printLast(sale);
+    },
+    [autoPrint, printLast]
+  );
   const [showReserve, setShowReserve] = useState(false);
   const [showClose, setShowClose] = useState(false);
 
@@ -284,7 +315,8 @@ function ActiveRegister({
   const sync = useOfflineSync({ centerId: cashSession.centerId, sessionId: cashSession.id, onSyncComplete });
 
   return (
-    <div className="h-dvh flex flex-col">
+    <>
+    <div className="h-dvh flex flex-col print:hidden">
       <header className="flex flex-wrap items-center gap-2 sm:gap-3 bg-white border-b border-gray-200 px-3 sm:px-4 py-2">
         <Link href="/dashboard" className="text-sm text-gray-500 hover:text-gray-800" title="Gestion">
           ←
@@ -307,15 +339,20 @@ function ActiveRegister({
             <Badge tone="red">Reconnexion requise</Badge>
           </Link>
         )}
-        {lastSale && !lastSale.offline && (
+        <label className="flex items-center gap-1.5 text-xs text-gray-600" title="Imprimer la facture après chaque vente (réglage de cet appareil)">
+          <input type="checkbox" checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />
+          Impression auto
+        </label>
+        {lastSale && (
           <span className="flex items-center gap-2 text-sm">
-            <span className="text-gray-500">Dernière vente :</span>
-            <Link href={`/recu/${lastSale.id}`} target="_blank" className="text-blue-600 hover:underline">
-              Ticket
-            </Link>
-            <Link href={`/facture/${lastSale.id}`} target="_blank" className="font-medium text-blue-600 hover:underline">
-              Facture A4
-            </Link>
+            <Button className="px-3 py-1.5" onClick={() => printLast()}>
+              🖨 {lastSale.offline ? "Reçu provisoire" : "Imprimer la facture"}
+            </Button>
+            {!lastSale.offline && (
+              <Link href={invoiceUrl(lastSale.id, otherFormat)} target="_blank" className="text-blue-600 hover:underline">
+                {otherFormat === "A4" ? "Format A4" : "Ticket 80 mm"}
+              </Link>
+            )}
           </span>
         )}
         <Button variant="secondary" className="px-3 py-1.5" onClick={() => setShowReserve(true)}>
@@ -334,7 +371,7 @@ function ActiveRegister({
           companyId={companyId}
           currency={currency}
           catalogVersion={catalogVersion}
-          onSaleRecorded={setLastSale}
+          onSaleRecorded={onSaleRecorded}
         />
       </div>
 
@@ -357,6 +394,15 @@ function ActiveRegister({
         onClosed={onClosed}
       />
     </div>
+    {provisional && (
+      <ProvisionalTicket
+        sale={provisional}
+        companyName={session?.company?.tradeName ?? ""}
+        centerName={centerName}
+        cashierName={session?.user.firstName ?? ""}
+      />
+    )}
+    </>
   );
 }
 

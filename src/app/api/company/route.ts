@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 import {
+  ApiError,
   getCurrentUser,
   handleApiError,
   parseBody,
@@ -37,6 +38,8 @@ const companySelect = {
   quoteValidityDays: true,
   invoiceNotes: true,
   requiresPickup: true,
+  invoiceFormat: true,
+  invoiceCounter: true,
 } as const;
 
 const settingsSchema = z
@@ -58,6 +61,11 @@ const settingsSchema = z
     quoteValidityDays: z.coerce.number().int().min(1).max(365).optional(),
     invoiceNotes: z.string().trim().max(600).optional(),
     requiresPickup: z.boolean().optional(),
+    invoiceFormat: z.enum(["TICKET_80", "A4"]).optional(),
+    // Numérotation : reprendre la suite d'un ancien logiciel (ex. Sage : facture 2768 → 2769)
+    invoicePrefix: z.string().trim().regex(/^[A-Za-z0-9]{1,10}$/, "Préfixe : lettres et chiffres, 10 au plus").optional(),
+    quotePrefix: z.string().trim().regex(/^[A-Za-z0-9]{1,10}$/, "Préfixe : lettres et chiffres, 10 au plus").optional(),
+    nextInvoiceNumber: z.coerce.number().int().min(1).max(999_999_999).optional(),
   })
   .refine((d) => Object.keys(d).length > 0, "Aucune modification");
 
@@ -84,8 +92,23 @@ export async function PATCH(req: NextRequest) {
     const data = parseBody(settingsSchema, await readJson(req));
 
     const company = await prisma.$transaction(async (tx) => {
+      // Verrou : aucune facture ne peut être numérotée pendant le changement de numérotation
+      await tx.$queryRaw`SELECT 1 FROM "companies" WHERE "id" = ${companyId} FOR UPDATE`;
       const before = await tx.company.findUniqueOrThrow({ where: { id: companyId }, select: companySelect });
-      const updated = await tx.company.update({ where: { id: companyId }, data, select: companySelect });
+      const { nextInvoiceNumber, ...fields } = data;
+      // La numérotation ne recule jamais : deux factures ne peuvent pas porter le même numéro
+      if (nextInvoiceNumber !== undefined && nextInvoiceNumber < before.invoiceCounter) {
+        throw new ApiError(
+          400,
+          `Le prochain numéro ne peut pas être inférieur à ${before.invoiceCounter} (des factures sont déjà numérotées)`,
+          "INVOICE_NUMBER_BACKWARDS"
+        );
+      }
+      const updated = await tx.company.update({
+        where: { id: companyId },
+        data: { ...fields, ...(nextInvoiceNumber !== undefined ? { invoiceCounter: nextInvoiceNumber } : {}) },
+        select: companySelect,
+      });
       if (data.businessType && data.businessType !== before.businessType) {
         await seedCompanyCatalog(tx, companyId, data.businessType);
       }

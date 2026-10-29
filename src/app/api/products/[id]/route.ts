@@ -14,7 +14,7 @@ import {
   requirePermission,
 } from "@/lib/auth";
 import { attributesSchema, packagingSchema } from "@/lib/validations";
-import { assertBarcodeFree, productClientSelect, replacePackagings } from "@/lib/catalog";
+import { assertBarcodeFree, assertReferenceFree, productClientSelect, replacePackagings } from "@/lib/catalog";
 
 const updateSchema = z
   .object({
@@ -56,6 +56,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         if (!cat) throw new ApiError(400, "Catégorie invalide");
       }
       if (data.barcode && data.barcode !== current.barcode) await assertBarcodeFree(tx, companyId, data.barcode, id);
+      if (data.internalCode) await assertReferenceFree(tx, companyId, data.internalCode, id);
 
       // Désactiver le suivi par lot alors que des lots ont encore du stock fausserait la traçabilité
       const trackBatches = data.requiresExpiry ? true : data.trackBatches;

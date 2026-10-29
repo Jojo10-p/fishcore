@@ -15,7 +15,7 @@ import {
   requirePermission,
 } from "@/lib/auth";
 import { getBusinessProfile } from "@/lib/business-profiles";
-import { assertBarcodeFree, productClientSelect, replacePackagings, toOfflineProduct } from "@/lib/catalog";
+import { assertBarcodeFree, assertReferenceFree, productClientSelect, replacePackagings, toOfflineProduct } from "@/lib/catalog";
 
 // GET /api/products — Catalogue de l'entreprise
 //   ?search=…  ?categoryId=…  ?active=false  ?barcode=… (recherche exacte, conditionnements compris)
@@ -99,6 +99,7 @@ export async function POST(req: NextRequest) {
 
     const product = await prisma.$transaction(async (tx) => {
       if (data.barcode) await assertBarcodeFree(tx, companyId, data.barcode);
+      if (data.internalCode) await assertReferenceFree(tx, companyId, data.internalCode);
 
       const created = await tx.product.create({
         data: {

@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
     const companyId = requireCompany(user);
     const units = await prisma.unit.findMany({
       where: { OR: [{ companyId }, { companyId: null }] },
-      select: { id: true, name: true, symbol: true, isBaseUnit: true, kind: true, allowsDecimal: true },
+      select: { id: true, name: true, symbol: true, isBaseUnit: true, kind: true, allowsDecimal: true, companyId: true },
       orderBy: [{ isBaseUnit: "desc" }, { name: "asc" }],
     });
     return NextResponse.json({ success: true, data: units });

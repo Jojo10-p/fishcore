@@ -22,25 +22,53 @@ interface NavItem {
 }
 
 // Chaque rôle ne voit que ce qui sert à son travail (cahier §2.1, §20)
-const NAV: NavItem[] = [
-  { href: "/dashboard", label: "Tableau de bord", icon: "📊", any: ["report:view"] },
-  { href: "/caisse", label: "Caisse", icon: "🛒", any: ["sale:create"] },
-  { href: "/ventes", label: "Ventes & factures", icon: "🧾", any: ["sale:view"] },
-  { href: "/devis", label: "Devis", icon: "📝", any: ["quote:view"] },
-  { href: "/retraits", label: "Retraits magasin", icon: "📤", any: ["sale:deliver"], pickupOnly: true },
-  { href: "/annulations", label: "Annulations", icon: "↩️", any: ["sale:cancel_request", "sale:cancel_approve"] },
-  { href: "/produits", label: "Articles", icon: "🏷️", any: ["product:create", "product:edit"] },
-  { href: "/stock", label: "Stock", icon: "📦", any: ["stock:view"] },
-  { href: "/receptions", label: "Réceptions", icon: "🚚", any: ["stock:receive"] },
-  { href: "/caisses", label: "Caisses & clôtures", icon: "💰", any: ["cash:view_all_sessions"] },
-  { href: "/finances", label: "Finances", icon: "📈", any: ["report:view"] },
-  { href: "/depenses", label: "Dépenses", icon: "💸", any: ["expense:view"] },
-  { href: "/clients", label: "Clients", icon: "👤", any: ["customer:view"] },
-  { href: "/fournisseurs", label: "Fournisseurs & dettes", icon: "🏭", any: ["purchase:view"] },
-  { href: "/utilisateurs", label: "Utilisateurs", icon: "👥", any: ["user:view"] },
-  { href: "/parametres", label: "Paramètres", icon: "⚙️", any: ["company:edit"] },
-  { href: "/synchronisation", label: "Synchronisation", icon: "🔄", any: [] },
+// Menu regroupé par domaine, comme dans les logiciels de gestion commerciale
+// (Gestion des ventes, des achats, des articles et stocks…)
+const NAV: Array<{ group: string | null; items: NavItem[] }> = [
+  { group: null, items: [{ href: "/dashboard", label: "Tableau de bord", icon: "📊", any: ["report:view"] }] },
+  {
+    group: "Ventes",
+    items: [
+      { href: "/caisse", label: "Caisse", icon: "🛒", any: ["sale:create"] },
+      { href: "/ventes", label: "Factures & ventes", icon: "🧾", any: ["sale:view"] },
+      { href: "/devis", label: "Devis", icon: "📝", any: ["quote:view"] },
+      { href: "/retraits", label: "Retraits magasin", icon: "📤", any: ["sale:deliver"], pickupOnly: true },
+      { href: "/annulations", label: "Annulations", icon: "↩️", any: ["sale:cancel_request", "sale:cancel_approve"] },
+      { href: "/clients", label: "Clients", icon: "👤", any: ["customer:view"] },
+    ],
+  },
+  {
+    group: "Achats",
+    items: [
+      { href: "/receptions", label: "Réceptions fournisseurs", icon: "🚚", any: ["stock:receive"] },
+      { href: "/fournisseurs", label: "Fournisseurs & dettes", icon: "🏭", any: ["purchase:view"] },
+    ],
+  },
+  {
+    group: "Articles & stocks",
+    items: [
+      { href: "/produits", label: "Articles", icon: "🏷️", any: ["product:create", "product:edit"] },
+      { href: "/stock", label: "Stock", icon: "📦", any: ["stock:view"] },
+    ],
+  },
+  {
+    group: "Trésorerie",
+    items: [
+      { href: "/caisses", label: "Caisses & clôtures", icon: "💰", any: ["cash:view_all_sessions"] },
+      { href: "/depenses", label: "Dépenses", icon: "💸", any: ["expense:view"] },
+      { href: "/finances", label: "Finances", icon: "📈", any: ["report:view"] },
+    ],
+  },
+  {
+    group: "Administration",
+    items: [
+      { href: "/utilisateurs", label: "Utilisateurs", icon: "👥", any: ["user:view"] },
+      { href: "/parametres", label: "Paramètres", icon: "⚙️", any: ["company:edit"] },
+      { href: "/synchronisation", label: "Synchronisation", icon: "🔄", any: [] },
+    ],
+  },
 ];
+
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { session, loading, can, centerId, setCenterId, fromCache } = useSession();
@@ -50,7 +78,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const pickup = !!session?.company?.requiresPickup;
-  const items = NAV.filter((n) => (!n.pickupOnly || pickup) && (n.any.length === 0 || n.any.some((p) => can(p))));
+  const visible = (n: NavItem) => (!n.pickupOnly || pickup) && (n.any.length === 0 || n.any.some((p) => can(p)));
+  const groups = NAV.map((g) => ({ ...g, items: g.items.filter(visible) })).filter((g) => g.items.length > 0);
 
   if (loading) return <Spinner />;
   if (!session) {
@@ -73,24 +102,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   const nav = (
-    <nav className="flex flex-col gap-1">
-      {items.map((item) => {
-        const active = pathname === item.href || pathname.startsWith(item.href + "/");
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            onClick={() => setMenuOpen(false)}
-            className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-              active ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-100"
-            )}
-          >
-            <span aria-hidden>{item.icon}</span>
-            {item.label}
-          </Link>
-        );
-      })}
+    <nav className="flex flex-col gap-3">
+      {groups.map((g) => (
+        <div key={g.group ?? "accueil"}>
+          {g.group && <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400">{g.group}</p>}
+          <div className="flex flex-col gap-0.5">
+            {g.items.map((item) => {
+              const active = pathname === item.href || pathname.startsWith(item.href + "/");
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMenuOpen(false)}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                    active ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-100"
+                  )}
+                >
+                  <span aria-hidden>{item.icon}</span>
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 
@@ -125,7 +162,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-dvh bg-gray-50 lg:flex">
       {/* Barre latérale (ordinateur) */}
       <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-white border-r border-gray-200 p-4">
-        <Link href="/dashboard" className="flex items-center gap-2 px-1 mb-6">
+        <Link href="/dashboard" className="flex items-center gap-2 px-1 mb-4">
           <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
           <span className="font-bold text-gray-900">{APP_NAME}</span>
         </Link>

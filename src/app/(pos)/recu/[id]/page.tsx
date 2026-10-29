@@ -4,150 +4,218 @@ import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { Barcode } from "@/components/documents/a4-document";
 import { apiGet, errorMessage } from "@/lib/client/api";
-import { formatCurrency } from "@/lib/utils";
 
-interface ReceiptData {
+interface TicketData {
   id: string;
   saleNumber: string;
-  deliveryStatus: "PENDING" | "PARTIAL" | "DELIVERED";
-  customer: { name: string; phone: string | null } | null;
   createdAt: string;
   status: string;
+  deliveryStatus: "PENDING" | "PARTIAL" | "DELIVERED";
   subtotal: string;
   discountAmount: string;
   totalAmount: string;
   taxAmount: string;
   createdOffline: boolean;
-  lines: Array<{ id: string; quantity: string; unitPrice: string; discount: string; lineTotal: string; taxRate: string; unitSymbol: string; lots: Array<{ lotNumber: string | null; expiresAt: string | null }>; product: { name: string } }>;
-  payments: Array<{ id: string; method: string; amount: string; notes: string | null }>;
+  customer: { name: string; phone: string | null; taxId: string | null } | null;
+  lines: Array<{
+    id: string;
+    quantity: string;
+    unitPrice: string;
+    discount: string;
+    lineTotal: string;
+    unitSymbol: string;
+    lots: Array<{ lotNumber: string | null; expiresAt: string | null }>;
+    product: { name: string; internalCode: string | null };
+  }>;
+  payments: Array<{ id: string; method: string; amount: string; reference: string | null; notes: string | null }>;
   refunds: Array<{ id: string; amount: string }>;
   cashier: { firstName: string; lastName: string };
   session: { cashRegister: { name: string; center: { name: string; address: string | null; city: string | null; phone: string | null } } };
-  company: { tradeName: string; legalName: string | null; phone: string; address: string | null; city: string | null; taxId: string | null; tradeRegNumber: string | null; currency: string; requiresPickup: boolean };
+  company: {
+    tradeName: string;
+    legalName: string | null;
+    phone: string;
+    address: string | null;
+    city: string | null;
+    taxId: string | null;
+    tradeRegNumber: string | null;
+    currency: string;
+    invoiceNotes: string | null;
+    requiresPickup: boolean;
+  };
 }
 
-const METHODS: Record<string, string> = {
-  CASH: "Espèces",
-  MOBILE_MONEY: "Mobile money",
-  CARD: "Carte",
-  TRANSFER: "Virement",
-  MIXED: "Mixte",
-};
+const METHODS: Record<string, string> = { CASH: "Espèces", MOBILE_MONEY: "Mobile money", CARD: "Carte", TRANSFER: "Virement", MIXED: "Mixte" };
+// Montants sans symbole sur le ticket (colonnes étroites) : « 23 500 »
+const n = (v: string | number) => Number(v).toLocaleString("fr-FR", { maximumFractionDigits: 2 }).replace(/[  ]/g, " ");
+const qty = (v: string | number) =>
+  Number(v).toLocaleString("fr-FR", { minimumFractionDigits: Number(v) % 1 ? 2 : 0, maximumFractionDigits: 3 });
 
-// Ticket de caisse 80 mm — cahier §9.1. La facture A4 est sur /facture/[id].
-export default function ReceiptPage({ params }: { params: Promise<{ id: string }> }) {
+/**
+ * Facture au format ticket 80 mm (imprimante thermique XP-80C et équivalentes).
+ * Réglage conseillé de l'imprimante : papier « 80(72.1) x 3276 mm », marges « Aucune ».
+ * ?print=1 : l'impression part toute seule (bouton de la caisse, impression automatique).
+ */
+export default function TicketPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [sale, setSale] = useState<ReceiptData | null>(null);
+  const [sale, setSale] = useState<TicketData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiGet<{ data: ReceiptData }>(`/api/sales/${id}`)
+    apiGet<{ data: TicketData }>(`/api/sales/${id}`)
       .then((r) => setSale(r.data))
       .catch((e) => setError(errorMessage(e)));
   }, [id]);
 
-  if (error) return <p className="p-8 text-center text-sm text-red-700">{error}</p>;
-  if (!sale) return <p className="p-8 text-center text-sm text-gray-500">Chargement du reçu…</p>;
+  useEffect(() => {
+    if (!sale) return;
+    document.title = `Facture ${sale.saleNumber}`;
+    if (new URLSearchParams(window.location.search).get("print") !== "1") return;
+    // Laisser le temps au code-barres d'être dessiné
+    const t = setTimeout(() => window.print(), 300);
+    return () => clearTimeout(t);
+  }, [sale]);
 
-  const cur = sale.company.currency;
-  const money = (v: string | number) => formatCurrency(Number(v), cur);
+  if (error) return <p className="p-8 text-center text-sm text-red-700">{error}</p>;
+  if (!sale) return <p className="p-8 text-center text-sm text-gray-500">Chargement de la facture…</p>;
+
+  const c = sale.company;
   const center = sale.session.cashRegister.center;
+  const date = new Date(sale.createdAt);
+  const cancelled = sale.status === "CANCELLED";
+  const tax = Number(sale.taxAmount);
+  const refunded = sale.refunds.reduce((s, r) => s + Number(r.amount), 0);
+  const place = [center.address ?? c.address, center.city ?? c.city].filter(Boolean).join(", ");
 
   return (
-    <div className="min-h-dvh bg-gray-100 py-6 print:bg-white print:py-0">
-      <div className="mx-auto w-full max-w-[340px] bg-white p-5 font-mono text-[12px] leading-snug text-black shadow print:shadow-none">
-        <div className="text-center">
-          <p className="text-base font-bold">{sale.company.tradeName}</p>
-          {sale.company.legalName && <p>{sale.company.legalName}</p>}
-          <p>{center.name}</p>
-          {(center.address || center.city) && <p>{[center.address, center.city].filter(Boolean).join(", ")}</p>}
-          <p>Tél. {center.phone ?? sale.company.phone}</p>
-          {sale.company.taxId && <p>IFU : {sale.company.taxId}</p>}
-          {sale.company.tradeRegNumber && <p>RCCM : {sale.company.tradeRegNumber}</p>}
-        </div>
+    <div className="min-h-dvh bg-gray-100 py-6 print:min-h-0 print:bg-white print:py-0">
+      {/* 72 mm imprimables sur un rouleau de 80 mm */}
+      <style>{`@page { margin: 0; } @media print { html, body { background: #fff; width: 80mm; } }`}</style>
+      <div className="mx-auto w-[72mm] bg-white px-[2mm] py-3 font-sans text-[11.5px] leading-tight text-black shadow print:shadow-none">
+        <header className="text-center">
+          <p className="text-[17px] font-black uppercase tracking-wide">{c.tradeName}</p>
+          {c.legalName && c.legalName !== c.tradeName && <p>{c.legalName}</p>}
+          {place && <p>{place}</p>}
+          <p>Tél. {center.phone ?? c.phone}</p>
+          {c.taxId && <p className="font-semibold">IFU : {c.taxId}</p>}
+          {c.tradeRegNumber && <p>RCCM : {c.tradeRegNumber}</p>}
+        </header>
 
-        <hr className="my-3 border-dashed border-black" />
-        <p>Reçu N° {sale.saleNumber}</p>
-        <p>{new Date(sale.createdAt).toLocaleString("fr-FR")}</p>
-        <p>
-          {sale.session.cashRegister.name} — {sale.cashier.firstName} {sale.cashier.lastName}
-        </p>
-        {sale.customer && (
+        <div className="mt-2 border-y border-black py-1.5">
+          <p className="text-[13px] font-black">FACTURE N° {sale.saleNumber}</p>
           <p>
-            Client : {sale.customer.name}
-            {sale.customer.phone && ` (${sale.customer.phone})`}
+            Date : {date.toLocaleDateString("fr-FR")} à {date.toLocaleTimeString("fr-FR")}
           </p>
-        )}
-        {sale.status === "CANCELLED" && <p className="mt-1 font-bold">*** VENTE ANNULÉE ***</p>}
-        <hr className="my-3 border-dashed border-black" />
+          <p>Livraison : {center.name.toUpperCase()}</p>
+          <p>
+            Client : {sale.customer ? sale.customer.name : "Clients divers"}
+            {sale.customer?.phone && ` (${sale.customer.phone})`}
+          </p>
+          {sale.customer?.taxId && <p>IFU client : {sale.customer.taxId}</p>}
+          {cancelled && <p className="mt-1 text-center text-[13px] font-black">*** FACTURE ANNULÉE ***</p>}
+        </div>
 
-        {sale.lines.map((l) => (
-          <div key={l.id} className="mb-1.5">
-            <p>{l.product.name}</p>
-            <div className="flex justify-between">
-              <span>
-                {Number(l.quantity).toLocaleString("fr-FR", { maximumFractionDigits: 3 })} {l.unitSymbol} × {money(l.unitPrice)}
-                {Number(l.discount) > 0 && ` (−${money(l.discount)})`}
-              </span>
-              <span>{money(l.lineTotal)}</span>
-            </div>
-            {l.lots?.map((lot, k) => (
-              <p key={k} className="text-[10px]">
-                Lot {lot.lotNumber ?? "—"}
-                {lot.expiresAt && ` · exp. ${new Date(lot.expiresAt).toLocaleDateString("fr-FR")}`}
-              </p>
+        <table className="mt-1.5 w-full border-collapse border border-black text-[11px]">
+          <thead>
+            <tr className="border-b border-black">
+              <th className="border-r border-black px-1 py-0.5 text-left font-bold">Article</th>
+              <th className="border-r border-black px-1 py-0.5 text-right font-bold">Qté</th>
+              <th className="border-r border-black px-1 py-0.5 text-right font-bold">P.U.</th>
+              <th className="px-1 py-0.5 text-right font-bold">Montant</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sale.lines.map((l) => (
+              <tr key={l.id} className="border-b border-black align-top">
+                <td className="border-r border-black px-1 py-0.5">
+                  <span className="font-semibold uppercase">{l.product.name}</span>
+                  {l.product.internalCode && <span className="block text-[9.5px]">Réf. {l.product.internalCode}</span>}
+                  {Number(l.discount) > 0 && (
+                    <span className="block text-[9.5px]">
+                      Remise {n(l.discount)} / {l.unitSymbol}
+                    </span>
+                  )}
+                  {l.lots?.map((lot, k) => (
+                    <span key={k} className="block text-[9.5px]">
+                      Lot {lot.lotNumber ?? "—"}
+                      {lot.expiresAt && ` exp. ${new Date(lot.expiresAt).toLocaleDateString("fr-FR")}`}
+                    </span>
+                  ))}
+                </td>
+                <td className="border-r border-black px-1 py-0.5 text-right whitespace-nowrap">
+                  {qty(l.quantity)}
+                  <span className="block text-[9.5px]">{l.unitSymbol}</span>
+                </td>
+                <td className="border-r border-black px-1 py-0.5 text-right whitespace-nowrap">{n(l.unitPrice)}</td>
+                <td className="px-1 py-0.5 text-right font-semibold whitespace-nowrap">{n(l.lineTotal)}</td>
+              </tr>
             ))}
-          </div>
-        ))}
+            {Number(sale.discountAmount) > 0 && (
+              <tr className="border-b border-black">
+                <td colSpan={3} className="border-r border-black px-1 py-0.5">
+                  Remises
+                </td>
+                <td className="px-1 py-0.5 text-right">−{n(sale.discountAmount)}</td>
+              </tr>
+            )}
+            <tr className="text-[14px]">
+              <td colSpan={3} className="border-r border-black px-1 py-1 font-black">
+                Total dû
+              </td>
+              <td className="px-1 py-1 text-right font-black whitespace-nowrap">{n(sale.totalAmount)}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="mt-0.5 text-right text-[10px]">Montants en {c.currency === "XOF" || c.currency === "XAF" ? "francs CFA" : c.currency}</p>
 
-        <hr className="my-3 border-dashed border-black" />
-        {Number(sale.discountAmount) > 0 && (
-          <div className="flex justify-between">
-            <span>Remise</span>
-            <span>−{money(sale.discountAmount)}</span>
-          </div>
-        )}
-        <div className="flex justify-between text-sm font-bold">
-          <span>TOTAL{Number(sale.taxAmount) > 0 ? " TTC" : ""}</span>
-          <span>{money(sale.totalAmount)}</span>
-        </div>
-        {Number(sale.taxAmount) > 0 && (
-          <>
-            <div className="flex justify-between text-[11px]">
-              <span>dont TVA</span>
-              <span>{money(sale.taxAmount)}</span>
-            </div>
-            <div className="flex justify-between text-[11px]">
-              <span>Total HT</span>
-              <span>{money(Number(sale.totalAmount) - Number(sale.taxAmount))}</span>
-            </div>
-          </>
-        )}
-        {sale.payments.map((p) => (
-          <div key={p.id}>
+        {tax > 0 && (
+          <div className="mt-1 text-[10.5px]">
             <div className="flex justify-between">
-              <span>{METHODS[p.method] ?? p.method}</span>
-              <span>{money(p.amount)}</span>
+              <span>Total HT</span>
+              <span>{n(Number(sale.totalAmount) - tax)}</span>
             </div>
-            {p.notes && <p className="text-[11px]">{p.notes}</p>}
-          </div>
-        ))}
-        {sale.refunds.length > 0 && (
-          <div className="flex justify-between mt-1">
-            <span>Remboursé</span>
-            <span>−{money(sale.refunds.reduce((s, r) => s + Number(r.amount), 0))}</span>
+            <div className="flex justify-between">
+              <span>TVA</span>
+              <span>{n(tax)}</span>
+            </div>
           </div>
         )}
 
-        <hr className="my-3 border-dashed border-black" />
-        {sale.company.requiresPickup && sale.status !== "CANCELLED" && sale.deliveryStatus !== "DELIVERED" && (
-          <p className="mb-2 text-center font-bold">À PRÉSENTER AU MAGASIN POUR ÊTRE SERVI</p>
-        )}
-        <div className="flex justify-center">
-          <Barcode value={sale.saleNumber} height={34} />
+        <div className="mt-1.5 text-[11px]">
+          {sale.payments.map((p) => (
+            <div key={p.id}>
+              <div className="flex justify-between gap-2">
+                <span>
+                  Payé — {METHODS[p.method] ?? p.method}
+                  {p.reference && ` (${p.reference})`}
+                </span>
+                <span>{n(p.amount)}</span>
+              </div>
+              {p.notes && <p className="text-[10px]">{p.notes}</p>}
+            </div>
+          ))}
+          {refunded > 0 && (
+            <div className="flex justify-between font-semibold">
+              <span>Remboursé</span>
+              <span>−{n(refunded)}</span>
+            </div>
+          )}
         </div>
-        <p className="mt-2 text-center">Merci de votre visite !</p>
-        {sale.createdOffline && <p className="text-center text-[10px] mt-1">Vente enregistrée hors connexion</p>}
+
+        {c.requiresPickup && !cancelled && sale.deliveryStatus !== "DELIVERED" && (
+          <p className="mt-2 border border-black py-1 text-center text-[11.5px] font-black">À PRÉSENTER AU MAGASIN POUR ÊTRE SERVI</p>
+        )}
+
+        <div className="mt-2 flex justify-center">
+          <Barcode value={sale.saleNumber} height={32} />
+        </div>
+
+        <footer className="mt-2 text-center">
+          <p>Merci de votre visite</p>
+          {c.invoiceNotes && <p className="mt-1 whitespace-pre-line text-[10px]">{c.invoiceNotes}</p>}
+          <p className="mt-1.5 text-left">{sale.cashier.firstName}</p>
+          {sale.createdOffline && <p className="mt-1 text-[9.5px]">Vente enregistrée hors connexion</p>}
+        </footer>
       </div>
 
       <div className="mt-4 flex justify-center gap-3 print:hidden">
