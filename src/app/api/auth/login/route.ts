@@ -4,25 +4,29 @@ import { SignJWT } from "jose";
 import bcrypt from "bcryptjs";
 import { loginSchema } from "@/lib/validations";
 import { writeAuditLog } from "@/lib/audit";
+import { getJwtSecret, SESSION_COOKIE, SESSION_DURATION_MS } from "@/lib/secrets";
+import { hashSessionToken, requestMeta } from "@/lib/auth";
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? "dev-secret-change-in-production"
-);
+// Hash factice : compare un mot de passe même quand l'email est inconnu,
+// pour que le temps de réponse ne révèle pas quels comptes existent.
+const DUMMY_HASH = "$2b$12$Ds3wqaTCLljZMJry0dRF/.gpINT9wrl4s79/Dw8JnlfAla/Br9YI2";
 
 // POST /api/auth/login
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const parsed = loginSchema.safeParse(body);
+    const meta = requestMeta(req);
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.errors[0].message },
+        { success: false, error: parsed.error.issues[0]?.message ?? "Données invalides" },
         { status: 400 }
       );
     }
 
-    const { email, password } = parsed.data;
+    const email = parsed.data.email.trim().toLowerCase();
+    const { password } = parsed.data;
 
     // Trouver l'utilisateur
     const user = await prisma.user.findUnique({
@@ -49,6 +53,7 @@ export async function POST(req: NextRequest) {
 
     // Utilisateur introuvable
     if (!user) {
+      await bcrypt.compare(password, DUMMY_HASH);
       return NextResponse.json(
         { success: false, error: "Email ou mot de passe incorrect" },
         { status: 401 }
@@ -101,7 +106,7 @@ export async function POST(req: NextRequest) {
         userId: user.id,
         result: "FAILED",
         reason: `Tentative ${attempts}/5`,
-        ipAddress: req.headers.get("x-forwarded-for") ?? undefined,
+        ...meta,
       });
 
       return NextResponse.json(
@@ -123,31 +128,29 @@ export async function POST(req: NextRequest) {
     });
 
     // Créer la session en DB
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
 
-    const centerIds = user.centers.map((uc) => uc.center.id);
-
-    // Générer le JWT
+    // Le JWT ne porte que l'identité minimale : les droits et les centres
+    // sont relus en base à chaque requête (getCurrentUser).
     const token = await new SignJWT({
       sub: user.id,
       role: user.role,
       companyId: user.companyId,
-      centerIds,
-      email: user.email,
+      jti: crypto.randomUUID(),
     })
       .setProtectedHeader({ alg: "HS256" })
       .setExpirationTime(Math.floor(expiresAt.getTime() / 1000))
       .setIssuedAt()
-      .sign(JWT_SECRET);
+      .sign(getJwtSecret());
 
-    // Enregistrer la session
+    // Enregistrer la session (empreinte du jeton, jamais le jeton en clair)
     await prisma.authSession.create({
       data: {
         userId: user.id,
-        sessionToken: token,
+        sessionToken: hashSessionToken(token),
         expires: expiresAt,
-        ipAddress: req.headers.get("x-forwarded-for") ?? undefined,
-        userAgent: req.headers.get("user-agent") ?? undefined,
+        ipAddress: meta.ipAddress,
+        userAgent: meta.userAgent,
       },
     });
 
@@ -156,7 +159,7 @@ export async function POST(req: NextRequest) {
       companyId: user.companyId ?? undefined,
       userId: user.id,
       result: "SUCCESS",
-      ipAddress: req.headers.get("x-forwarded-for") ?? undefined,
+      ...meta,
     });
 
     // Réponse avec cookie httpOnly
@@ -176,7 +179,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    response.cookies.set("fishcore-session", token, {
+    response.cookies.set(SESSION_COOKIE, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",

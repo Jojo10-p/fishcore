@@ -8,7 +8,16 @@ import { generateIdempotencyKey } from "@/lib/utils";
 // ─────────────────────────────────────────────
 
 const MAX_RETRIES = 5;
-const RETRY_DELAYS = [5000, 15000, 30000, 60000, 300000]; // backoff exponentiel
+
+/** Refus définitif du serveur (règle métier) : inutile de réessayer. */
+export class SyncConflictError extends Error {
+  constructor(message: string, public code?: string) {
+    super(message);
+  }
+}
+
+/** Session expirée : on garde l'opération en attente sans consommer d'essai. */
+class SyncAuthError extends Error {}
 
 /**
  * Ajoute une vente offline à la file d'attente de sync.
@@ -70,6 +79,22 @@ export async function syncPendingOperations(): Promise<{
       successCount++;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Erreur inconnue";
+
+      if (error instanceof SyncAuthError) {
+        await db.syncQueue.update(op.id, { status: "pending", error: errorMessage });
+        failedCount++;
+        break; // inutile d'envoyer les suivantes tant que l'utilisateur n'est pas reconnecté
+      }
+
+      if (error instanceof SyncConflictError) {
+        await db.syncQueue.update(op.id, { status: "conflict", error: errorMessage });
+        if (op.type === "sale") {
+          await db.sales.update(op.referenceId, { syncStatus: "conflict", syncError: errorMessage });
+        }
+        failedCount++;
+        continue;
+      }
+
       await db.syncQueue.update(op.id, {
         status: "failed",
         error: errorMessage,
@@ -116,7 +141,13 @@ async function syncOperation(op: SyncOperation): Promise<void> {
 
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error ?? `Erreur serveur ${response.status}`);
+    const message = data.error ?? `Erreur serveur ${response.status}`;
+    if (response.status === 401) throw new SyncAuthError(message);
+    // 4xx (hors délai / limitation) = refus métier définitif → conflit à traiter
+    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+      throw new SyncConflictError(message, data.code);
+    }
+    throw new Error(message);
   }
 }
 
@@ -165,6 +196,14 @@ export async function syncCatalogFromServer(centerId: string): Promise<void> {
     console.warn("[SYNC] Échec sync catalogue:", error);
     // Ne pas bloquer le fonctionnement offline
   }
+}
+
+/**
+ * Retourne le nombre d'opérations refusées par le serveur, à traiter par un responsable.
+ */
+export async function getConflictCount(): Promise<number> {
+  const db = getOfflineDB();
+  return db.syncQueue.where("status").equals("conflict").count();
 }
 
 /**

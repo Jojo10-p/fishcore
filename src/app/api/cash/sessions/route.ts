@@ -1,134 +1,163 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { openSessionSchema, closeSessionSchema } from "@/lib/validations";
+import { closeSessionSchema, openSessionSchema } from "@/lib/validations";
 import { writeAuditLog } from "@/lib/audit";
+import {
+  ApiError,
+  type AuthUser,
+  getCurrentUser,
+  handleApiError,
+  parseBody,
+  readJson,
+  requireCenterAccess,
+  requireCompany,
+  requirePermission,
+  resolveCenterScope,
+} from "@/lib/auth";
+import { hasPermission } from "@/lib/rbac";
 
-// POST /api/cash/sessions/open — Ouvrir une session de caisse
+const D = Prisma.Decimal;
+
+const cashMovementSchema = z.object({
+  sessionId: z.string().min(1),
+  type: z.enum(["CASH_IN", "CASH_OUT", "ADVANCE"]),
+  amount: z.coerce.number().positive("Montant invalide"),
+  reason: z.string().trim().min(3, "Motif requis"),
+});
+
+const validateClosureSchema = z.object({
+  sessionId: z.string().min(1),
+  notes: z.string().optional(),
+});
+
+/** Charge une session en vérifiant entreprise + centre. */
+async function loadSession(user: AuthUser, sessionId: string) {
+  const companyId = requireCompany(user);
+  const session = await prisma.cashSession.findFirst({
+    where: { id: sessionId, cashRegister: { center: { companyId } } },
+    include: { cashRegister: { select: { id: true, centerId: true } } },
+  });
+  if (!session) throw new ApiError(404, "Session introuvable");
+  await requireCenterAccess(user, session.cashRegister.centerId);
+  return session;
+}
+
+// ─────────────────────────────────────────────
+// POST /api/cash/sessions (cahier §7)
+//   { action: "open", cashRegisterId, openingBalance, deviceId?, isOnline? }
+//   { action: "close", sessionId, declaredBalance, notes? }
+//   { action: "validate", sessionId, notes? }   → validation de la clôture par un responsable
+//   { action: "movement", sessionId, type, amount, reason }
+// ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const action = body.action as "open" | "close" | "movement";
+    const user = await getCurrentUser(req);
+    const companyId = requireCompany(user);
+    const body = await readJson(req);
+    const meta = { ipAddress: user.ipAddress, userAgent: user.userAgent };
 
-    if (action === "open") {
-      const parsed = openSessionSchema.safeParse(body);
-      if (!parsed.success) {
-        return NextResponse.json(
-          { success: false, error: parsed.error.errors[0].message },
-          { status: 400 }
-        );
+    // ── Ouverture ───────────────────────────────
+    if (body.action === "open") {
+      await requirePermission(user, "cash:open_session");
+      const { cashRegisterId, openingBalance, deviceId } = parseBody(openSessionSchema, body);
+
+      const register = await prisma.cashRegister.findFirst({
+        where: { id: cashRegisterId, center: { companyId } },
+        select: { id: true, centerId: true, isActive: true, state: true },
+      });
+      if (!register) throw new ApiError(404, "Caisse introuvable");
+      await requireCenterAccess(user, register.centerId);
+      if (!register.isActive || register.state === "INACTIVE") {
+        throw new ApiError(409, "Cette caisse est désactivée", "REGISTER_INACTIVE");
       }
 
-      const { cashRegisterId, openingBalance, deviceId } = parsed.data;
+      const session = await prisma.$transaction(async (tx) => {
+        // Verrou sur la caisse : deux ouvertures simultanées ne peuvent pas réussir
+        await tx.$executeRaw`SELECT 1 FROM "cash_registers" WHERE "id" = ${cashRegisterId} FOR UPDATE`;
 
-      // Vérifier qu'il n'y a pas de session déjà ouverte
-      const existing = await prisma.cashSession.findFirst({
-        where: { cashRegisterId, closedAt: null },
-      });
-      if (existing) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Une session est déjà ouverte sur cette caisse. Fermez-la d'abord.",
+        const openOnRegister = await tx.cashSession.findFirst({
+          where: { cashRegisterId, closedAt: null },
+          select: { id: true },
+        });
+        if (openOnRegister) {
+          throw new ApiError(409, "Une session est déjà ouverte sur cette caisse. Fermez-la d'abord.", "REGISTER_BUSY");
+        }
+        const openForCashier = await tx.cashSession.findFirst({
+          where: { cashierId: user.id, closedAt: null },
+          select: { id: true },
+        });
+        if (openForCashier) {
+          throw new ApiError(409, "Vous avez déjà une session ouverte sur une autre caisse.", "CASHIER_BUSY");
+        }
+
+        const created = await tx.cashSession.create({
+          data: {
+            cashRegisterId,
+            cashierId: user.id,
+            openingBalance,
+            deviceId,
+            connectionState: body.isOnline === false ? "OFFLINE" : "ONLINE",
           },
-          { status: 409 }
+          include: {
+            cashRegister: { select: { name: true, centerId: true } },
+            cashier: { select: { firstName: true, lastName: true } },
+          },
+        });
+        await tx.cashRegister.update({ where: { id: cashRegisterId }, data: { state: "OPEN" } });
+
+        await writeAuditLog(
+          {
+            eventType: "CASH_SESSION_OPENED",
+            companyId,
+            centerId: register.centerId,
+            userId: user.id,
+            referenceType: "CashSession",
+            referenceId: created.id,
+            result: "SUCCESS",
+            newValues: { openingBalance, cashRegisterId },
+            deviceId,
+            sessionId: created.id,
+            ...meta,
+          },
+          tx
         );
-      }
-
-      // Récupérer le caissier depuis le cookie/token
-      // TODO: intégrer avec le système d'auth complet
-      const cashierId = body.cashierId as string;
-      if (!cashierId) {
-        return NextResponse.json(
-          { success: false, error: "Identifiant caissier requis" },
-          { status: 400 }
-        );
-      }
-
-      const session = await prisma.cashSession.create({
-        data: {
-          cashRegisterId,
-          cashierId,
-          openingBalance,
-          deviceId,
-          connectionState: body.isOnline ? "ONLINE" : "OFFLINE",
-        },
-        include: {
-          cashRegister: { select: { name: true, centerId: true } },
-          cashier: { select: { firstName: true, lastName: true } },
-        },
-      });
-
-      await writeAuditLog({
-        eventType: "CASH_SESSION_OPENED",
-        userId: cashierId,
-        centerId: session.cashRegister.centerId,
-        referenceType: "CashSession",
-        referenceId: session.id,
-        result: "SUCCESS",
+        return created;
       });
 
       return NextResponse.json({ success: true, data: session }, { status: 201 });
     }
 
-    if (action === "close") {
-      const parsed = closeSessionSchema.safeParse(body);
-      if (!parsed.success) {
-        return NextResponse.json(
-          { success: false, error: parsed.error.errors[0].message },
-          { status: 400 }
-        );
+    // ── Clôture ─────────────────────────────────
+    if (body.action === "close") {
+      await requirePermission(user, "cash:close_session");
+      const { sessionId, declaredBalance, notes } = parseBody(closeSessionSchema, body);
+      const session = await loadSession(user, sessionId);
+
+      // Un caissier clôture sa propre session ; un responsable peut clôturer celles de son centre
+      if (session.cashierId !== user.id && !hasPermission(user.role, "cash:close_session_validate")) {
+        throw new ApiError(403, "Vous ne pouvez clôturer que votre propre session", "FORBIDDEN");
       }
+      if (session.closedAt) throw new ApiError(409, "Session déjà clôturée", "ALREADY_CLOSED");
 
-      const { sessionId, declaredBalance, notes } = parsed.data;
+      const result = await prisma.$transaction(async (tx) => {
+        // Fige la session : plus aucune vente ne peut s'y rattacher pendant le calcul
+        const locked = await tx.cashSession.updateMany({
+          where: { id: sessionId, closedAt: null },
+          data: { closedAt: new Date() },
+        });
+        if (locked.count === 0) throw new ApiError(409, "Session déjà clôturée", "ALREADY_CLOSED");
 
-      const session = await prisma.cashSession.findUnique({
-        where: { id: sessionId },
-        include: {
-          sales: { include: { payments: true } },
-          cashMovements: true,
-          cashRegister: { select: { centerId: true } },
-        },
-      });
+        const totals = await computeSessionTotals(tx, sessionId, session.openingBalance);
+        const declared = new D(declaredBalance);
+        const discrepancy = declared.sub(totals.theoreticalBalance);
 
-      if (!session) {
-        return NextResponse.json({ success: false, error: "Session introuvable" }, { status: 404 });
-      }
-      if (session.closedAt) {
-        return NextResponse.json({ success: false, error: "Session déjà fermée" }, { status: 409 });
-      }
-
-      // Calculer les totaux par mode de paiement
-      let totalSales = 0, totalCash = 0, totalMobileMoney = 0, totalCard = 0, totalOther = 0;
-      for (const sale of session.sales) {
-        for (const payment of sale.payments) {
-          const amount = Number(payment.amount);
-          totalSales += amount;
-          if (payment.method === "CASH") totalCash += amount;
-          else if (payment.method === "MOBILE_MONEY") totalMobileMoney += amount;
-          else if (payment.method === "CARD") totalCard += amount;
-          else totalOther += amount;
-        }
-      }
-
-      const totalCashOut = session.cashMovements
-        .filter((m) => m.type === "CASH_OUT")
-        .reduce((s, m) => s + Number(m.amount), 0);
-      const totalCashIn = session.cashMovements
-        .filter((m) => m.type === "CASH_IN")
-        .reduce((s, m) => s + Number(m.amount), 0);
-
-      const theoreticalBalance =
-        Number(session.openingBalance) + totalCash + totalCashIn - totalCashOut;
-      const discrepancy = declaredBalance - theoreticalBalance;
-
-      // Clôturer la session dans une transaction
-      await prisma.$transaction(async (tx) => {
         await tx.cashSession.update({
           where: { id: sessionId },
           data: {
-            closedAt: new Date(),
-            closingBalance: declaredBalance,
-            theoreticalBalance,
+            closingBalance: declared,
+            theoreticalBalance: totals.theoreticalBalance,
             discrepancy,
             notes,
           },
@@ -137,81 +166,231 @@ export async function POST(req: NextRequest) {
         await tx.cashClosure.create({
           data: {
             sessionId,
-            openingBalance: Number(session.openingBalance),
-            totalSales,
-            totalCash,
-            totalMobileMoney,
-            totalCard,
-            totalOther,
-            totalRefunds: 0, // TODO: calculer les remboursements
-            totalCashOut,
-            theoreticalBalance,
-            declaredBalance,
+            openingBalance: session.openingBalance,
+            totalSales: totals.totalSales,
+            totalCash: totals.totalCash,
+            totalMobileMoney: totals.totalMobileMoney,
+            totalCard: totals.totalCard,
+            totalOther: totals.totalOther,
+            totalRefunds: totals.totalRefunds,
+            totalCashOut: totals.totalCashOut,
+            theoreticalBalance: totals.theoreticalBalance,
+            declaredBalance: declared,
             discrepancy,
             cashierId: session.cashierId,
             notes,
           },
         });
-      });
 
-      await writeAuditLog({
-        eventType: "CASH_SESSION_CLOSED",
-        userId: session.cashierId,
-        centerId: session.cashRegister.centerId,
-        referenceType: "CashSession",
-        referenceId: sessionId,
-        result: "SUCCESS",
-        newValues: { totalSales, declaredBalance, discrepancy },
+        await tx.cashRegister.update({ where: { id: session.cashRegisterId }, data: { state: "CLOSED" } });
+
+        await writeAuditLog(
+          {
+            eventType: "CASH_SESSION_CLOSED",
+            companyId,
+            centerId: session.cashRegister.centerId,
+            userId: user.id,
+            referenceType: "CashSession",
+            referenceId: sessionId,
+            result: "SUCCESS",
+            newValues: {
+              cashierId: session.cashierId,
+              totalSales: totals.totalSales.toString(),
+              theoreticalBalance: totals.theoreticalBalance.toString(),
+              declaredBalance: declared.toString(),
+              discrepancy: discrepancy.toString(),
+            },
+            sessionId,
+            ...meta,
+          },
+          tx
+        );
+
+        return { ...totals, declaredBalance: declared, discrepancy };
       });
 
       return NextResponse.json({
         success: true,
-        data: { sessionId, theoreticalBalance, declaredBalance, discrepancy, totalSales },
+        data: {
+          sessionId,
+          theoreticalBalance: result.theoreticalBalance,
+          declaredBalance: result.declaredBalance,
+          discrepancy: result.discrepancy,
+          totalSales: result.totalSales,
+          totalRefunds: result.totalRefunds,
+        },
       });
     }
 
-    if (action === "movement") {
-      const { sessionId, type, amount, reason, performedById } = body;
+    // ── Validation de la clôture (contrôle indépendant) ─
+    if (body.action === "validate") {
+      await requirePermission(user, "cash:close_session_validate");
+      const { sessionId, notes } = parseBody(validateClosureSchema, body);
+      const session = await loadSession(user, sessionId);
 
-      const movement = await prisma.cashMovement.create({
-        data: {
-          sessionId,
-          type,
-          amount,
-          reason,
-          performedById: performedById ?? "unknown",
-        },
+      if (!session.closedAt) throw new ApiError(409, "La session n'est pas encore clôturée", "NOT_CLOSED");
+      if (session.cashierId === user.id) {
+        throw new ApiError(403, "La clôture doit être validée par une autre personne que le caissier", "SELF_APPROVAL");
+      }
+
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.cashSession.updateMany({
+          where: { id: sessionId, isValidated: false },
+          data: { isValidated: true, validatedById: user.id },
+        });
+        if (updated.count === 0) throw new ApiError(409, "Clôture déjà validée", "ALREADY_VALIDATED");
+        await tx.cashClosure.update({ where: { sessionId }, data: { validatedById: user.id } });
+        await writeAuditLog(
+          {
+            eventType: "CASH_CLOSURE_VALIDATED",
+            companyId,
+            centerId: session.cashRegister.centerId,
+            userId: user.id,
+            referenceType: "CashSession",
+            referenceId: sessionId,
+            result: "SUCCESS",
+            reason: notes,
+            newValues: { discrepancy: session.discrepancy?.toString() ?? null },
+            sessionId,
+            ...meta,
+          },
+          tx
+        );
+      });
+
+      return NextResponse.json({ success: true, message: "Clôture validée." });
+    }
+
+    // ── Entrée / sortie de caisse ───────────────
+    if (body.action === "movement") {
+      await requirePermission(user, "cash:movement");
+      const { sessionId, type, amount, reason } = parseBody(cashMovementSchema, body);
+      const session = await loadSession(user, sessionId);
+      if (session.closedAt) throw new ApiError(409, "Session clôturée", "ALREADY_CLOSED");
+
+      const movement = await prisma.$transaction(async (tx) => {
+        const created = await tx.cashMovement.create({
+          data: { sessionId, type, amount, reason, performedById: user.id },
+        });
+        await writeAuditLog(
+          {
+            eventType: "CASH_MOVEMENT_RECORDED",
+            companyId,
+            centerId: session.cashRegister.centerId,
+            userId: user.id,
+            referenceType: "CashMovement",
+            referenceId: created.id,
+            result: "SUCCESS",
+            reason,
+            newValues: { type, amount },
+            sessionId,
+            ...meta,
+          },
+          tx
+        );
+        return created;
       });
 
       return NextResponse.json({ success: true, data: movement }, { status: 201 });
     }
 
-    return NextResponse.json({ success: false, error: "Action invalide" }, { status: 400 });
+    throw new ApiError(400, "Action invalide");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erreur interne";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return handleApiError(error, "CASH");
   }
 }
 
-// GET /api/cash/sessions — Lister les sessions d'une caisse
+/**
+ * Solde théorique = fond de caisse + encaissements espèces
+ *                   − remboursements espèces + entrées − sorties/avances.
+ * Les ventes annulées restent comptées en encaissement : leur remboursement
+ * est une opération distincte (cahier §10.3) qui vient en déduction.
+ */
+async function computeSessionTotals(
+  tx: Prisma.TransactionClient,
+  sessionId: string,
+  openingBalance: Prisma.Decimal
+) {
+  const [payments, refunds, movements] = await Promise.all([
+    tx.payment.groupBy({
+      by: ["method"],
+      where: { sale: { sessionId } },
+      _sum: { amount: true },
+    }),
+    tx.refund.groupBy({
+      by: ["method"],
+      where: { sale: { sessionId } },
+      _sum: { amount: true },
+    }),
+    tx.cashMovement.groupBy({
+      by: ["type"],
+      where: { sessionId },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  const sumOf = (rows: { _sum: { amount: Prisma.Decimal | null } }[]) =>
+    rows.reduce((s, r) => s.add(r._sum.amount ?? 0), new D(0));
+  const byMethod = (m: string) => new D(payments.find((p) => p.method === m)?._sum.amount ?? 0);
+  const movementOf = (t: string) => new D(movements.find((m) => m.type === t)?._sum.amount ?? 0);
+
+  const totalSales = sumOf(payments);
+  const totalCash = byMethod("CASH");
+  const totalMobileMoney = byMethod("MOBILE_MONEY");
+  const totalCard = byMethod("CARD");
+  const totalOther = totalSales.sub(totalCash).sub(totalMobileMoney).sub(totalCard);
+  const totalRefunds = sumOf(refunds);
+  const cashRefunds = new D(refunds.find((r) => r.method === "CASH")?._sum.amount ?? 0);
+  const totalCashIn = movementOf("CASH_IN");
+  const totalCashOut = movementOf("CASH_OUT").add(movementOf("ADVANCE"));
+
+  const theoreticalBalance = new D(openingBalance)
+    .add(totalCash)
+    .sub(cashRefunds)
+    .add(totalCashIn)
+    .sub(totalCashOut);
+
+  return {
+    totalSales,
+    totalCash,
+    totalMobileMoney,
+    totalCard,
+    totalOther,
+    totalRefunds,
+    totalCashOut,
+    theoreticalBalance,
+  };
+}
+
+// GET /api/cash/sessions — Sessions visibles par l'utilisateur
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const cashRegisterId = searchParams.get("cashRegisterId");
-  const centerId = searchParams.get("centerId");
+  try {
+    const user = await getCurrentUser(req);
+    await requirePermission(user, "cash:view_session");
+    const companyId = requireCompany(user);
 
-  const sessions = await prisma.cashSession.findMany({
-    where: {
-      ...(cashRegisterId ? { cashRegisterId } : {}),
-      ...(centerId ? { cashRegister: { centerId } } : {}),
-    },
-    include: {
-      cashier: { select: { firstName: true, lastName: true } },
-      cashRegister: { select: { name: true } },
-      closure: true,
-    },
-    orderBy: { openedAt: "desc" },
-    take: 50,
-  });
+    const { searchParams } = new URL(req.url);
+    const cashRegisterId = searchParams.get("cashRegisterId");
+    const centerScope = await resolveCenterScope(user, searchParams.get("centerId"));
 
-  return NextResponse.json({ success: true, data: sessions });
+    const sessions = await prisma.cashSession.findMany({
+      where: {
+        cashRegister: { center: { companyId }, ...(centerScope ? { centerId: centerScope } : {}) },
+        ...(cashRegisterId ? { cashRegisterId } : {}),
+        // Sans vue globale, un caissier ne voit que ses sessions
+        ...(hasPermission(user.role, "cash:view_all_sessions") ? {} : { cashierId: user.id }),
+      },
+      include: {
+        cashier: { select: { firstName: true, lastName: true } },
+        cashRegister: { select: { name: true } },
+        closure: true,
+      },
+      orderBy: { openedAt: "desc" },
+      take: 50,
+    });
+
+    return NextResponse.json({ success: true, data: sessions });
+  } catch (error) {
+    return handleApiError(error, "CASH");
+  }
 }

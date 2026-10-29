@@ -1,10 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
-
-const INSTALL_SECRET = new TextEncoder().encode(
-  process.env.INSTALL_LINK_SECRET ?? "fallback-dev-secret-change-in-prod"
-);
+import { getInstallLinkSecret } from "@/lib/secrets";
 
 export interface InstallTokenPayload {
   companyId: string;
@@ -25,42 +22,34 @@ export async function generateInstallLink(
 ): Promise<string> {
   const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
 
-  // Créer l'entrée en base
-  const link = await prisma.agencyInstallLink.create({
-    data: {
-      companyId,
-      centerId,
-      expiresAt,
-      createdById,
-      token: "pending", // temporaire
-    },
-  });
+  const token = await prisma.$transaction(async (tx) => {
+    // Jeton provisoire unique (évite toute collision sur la contrainte @unique)
+    const link = await tx.agencyInstallLink.create({
+      data: { companyId, centerId, expiresAt, createdById, token: `pending:${crypto.randomUUID()}` },
+    });
 
-  // Générer le token JWT signé avec l'ID du lien
-  const token = await new SignJWT({
-    companyId,
-    centerId,
-    linkId: link.id,
-  })
-    .setProtectedHeader({ alg: "HS256" })
-    .setExpirationTime(Math.floor(expiresAt.getTime() / 1000))
-    .setIssuedAt()
-    .sign(INSTALL_SECRET);
+    const signed = await new SignJWT({ companyId, centerId, linkId: link.id })
+      .setProtectedHeader({ alg: "HS256" })
+      .setExpirationTime(Math.floor(expiresAt.getTime() / 1000))
+      .setIssuedAt()
+      .sign(getInstallLinkSecret());
 
-  // Mettre à jour l'entrée avec le vrai token
-  await prisma.agencyInstallLink.update({
-    where: { id: link.id },
-    data: { token },
-  });
+    await tx.agencyInstallLink.update({ where: { id: link.id }, data: { token: signed } });
 
-  await writeAuditLog({
-    eventType: "INSTALL_LINK_GENERATED",
-    companyId,
-    centerId,
-    userId: createdById,
-    referenceType: "AgencyInstallLink",
-    referenceId: link.id,
-    result: "SUCCESS",
+    await writeAuditLog(
+      {
+        eventType: "INSTALL_LINK_GENERATED",
+        companyId,
+        centerId,
+        userId: createdById,
+        referenceType: "AgencyInstallLink",
+        referenceId: link.id,
+        result: "SUCCESS",
+        newValues: { expiresAt: expiresAt.toISOString() },
+      },
+      tx
+    );
+    return signed;
   });
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
@@ -90,7 +79,7 @@ export async function validateInstallLink(token: string): Promise<{
 }> {
   try {
     // Vérifier la signature JWT
-    const { payload } = await jwtVerify(token, INSTALL_SECRET);
+    const { payload } = await jwtVerify(token, getInstallLinkSecret());
     const { companyId, centerId, linkId } = payload as unknown as InstallTokenPayload;
 
     // Vérifier en base que le lien n'a pas été utilisé
@@ -111,7 +100,9 @@ export async function validateInstallLink(token: string): Promise<{
       },
     });
 
-    if (!link) return { valid: false, error: "Lien introuvable" };
+    if (!link || link.id !== linkId || link.companyId !== companyId || link.centerId !== centerId) {
+      return { valid: false, error: "Lien introuvable" };
+    }
     if (link.isUsed) return { valid: false, error: "Ce lien a déjà été utilisé" };
     if (new Date() > link.expiresAt) return { valid: false, error: "Lien expiré" };
 
@@ -128,23 +119,30 @@ export async function validateInstallLink(token: string): Promise<{
 }
 
 /**
- * Marque un lien comme utilisé (usage unique).
+ * Marque un lien comme utilisé (usage unique, atomique).
+ * Retourne false si le lien a déjà été consommé (ex. deux appareils en même temps).
  */
-export async function markInstallLinkUsed(token: string): Promise<void> {
-  const link = await prisma.agencyInstallLink.findUnique({ where: { token } });
-  if (!link) return;
+export async function markInstallLinkUsed(token: string, deviceId?: string): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const consumed = await tx.agencyInstallLink.updateMany({
+      where: { token, isUsed: false, expiresAt: { gt: new Date() } },
+      data: { isUsed: true, usedAt: new Date() },
+    });
+    if (consumed.count === 0) return false;
 
-  await prisma.agencyInstallLink.update({
-    where: { token },
-    data: { isUsed: true, usedAt: new Date() },
-  });
-
-  await writeAuditLog({
-    eventType: "INSTALL_LINK_USED",
-    companyId: link.companyId,
-    centerId: link.centerId,
-    referenceType: "AgencyInstallLink",
-    referenceId: link.id,
-    result: "SUCCESS",
+    const link = await tx.agencyInstallLink.findUniqueOrThrow({ where: { token } });
+    await writeAuditLog(
+      {
+        eventType: "INSTALL_LINK_USED",
+        companyId: link.companyId,
+        centerId: link.centerId,
+        referenceType: "AgencyInstallLink",
+        referenceId: link.id,
+        result: "SUCCESS",
+        deviceId,
+      },
+      tx
+    );
+    return true;
   });
 }

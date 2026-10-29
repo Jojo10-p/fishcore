@@ -93,10 +93,10 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
     };
 
     await db.sales.add(sale);
-  });
 
-  // Ajouter à la file de sync
-  await queueSaleForSync(idempotencyKey, {
+    // Ajouter à la file de sync DANS la même transaction locale : une coupure
+    // de courant ne peut pas laisser une vente sans opération de synchronisation.
+    await queueSaleForSync(idempotencyKey, {
     idempotencyKey,
     sessionId: params.sessionId,
     customerId: params.customerId,
@@ -111,6 +111,7 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
     notes: params.notes,
     createdOffline: true,
     deviceId: getDeviceId(),
+    });
   });
 
   return { success: true, saleId: idempotencyKey };

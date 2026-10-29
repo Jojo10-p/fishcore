@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -37,21 +37,6 @@ function InstallClientPage({
   const [token, setToken] = useState<string>("");
   const [hasVerified, setHasVerified] = useState(false);
 
-  // Extraire le token de l'URL côté client
-  if (typeof window !== "undefined" && !hasVerified) {
-    const urlParams = new URLSearchParams(window.location.search);
-    const t = urlParams.get("token");
-    if (t && !hasVerified) {
-      setToken(t);
-      setHasVerified(true);
-      verifyToken(t);
-    } else if (!t && !hasVerified) {
-      setHasVerified(true);
-      setStep("error");
-      setError("Lien d'installation invalide. Aucun token fourni.");
-    }
-  }
-
   const verifyToken = async (t: string) => {
     try {
       const res = await fetch(`/api/install?token=${encodeURIComponent(t)}`);
@@ -71,17 +56,38 @@ function InstallClientPage({
     }
   };
 
+  // Extraire le token de l'URL au montage (jamais de setState pendant le rendu)
+  useEffect(() => {
+    if (hasVerified) return;
+    setHasVerified(true);
+    const t = new URLSearchParams(window.location.search).get("token");
+    if (t) {
+      setToken(t);
+      void verifyToken(t);
+    } else {
+      setStep("error");
+      setError("Lien d'installation invalide. Aucun token fourni.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleInstall = async () => {
     if (!config || !token) return;
     setStep("installing");
 
     try {
       // Marquer le lien comme utilisé
-      await fetch("/api/install", {
+      const res = await fetch("/api/install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, deviceId: getDeviceId() }),
       });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result.success) {
+        setStep("error");
+        setError(result.error ?? "Ce lien n'est plus valide.");
+        return;
+      }
 
       // Stocker la config localement (pour le mode offline)
       localStorage.setItem("fishcore-agency-config", JSON.stringify({

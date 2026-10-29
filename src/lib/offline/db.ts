@@ -44,7 +44,9 @@ export interface OfflineSale {
   totalAmount: number;
   notes?: string;
   createdAt: string; // ISO string
-  syncStatus: "pending" | "syncing" | "synced" | "failed";
+  // conflict = refusée par le serveur pour une raison métier (stock, prix, session clôturée) :
+  // ne sera pas retentée automatiquement, un responsable doit la traiter.
+  syncStatus: "pending" | "syncing" | "synced" | "failed" | "conflict";
   syncError?: string;
   syncedAt?: string;
   retryCount: number;
@@ -80,7 +82,7 @@ export interface SyncOperation {
   type: "sale" | "stock_update" | "cash_session";
   referenceId: string;
   payload: Record<string, unknown>;
-  status: "pending" | "syncing" | "synced" | "failed";
+  status: "pending" | "syncing" | "synced" | "failed" | "conflict";
   createdAt: string;
   attemptCount: number;
   lastAttemptAt?: string;

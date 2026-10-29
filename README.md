@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# fishcore
 
-## Getting Started
+Plateforme de gestion intégrée des poissonneries (Bénin) : multi-entreprises,
+multi-centres, caisses, stocks, ventes en ligne et hors connexion.
 
-First, run the development server:
+Stack : Next.js 16 · React 19 · TypeScript · Prisma 7 (PostgreSQL / Supabase) · Dexie (hors ligne).
+
+## Démarrage
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install                 # génère aussi le client Prisma (postinstall)
+cp .env.example .env.local  # puis remplir les valeurs
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Base de données — première fois
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npx prisma migrate dev --name init --create-only
+# Copier le contenu de prisma/sql/integrity-guards.sql à la fin de
+# prisma/migrations/<horodatage>_init/migration.sql, puis :
+npx prisma migrate dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Les garde-fous SQL rendent le journal d'audit non modifiable, interdisent un
+stock négatif et deux sessions ouvertes sur une même caisse.
 
-## Learn More
+```bash
+npm run dev        # http://localhost:3000
+npm run typecheck  # vérification TypeScript
+npm test           # tests d'intégration (TEST_DATABASE_URL requis)
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Règles de sécurité du code serveur
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Toute route API doit :
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. appeler `getCurrentUser(req)` puis `requirePermission(user, "...")` (`src/lib/auth.ts`) ;
+2. prendre l'entreprise, l'utilisateur et les centres **de la session**, jamais du corps
+   de la requête ni de l'URL (`requireCompany`, `requireCenterAccess`, `resolveCenterScope`) ;
+3. écrire le journal d'audit **dans la transaction** de l'opération : `writeAuditLog(params, tx)`.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Les vérifications de stock se font dans la base (mise à jour conditionnelle),
+jamais à partir de la quantité affichée à l'écran.

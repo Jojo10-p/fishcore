@@ -1,189 +1,265 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
+import { cancellationDecisionSchema, cancellationRequestSchema } from "@/lib/validations";
+import {
+  ApiError,
+  type AuthUser,
+  getCurrentUser,
+  handleApiError,
+  parseBody,
+  readJson,
+  requireCenterAccess,
+  requireCompany,
+  requirePermission,
+} from "@/lib/auth";
+import { hasPermission } from "@/lib/rbac";
 
-// POST /api/sales/[id]/cancel — Demander ou approuver une annulation
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+type Params = { params: Promise<{ id: string }> };
+
+/** Charge la vente en vérifiant qu'elle est visible par l'utilisateur. */
+async function loadSale(user: AuthUser, saleId: string) {
+  const companyId = requireCompany(user);
+  const sale = await prisma.sale.findFirst({
+    where: { id: saleId, companyId },
+    include: { lines: true, payments: true },
+  });
+  if (!sale) throw new ApiError(404, "Vente introuvable");
+  await requireCenterAccess(user, sale.centerId);
+  return sale;
+}
+
+// ─────────────────────────────────────────────
+// POST /api/sales/[id]/cancel (cahier §10)
+//   { action: "request", reason }                           → demande (caissier)
+//   { action: "decide", cancellationId, decision, rejectionReason? } → décision (gérant / propriétaire)
+// L'identité du demandeur et de l'approbateur vient de la session.
+// La vente d'origine n'est jamais supprimée : l'annulation est une
+// opération distincte liée à la vente, avec remboursement et retour de stock.
+// ─────────────────────────────────────────────
+export async function POST(req: NextRequest, { params }: Params) {
   try {
+    const user = await getCurrentUser(req);
     const { id: saleId } = await params;
-    const body = await req.json();
-    const { action, requesterId, reason, approverId, decision, rejectionReason } = body;
+    const body = await readJson(req);
 
-    const sale = await prisma.sale.findUnique({
-      where: { id: saleId },
-      include: { lines: true, payments: true },
-    });
+    if (body.action === "request") {
+      await requirePermission(user, "sale:cancel_request");
+      const { requestReason } = parseBody(cancellationRequestSchema, {
+        saleId,
+        requestReason: body.reason ?? body.requestReason,
+      });
+      const sale = await loadSale(user, saleId);
 
-    if (!sale) {
-      return NextResponse.json({ success: false, error: "Vente introuvable" }, { status: 404 });
-    }
-
-    // Demande d'annulation par le caissier
-    if (action === "request") {
-      if (!reason || reason.length < 5) {
-        return NextResponse.json({ success: false, error: "Motif requis (min. 5 caractères)" }, { status: 400 });
+      if (sale.status !== "COMPLETED") {
+        throw new ApiError(409, "Seule une vente finalisée peut faire l'objet d'une annulation", "INVALID_STATUS");
+      }
+      // Un caissier ne peut demander l'annulation que de ses propres ventes
+      if (!hasPermission(user.role, "sale:view_all") && sale.cashierId !== user.id) {
+        throw new ApiError(403, "Vous ne pouvez demander l'annulation que de vos propres ventes", "FORBIDDEN");
       }
 
-      // Vérifier qu'il n'y a pas déjà une demande en attente
-      const existing = await prisma.cancellation.findFirst({
-        where: { saleId, status: "PENDING" },
-      });
-      if (existing) {
-        return NextResponse.json(
-          { success: false, error: "Une demande d'annulation est déjà en attente pour cette vente" },
-          { status: 409 }
-        );
-      }
-
-      const cancellation = await prisma.cancellation.create({
-        data: { saleId, requesterId, requestReason: reason, status: "PENDING" },
-      });
-
-      await writeAuditLog({
-        eventType: "CANCELLATION_REQUESTED",
-        companyId: sale.companyId,
-        centerId: sale.centerId,
-        userId: requesterId,
-        referenceType: "Sale",
-        referenceId: saleId,
-        result: "SUCCESS",
-        newValues: { reason },
-      });
-
-      return NextResponse.json({ success: true, data: cancellation });
-    }
-
-    // Décision d'annulation par un manager
-    if (action === "decide") {
-      const { cancellationId } = body;
-      const cancellation = await prisma.cancellation.findUnique({
-        where: { id: cancellationId },
-      });
-
-      if (!cancellation || cancellation.status !== "PENDING") {
-        return NextResponse.json(
-          { success: false, error: "Demande introuvable ou déjà traitée" },
-          { status: 404 }
-        );
-      }
-
-      if (decision === "APPROVED") {
-        // Remettre le stock en transaction
-        await prisma.$transaction(async (tx) => {
-          // Remettre le stock pour chaque ligne
-          for (const line of sale.lines) {
-            const stock = await tx.stock.findUnique({
-              where: {
-                centerId_productId: {
-                  centerId: sale.centerId,
-                  productId: line.productId,
-                },
-              },
-            });
-
-            if (stock) {
-              await tx.stock.update({
-                where: { id: stock.id },
-                data: {
-                  quantity: { increment: Number(line.quantity) },
-                  version: { increment: 1 },
-                },
-              });
-
-              await tx.stockMovement.create({
-                data: {
-                  stockId: stock.id,
-                  type: "CUSTOMER_RETURN",
-                  quantity: Number(line.quantity),
-                  referenceType: "Sale",
-                  referenceId: saleId,
-                  notes: `Annulation ${cancellationId}`,
-                  performedById: approverId ?? "system",
-                  centerId: sale.centerId,
-                },
-              });
-            }
-          }
-
-          // Mettre à jour le statut de la vente
-          await tx.sale.update({
-            where: { id: saleId },
-            data: { status: "CANCELLED" },
-          });
-
-          // Mettre à jour la demande d'annulation
-          await tx.cancellation.update({
-            where: { id: cancellationId },
-            data: {
-              status: "APPROVED",
-              approverId,
-              approvedAt: new Date(),
-            },
-          });
+      const cancellation = await prisma.$transaction(async (tx) => {
+        // Verrou sur la vente : empêche deux demandes simultanées
+        await tx.$executeRaw`SELECT 1 FROM "sales" WHERE "id" = ${saleId} FOR UPDATE`;
+        const pending = await tx.cancellation.findFirst({ where: { saleId, status: "PENDING" } });
+        if (pending) {
+          throw new ApiError(409, "Une demande d'annulation est déjà en attente pour cette vente", "ALREADY_PENDING");
+        }
+        const created = await tx.cancellation.create({
+          data: { saleId, requesterId: user.id, requestReason, status: "PENDING" },
         });
+        await writeAuditLog(
+          {
+            eventType: "CANCELLATION_REQUESTED",
+            companyId: sale.companyId,
+            centerId: sale.centerId,
+            userId: user.id,
+            referenceType: "Sale",
+            referenceId: saleId,
+            result: "SUCCESS",
+            reason: requestReason,
+            newValues: { cancellationId: created.id },
+            ipAddress: user.ipAddress,
+            userAgent: user.userAgent,
+          },
+          tx
+        );
+        return created;
+      });
 
+      return NextResponse.json({ success: true, data: cancellation }, { status: 201 });
+    }
+
+    if (body.action === "decide") {
+      await requirePermission(user, "sale:cancel_approve");
+      const { cancellationId, decision, rejectionReason } = parseBody(cancellationDecisionSchema, body);
+      const sale = await loadSale(user, saleId);
+
+      const cancellation = await prisma.cancellation.findFirst({
+        where: { id: cancellationId, saleId },
+      });
+      if (!cancellation) throw new ApiError(404, "Demande d'annulation introuvable");
+      if (cancellation.status !== "PENDING") {
+        throw new ApiError(409, "Cette demande a déjà été traitée", "ALREADY_DECIDED");
+      }
+      // Séparation des tâches : personne n'approuve sa propre demande (cahier §10.2)
+      if (cancellation.requesterId === user.id) {
         await writeAuditLog({
-          eventType: "CANCELLATION_APPROVED",
+          eventType: "UNAUTHORIZED_ACCESS_ATTEMPT",
           companyId: sale.companyId,
           centerId: sale.centerId,
-          userId: approverId,
-          referenceType: "Sale",
-          referenceId: saleId,
-          result: "SUCCESS",
+          userId: user.id,
+          referenceType: "Cancellation",
+          referenceId: cancellationId,
+          result: "DENIED",
+          reason: "Tentative d'auto-approbation d'une annulation",
         });
-
-        return NextResponse.json({ success: true, message: "Annulation approuvée. Stock restauré." });
+        throw new ApiError(403, "Vous ne pouvez pas décider de votre propre demande", "SELF_APPROVAL");
       }
 
       if (decision === "REJECTED") {
-        await prisma.cancellation.update({
-          where: { id: cancellationId },
-          data: {
-            status: "REJECTED",
-            approverId,
-            rejectionReason,
-          },
+        if (!rejectionReason || rejectionReason.trim().length < 3) {
+          throw new ApiError(400, "Motif de refus requis");
+        }
+        await prisma.$transaction(async (tx) => {
+          const updated = await tx.cancellation.updateMany({
+            where: { id: cancellationId, status: "PENDING" },
+            data: { status: "REJECTED", approverId: user.id, rejectionReason, decidedAt: new Date() },
+          });
+          if (updated.count === 0) throw new ApiError(409, "Cette demande a déjà été traitée", "ALREADY_DECIDED");
+          await writeAuditLog(
+            {
+              eventType: "CANCELLATION_REJECTED",
+              companyId: sale.companyId,
+              centerId: sale.centerId,
+              userId: user.id,
+              referenceType: "Sale",
+              referenceId: saleId,
+              result: "SUCCESS",
+              reason: rejectionReason,
+              newValues: { cancellationId },
+              ipAddress: user.ipAddress,
+              userAgent: user.userAgent,
+            },
+            tx
+          );
         });
-
-        await writeAuditLog({
-          eventType: "CANCELLATION_REJECTED",
-          companyId: sale.companyId,
-          centerId: sale.centerId,
-          userId: approverId,
-          referenceType: "Sale",
-          referenceId: saleId,
-          result: "SUCCESS",
-          newValues: { rejectionReason },
-        });
-
         return NextResponse.json({ success: true, message: "Demande rejetée." });
       }
+
+      // APPROVED : retour de stock + remboursement + statut, en une transaction
+      await prisma.$transaction(async (tx) => {
+        // Changements conditionnels : protègent contre deux approbations simultanées
+        const decided = await tx.cancellation.updateMany({
+          where: { id: cancellationId, status: "PENDING" },
+          data: { status: "APPROVED", approverId: user.id, decidedAt: new Date() },
+        });
+        if (decided.count === 0) throw new ApiError(409, "Cette demande a déjà été traitée", "ALREADY_DECIDED");
+
+        const saleUpdated = await tx.sale.updateMany({
+          where: { id: saleId, status: "COMPLETED" },
+          data: { status: "CANCELLED" },
+        });
+        if (saleUpdated.count === 0) throw new ApiError(409, "La vente n'est plus annulable", "INVALID_STATUS");
+
+        // Retour en stock, dans l'unité de base (celle des mouvements de vente)
+        const saleMovements = await tx.stockMovement.findMany({
+          where: { referenceType: "Sale", referenceId: saleId, type: "SALE" },
+        });
+        const stockImpact: Array<{ stockId: string; quantity: string }> = [];
+        for (const mv of saleMovements) {
+          const qty = mv.quantity.negated(); // la sortie était négative
+          await tx.stock.update({
+            where: { id: mv.stockId },
+            data: { quantity: { increment: qty }, version: { increment: 1 } },
+          });
+          await tx.stockMovement.create({
+            data: {
+              stockId: mv.stockId,
+              type: "CUSTOMER_RETURN",
+              quantity: qty,
+              unitId: mv.unitId,
+              referenceType: "Cancellation",
+              referenceId: cancellationId,
+              notes: `Annulation de la vente ${sale.saleNumber}`,
+              performedById: user.id,
+              centerId: sale.centerId,
+            },
+          });
+          stockImpact.push({ stockId: mv.stockId, quantity: qty.toString() });
+        }
+
+        // Remboursement : une opération par moyen de paiement d'origine
+        let cashImpact = 0;
+        for (const p of sale.payments) {
+          await tx.refund.create({
+            data: {
+              saleId,
+              amount: p.amount,
+              method: p.method,
+              reason: `Annulation : ${cancellation.requestReason}`,
+              approvedById: user.id,
+              performedById: user.id,
+            },
+          });
+          cashImpact += Number(p.amount);
+        }
+
+        await tx.cancellation.update({
+          where: { id: cancellationId },
+          data: { stockImpact, cashImpact },
+        });
+
+        await writeAuditLog(
+          {
+            eventType: "CANCELLATION_APPROVED",
+            companyId: sale.companyId,
+            centerId: sale.centerId,
+            userId: user.id,
+            referenceType: "Sale",
+            referenceId: saleId,
+            result: "SUCCESS",
+            oldValues: { status: "COMPLETED" },
+            newValues: { status: "CANCELLED", cancellationId, refunded: cashImpact, stockImpact },
+            ipAddress: user.ipAddress,
+            userAgent: user.userAgent,
+          },
+          tx
+        );
+      });
+
+      return NextResponse.json({ success: true, message: "Annulation approuvée. Stock restauré et remboursement enregistré." });
     }
 
-    return NextResponse.json({ success: false, error: "Action invalide" }, { status: 400 });
+    throw new ApiError(400, "Action invalide");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erreur interne";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return handleApiError(error, "SALES/CANCEL");
   }
 }
 
-// GET /api/sales/[id]/cancel — Voir les demandes d'annulation d'une vente
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id: saleId } = await params;
-  const cancellations = await prisma.cancellation.findMany({
-    where: { saleId },
-    include: {
-      requester: { select: { firstName: true, lastName: true } },
-      approver: { select: { firstName: true, lastName: true } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+// GET /api/sales/[id]/cancel — Historique des demandes d'annulation d'une vente
+export async function GET(req: NextRequest, { params }: Params) {
+  try {
+    const user = await getCurrentUser(req);
+    await requirePermission(user, "sale:view");
+    const { id: saleId } = await params;
+    const sale = await loadSale(user, saleId);
+    if (!hasPermission(user.role, "sale:view_all") && sale.cashierId !== user.id) {
+      throw new ApiError(404, "Vente introuvable");
+    }
 
-  return NextResponse.json({ success: true, data: cancellations });
+    const cancellations = await prisma.cancellation.findMany({
+      where: { saleId },
+      include: {
+        requester: { select: { firstName: true, lastName: true } },
+        approver: { select: { firstName: true, lastName: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return NextResponse.json({ success: true, data: cancellations });
+  } catch (error) {
+    return handleApiError(error, "SALES/CANCEL");
+  }
 }

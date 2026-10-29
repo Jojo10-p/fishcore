@@ -5,7 +5,7 @@ import { z } from "zod";
 // ─────────────────────────────────────────────
 
 export const loginSchema = z.object({
-  email: z.string().email("Email invalide"),
+  email: z.string().trim().toLowerCase().email("Email invalide"),
   password: z.string().min(1, "Mot de passe requis"),
 });
 
@@ -33,7 +33,7 @@ export const companySchema = z.object({
   legalName: z.string().optional(),
   ownerName: z.string().min(2, "Nom du propriétaire requis"),
   phone: z.string().min(8, "Numéro de téléphone invalide"),
-  email: z.string().email("Email invalide"),
+  email: z.string().trim().toLowerCase().email("Email invalide"),
   address: z.string().optional(),
   city: z.string().optional(),
   commune: z.string().optional(),
@@ -75,7 +75,7 @@ export const centerSchema = z.object({
 export const createUserSchema = z.object({
   firstName: z.string().min(1, "Prénom requis"),
   lastName: z.string().min(1, "Nom requis"),
-  email: z.string().email("Email invalide"),
+  email: z.string().trim().toLowerCase().email("Email invalide"),
   phone: z.string().optional(),
   role: z.enum([
     "COMPANY_OWNER",
@@ -86,7 +86,11 @@ export const createUserSchema = z.object({
     "SALES_EMPLOYEE",
   ]),
   centerIds: z.array(z.string()).min(1, "Affecter au moins un centre"),
-  password: z.string().min(8, "Mot de passe : min. 8 caractères"),
+  password: z
+    .string()
+    .min(8, "Mot de passe : min. 8 caractères")
+    .regex(/[A-Z]/, "Au moins une majuscule")
+    .regex(/[0-9]/, "Au moins un chiffre"),
 });
 
 // ─────────────────────────────────────────────

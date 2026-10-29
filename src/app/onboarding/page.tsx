@@ -27,11 +27,6 @@ export default function OnboardingPage() {
     setIsLoading(true);
     setError(null);
     try {
-      // Récupérer l'user courant
-      const meRes = await fetch("/api/auth/logout", { method: "GET" }).catch(() => null);
-      // Appeler /api/auth/me
-      const me = await fetch("/api/auth/logout").catch(() => null);
-
       // Créer le centre via l'API
       const res = await fetch("/api/centers", {
         method: "POST",
@@ -42,9 +37,7 @@ export default function OnboardingPage() {
           address: data.centerAddress,
           city: data.centerCity,
           phone: data.centerPhone,
-          // companyId et createdById sont récupérés côté serveur via le cookie
-          companyId: "from-session", // Le middleware injecte x-company-id
-          createdById: "from-session",
+          // L'entreprise et l'auteur sont déterminés côté serveur à partir de la session
         }),
       });
 

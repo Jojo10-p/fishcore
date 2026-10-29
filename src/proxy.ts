@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
+import { getJwtSecret, SESSION_COOKIE } from "@/lib/secrets";
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? "dev-secret-change-in-production"
-);
+// Next.js 16 : « middleware » est renommé « proxy » (runtime Node.js).
+// Ce proxy ne fait qu'un premier filtrage (redirection vers /login).
+// Le contrôle d'accès RÉEL est fait dans chaque route API via
+// getCurrentUser() + requirePermission() (src/lib/auth.ts).
+
+const IDENTITY_HEADERS = ["x-user-id", "x-user-role", "x-company-id"];
 
 // Routes accessibles sans authentification
 const PUBLIC_PATHS = [
@@ -26,8 +30,13 @@ function isApiPath(pathname: string): boolean {
   return pathname.startsWith("/api/");
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  // Ne jamais faire confiance aux en-têtes d'identité envoyés par le client
+  const requestHeaders = new Headers(req.headers);
+  for (const h of IDENTITY_HEADERS) requestHeaders.delete(h);
+  const passThrough = () => NextResponse.next({ request: { headers: requestHeaders } });
 
   // Laisser passer les assets statiques
   if (
@@ -37,28 +46,28 @@ export async function middleware(req: NextRequest) {
     pathname.endsWith(".png") ||
     pathname.endsWith(".ico")
   ) {
-    return NextResponse.next();
+    return passThrough();
   }
 
   // Routes publiques — toujours accessibles
   if (isPublicPath(pathname)) {
     // Si déjà connecté et tente d'accéder à /login ou /register → redirect dashboard
     if (pathname === "/login" || pathname === "/register") {
-      const token = req.cookies.get("fishcore-session")?.value;
+      const token = req.cookies.get(SESSION_COOKIE)?.value;
       if (token) {
         try {
-          await jwtVerify(token, JWT_SECRET);
+          await jwtVerify(token, getJwtSecret());
           return NextResponse.redirect(new URL("/dashboard", req.url));
         } catch {
           // Token invalide — laisser accéder à la page de login
         }
       }
     }
-    return NextResponse.next();
+    return passThrough();
   }
 
   // Vérifier l'authentification
-  const token = req.cookies.get("fishcore-session")?.value;
+  const token = req.cookies.get(SESSION_COOKIE)?.value;
 
   if (!token) {
     if (isApiPath(pathname)) {
@@ -70,10 +79,10 @@ export async function middleware(req: NextRequest) {
   }
 
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
+    const { payload } = await jwtVerify(token, getJwtSecret());
 
-    // Injecter l'identité dans les headers pour les Server Components
-    const requestHeaders = new Headers(req.headers);
+    // Indication d'identité pour les Server Components (non fiable pour les
+    // autorisations : la session est revérifiée en base par getCurrentUser)
     requestHeaders.set("x-user-id", payload.sub as string);
     requestHeaders.set("x-user-role", (payload as { role?: string }).role ?? "");
     requestHeaders.set("x-company-id", (payload as { companyId?: string }).companyId ?? "");
@@ -86,14 +95,14 @@ export async function middleware(req: NextRequest) {
         { success: false, error: "Session expirée" },
         { status: 401 }
       );
-      response.cookies.delete("fishcore-session");
+      response.cookies.delete(SESSION_COOKIE);
       return response;
     }
 
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("redirect", pathname);
     const response = NextResponse.redirect(loginUrl);
-    response.cookies.delete("fishcore-session");
+    response.cookies.delete(SESSION_COOKIE);
     return response;
   }
 }

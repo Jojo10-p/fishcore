@@ -76,8 +76,8 @@ export async function GET(req: NextRequest) {
 // POST /api/install — Confirmer l'utilisation du lien (marquer comme utilisé)
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { token, deviceId } = body;
+    const body = await req.json().catch(() => ({}));
+    const { token, deviceId } = body as { token?: string; deviceId?: unknown };
 
     if (!token) {
       return NextResponse.json(
@@ -94,7 +94,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await markInstallLinkUsed(token);
+    const consumed = await markInstallLinkUsed(token, typeof deviceId === "string" ? deviceId : undefined);
+    if (!consumed) {
+      return NextResponse.json(
+        { success: false, error: "Ce lien a déjà été utilisé" },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({
       success: true,

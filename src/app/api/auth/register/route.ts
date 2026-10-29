@@ -3,16 +3,17 @@ import { prisma } from "@/lib/prisma";
 import { companySchema } from "@/lib/validations";
 import bcrypt from "bcryptjs";
 import { writeAuditLog } from "@/lib/audit";
+import { handleApiError, isUniqueViolation, requestMeta } from "@/lib/auth";
 
 // POST /api/auth/register — Inscription d'une nouvelle entreprise
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const parsed = companySchema.safeParse(body);
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.errors[0].message },
+        { success: false, error: parsed.error.issues[0]?.message ?? "Données invalides" },
         { status: 400 }
       );
     }
@@ -78,17 +79,21 @@ export async function POST(req: NextRequest) {
         ],
       });
 
-      return { company, user };
-    });
+      await writeAuditLog(
+        {
+          eventType: "USER_CREATED",
+          companyId: company.id,
+          userId: user.id,
+          referenceType: "User",
+          referenceId: user.id,
+          result: "SUCCESS",
+          newValues: { email: user.email, role: "COMPANY_OWNER" },
+          ...requestMeta(req),
+        },
+        tx
+      );
 
-    await writeAuditLog({
-      eventType: "USER_CREATED",
-      companyId: result.company.id,
-      userId: result.user.id,
-      referenceType: "User",
-      referenceId: result.user.id,
-      result: "SUCCESS",
-      newValues: { email: result.user.email, role: "COMPANY_OWNER" },
+      return { company, user };
     });
 
     return NextResponse.json(
@@ -103,7 +108,13 @@ export async function POST(req: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erreur interne";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    // Deux inscriptions simultanées avec le même email
+    if (isUniqueViolation(error)) {
+      return NextResponse.json(
+        { success: false, error: "Un compte existe déjà avec cet email" },
+        { status: 409 }
+      );
+    }
+    return handleApiError(error, "AUTH/REGISTER");
   }
 }

@@ -1,22 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { goodsReceiptSchema } from "@/lib/validations";
-import { writeAuditLog } from "@/lib/audit";
+import {
+  ApiError,
+  getCurrentUser,
+  handleApiError,
+  parseBody,
+  readJson,
+  requireCenterAccess,
+  requireCompany,
+  requirePermission,
+  resolveCenterScope,
+} from "@/lib/auth";
 
-// POST /api/goods-receipts — Créer une réception de marchandises
+// POST /api/goods-receipts — Créer une réception (brouillon : le stock n'augmente
+// qu'à la validation, cahier §8.3)
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const parsed = goodsReceiptSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { success: false, error: parsed.error.errors[0].message },
-        { status: 400 }
-      );
-    }
+    const user = await getCurrentUser(req);
+    await requirePermission(user, "stock:receive");
+    const companyId = requireCompany(user);
+    const data = parseBody(goodsReceiptSchema, await readJson(req));
+    await requireCenterAccess(user, data.centerId);
 
-    const { createdById } = body;
-    const data = parsed.data;
+    // Produits, fournisseur et achat doivent appartenir à l'entreprise
+    const productIds = [...new Set(data.lines.map((l) => l.productId))];
+    const productCount = await prisma.product.count({ where: { id: { in: productIds }, companyId } });
+    if (productCount !== productIds.length) throw new ApiError(400, "Produit invalide dans la réception");
+
+    if (data.supplierId) {
+      const supplier = await prisma.supplier.findFirst({ where: { id: data.supplierId, companyId }, select: { id: true } });
+      if (!supplier) throw new ApiError(400, "Fournisseur introuvable");
+    }
+    if (data.purchaseId) {
+      const purchase = await prisma.purchase.findFirst({
+        where: { id: data.purchaseId, centerId: data.centerId },
+        select: { id: true },
+      });
+      if (!purchase) throw new ApiError(400, "Achat introuvable pour ce centre");
+    }
 
     const receipt = await prisma.goodsReceipt.create({
       data: {
@@ -30,7 +52,7 @@ export async function POST(req: NextRequest) {
         handlingCost: data.handlingCost,
         otherCosts: data.otherCosts,
         notes: data.notes,
-        createdById: createdById ?? "unknown",
+        createdById: user.id,
         isDraft: true,
         isValidated: false,
         lines: {
@@ -50,29 +72,37 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, data: receipt }, { status: 201 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erreur interne";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return handleApiError(error, "GOODS_RECEIPTS");
   }
 }
 
-// GET /api/goods-receipts — Lister les réceptions d'un centre
+// GET /api/goods-receipts — Réceptions des centres visibles
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const centerId = searchParams.get("centerId");
-  const validated = searchParams.get("validated");
+  try {
+    const user = await getCurrentUser(req);
+    await requirePermission(user, "stock:view");
+    const companyId = requireCompany(user);
 
-  const receipts = await prisma.goodsReceipt.findMany({
-    where: {
-      ...(centerId ? { centerId } : {}),
-      ...(validated !== null ? { isValidated: validated === "true" } : {}),
-    },
-    include: {
-      lines: { include: { product: { select: { name: true } } } },
-      supplier: { select: { name: true } },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 100,
-  });
+    const { searchParams } = new URL(req.url);
+    const validated = searchParams.get("validated");
+    const centerScope = await resolveCenterScope(user, searchParams.get("centerId"));
 
-  return NextResponse.json({ success: true, data: receipts });
+    const receipts = await prisma.goodsReceipt.findMany({
+      where: {
+        center: { companyId },
+        ...(centerScope ? { centerId: centerScope } : {}),
+        ...(validated !== null ? { isValidated: validated === "true" } : {}),
+      },
+      include: {
+        lines: { include: { product: { select: { name: true } } } },
+        supplier: { select: { name: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+
+    return NextResponse.json({ success: true, data: receipts });
+  } catch (error) {
+    return handleApiError(error, "GOODS_RECEIPTS");
+  }
 }

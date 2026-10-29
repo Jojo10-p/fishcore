@@ -1,112 +1,142 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  getCurrentUser,
+  handleApiError,
+  requireCompany,
+  requirePermission,
+  resolveCenterScope,
+} from "@/lib/auth";
 
-// GET /api/reports/dashboard — Données agrégées pour le tableau de bord
+/** Décalage (ms) d'un fuseau horaire à un instant donné. */
+function tzOffsetMs(instant: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(instant));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+  return asUtc - instant;
+}
+
+/** Début et fin d'une journée calendaire dans le fuseau de l'entreprise. */
+function dayBounds(dateStr: string, timeZone: string) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const startGuess = Date.UTC(y, m - 1, d);
+  const start = startGuess - tzOffsetMs(startGuess, timeZone);
+  const endGuess = Date.UTC(y, m - 1, d + 1);
+  const end = endGuess - tzOffsetMs(endGuess, timeZone);
+  return { start: new Date(start), end: new Date(end - 1) };
+}
+
+function todayIn(timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date()); // AAAA-MM-JJ
+}
+
+// GET /api/reports/dashboard — Indicateurs du jour (centres visibles uniquement)
 export async function GET(req: NextRequest) {
   try {
+    const user = await getCurrentUser(req);
+    await requirePermission(user, "report:view");
+    const companyId = requireCompany(user);
+
     const { searchParams } = new URL(req.url);
-    const companyId = searchParams.get("companyId");
-    const centerId = searchParams.get("centerId");
-    const dateStr = searchParams.get("date") ?? new Date().toISOString().split("T")[0];
+    const centerScope = await resolveCenterScope(user, searchParams.get("centerId"));
 
-    if (!companyId) {
-      return NextResponse.json({ success: false, error: "companyId requis" }, { status: 400 });
-    }
+    const company = await prisma.company.findUniqueOrThrow({
+      where: { id: companyId },
+      select: { timezone: true },
+    });
+    const tz = company.timezone || "Africa/Porto-Novo";
+    const dateParam = searchParams.get("date");
+    const dateStr = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : todayIn(tz);
+    const { start, end } = dayBounds(dateStr, tz);
 
-    const startOfDay = new Date(`${dateStr}T00:00:00.000Z`);
-    const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
-
-    const saleWhere = {
+    const centerWhere = centerScope ? { centerId: centerScope } : {};
+    const saleWhere: Prisma.SaleWhereInput = {
       companyId,
-      ...(centerId ? { centerId } : {}),
-      status: { not: "CANCELLED" as const },
-      createdAt: { gte: startOfDay, lte: endOfDay },
+      ...centerWhere,
+      status: { not: "CANCELLED" },
+      createdAt: { gte: start, lte: end },
     };
 
-    // Requêtes parallèles
-    const [salesStats, salesCount, lowStockCount, openSessions, recentSales] =
-      await Promise.all([
-        // Total et CA du jour
-        prisma.sale.aggregate({
-          where: saleWhere,
-          _sum: { totalAmount: true },
-          _count: { id: true },
-        }),
+    // Filtre SQL équivalent pour le comptage des stocks bas
+    const centerSql =
+      typeof centerScope === "string"
+        ? Prisma.sql`AND s."centerId" = ${centerScope}`
+        : centerScope?.in
+          ? centerScope.in.length
+            ? Prisma.sql`AND s."centerId" IN (${Prisma.join(centerScope.in as string[])})`
+            : Prisma.sql`AND FALSE`
+          : Prisma.empty;
 
-        // Ventes par heure (pour le graphique)
-        prisma.sale.groupBy({
-          by: ["createdAt"],
-          where: saleWhere,
-          _sum: { totalAmount: true },
-          _count: { id: true },
-        }),
+    const [salesStats, daySales, lowStockRows, openSessions, recentSales] = await Promise.all([
+      prisma.sale.aggregate({ where: saleWhere, _sum: { totalAmount: true }, _count: { id: true } }),
 
-        // Produits en stock faible
-        prisma.stock.count({
-          where: {
-            center: { companyId },
-            ...(centerId ? { centerId } : {}),
-            product: { isActive: true },
-          },
-        }),
+      prisma.sale.findMany({ where: saleWhere, select: { createdAt: true, totalAmount: true } }),
 
-        // Sessions de caisse ouvertes
-        prisma.cashSession.count({
-          where: {
-            closedAt: null,
-            ...(centerId
-              ? { cashRegister: { centerId } }
-              : { cashRegister: { center: { companyId } } }),
-          },
-        }),
+      // Stocks au niveau ou sous le seuil d'alerte
+      prisma.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(*)::bigint AS count
+          FROM "stocks" s
+          JOIN "products" p ON p."id" = s."productId"
+          JOIN "centers" c ON c."id" = s."centerId"
+         WHERE c."companyId" = ${companyId}
+           AND p."isActive" = TRUE
+           AND s."quantity" <= p."stockAlertQty"
+           ${centerSql}`,
 
-        // 10 dernières ventes
-        prisma.sale.findMany({
-          where: {
-            companyId,
-            ...(centerId ? { centerId } : {}),
-          },
-          include: {
-            cashier: { select: { firstName: true, lastName: true } },
-            lines: { include: { product: { select: { name: true } } } },
-          },
-          orderBy: { createdAt: "desc" },
-          take: 10,
-        }),
-      ]);
+      prisma.cashSession.count({
+        where: { closedAt: null, cashRegister: { center: { companyId }, ...centerWhere } },
+      }),
 
-    // CA par heure pour le graphique en barres (24 buckets)
-    const hourlyRevenue = Array.from({ length: 24 }, (_, hour) => {
-      const hourSales = recentSales.filter((s) => {
-        const saleHour = new Date(s.createdAt).getHours();
-        return (
-          saleHour === hour &&
-          new Date(s.createdAt) >= startOfDay &&
-          new Date(s.createdAt) <= endOfDay
-        );
-      });
-      return {
-        hour: `${String(hour).padStart(2, "0")}h`,
-        revenue: hourSales.reduce((s, sale) => s + Number(sale.totalAmount), 0),
-        count: hourSales.length,
-      };
-    });
+      prisma.sale.findMany({
+        where: { companyId, ...centerWhere },
+        include: {
+          cashier: { select: { firstName: true, lastName: true } },
+          lines: { include: { product: { select: { name: true } } } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      }),
+    ]);
+
+    // CA par heure locale (24 tranches) calculé sur TOUTES les ventes du jour
+    const hourFmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hourCycle: "h23" });
+    const buckets = Array.from({ length: 24 }, () => ({ revenue: new Prisma.Decimal(0), count: 0 }));
+    for (const s of daySales) {
+      const h = Number(hourFmt.format(s.createdAt)) % 24;
+      buckets[h].revenue = buckets[h].revenue.add(s.totalAmount);
+      buckets[h].count += 1;
+    }
+    const hourlyRevenue = buckets.map((b, hour) => ({
+      hour: `${String(hour).padStart(2, "0")}h`,
+      revenue: Number(b.revenue),
+      count: b.count,
+    }));
 
     return NextResponse.json({
       success: true,
       data: {
+        date: dateStr,
         today: {
           salesCount: salesStats._count.id,
           revenue: Number(salesStats._sum.totalAmount ?? 0),
         },
-        lowStockCount,
+        lowStockCount: Number(lowStockRows[0]?.count ?? 0),
         openSessions,
         recentSales,
         hourlyRevenue,
       },
     });
   } catch (error) {
-    console.error("[REPORTS] Erreur dashboard:", error);
-    return NextResponse.json({ success: false, error: "Erreur serveur" }, { status: 500 });
+    return handleApiError(error, "REPORTS");
   }
 }

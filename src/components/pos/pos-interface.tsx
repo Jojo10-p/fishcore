@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { getOfflineDB, type OfflineProduct } from "@/lib/offline/db";
 import { createOfflineSale } from "@/lib/offline/sales";
 import { generateIdempotencyKey, formatCurrency } from "@/lib/utils";
@@ -46,6 +46,9 @@ export default function POSInterface({
 }: POSContextProps) {
   const [products, setProducts] = useState<OfflineProduct[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
+  // Une clé d'idempotence par vente (et non par clic) : si la connexion coupe
+  // après l'enregistrement côté serveur, le nouvel essai ne crée pas de doublon.
+  const saleKeyRef = useRef<string | null>(null);
   const [search, setSearch] = useState("");
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== "undefined" ? navigator.onLine : true
@@ -64,9 +67,9 @@ export default function POSInterface({
   // Charger produits depuis IndexedDB
   useEffect(() => {
     const db = getOfflineDB();
+    // Les booléens ne sont pas indexables dans IndexedDB : filtre en mémoire
     db.products
-      .where("isActive")
-      .equals(1 as unknown as boolean)
+      .filter((p) => p.isActive)
       .toArray()
       .then(setProducts);
   }, []);
@@ -170,7 +173,7 @@ export default function POSInterface({
             sessionId,
             lines: cart,
             payments,
-            idempotencyKey: generateIdempotencyKey(),
+            idempotencyKey: (saleKeyRef.current ??= generateIdempotencyKey("sale")),
             createdOffline: false,
           }),
         });
@@ -192,6 +195,7 @@ export default function POSInterface({
       }
 
       setLastSaleId(saleId);
+      saleKeyRef.current = null;
       setCart([]);
       setPayments([{ method: "CASH", amount: 0 }]);
       setShowPayment(false);

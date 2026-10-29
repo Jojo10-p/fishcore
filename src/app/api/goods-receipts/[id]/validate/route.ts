@@ -1,55 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
+import {
+  ApiError,
+  getCurrentUser,
+  handleApiError,
+  requireCenterAccess,
+  requireCompany,
+  requirePermission,
+} from "@/lib/auth";
 
-// POST /api/goods-receipts/[id]/validate — Valider une réception de marchandises
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+// POST /api/goods-receipts/[id]/validate — Valider une réception : c'est ici, et
+// seulement ici, que le stock augmente (cahier §8.3).
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const user = await getCurrentUser(req);
+    await requirePermission(user, "stock:receive");
+    const companyId = requireCompany(user);
     const { id } = await params;
-    const body = await req.json();
-    const { validatedById } = body;
 
-    const receipt = await prisma.goodsReceipt.findUnique({
-      where: { id },
-      include: {
-        lines: true,
-        center: { select: { companyId: true } },
-      },
+    const receipt = await prisma.goodsReceipt.findFirst({
+      where: { id, center: { companyId } },
+      include: { lines: true, center: { select: { companyId: true } } },
     });
+    if (!receipt) throw new ApiError(404, "Réception introuvable");
+    await requireCenterAccess(user, receipt.centerId);
+    if (receipt.isValidated) throw new ApiError(409, "Réception déjà validée", "ALREADY_VALIDATED");
+    if (receipt.lines.length === 0) throw new ApiError(400, "Réception sans ligne");
 
-    if (!receipt) {
-      return NextResponse.json({ success: false, error: "Réception introuvable" }, { status: 404 });
-    }
-    if (receipt.isValidated) {
-      return NextResponse.json({ success: false, error: "Réception déjà validée" }, { status: 409 });
-    }
-
-    // Transaction : mise à jour stock + validation réception
     await prisma.$transaction(async (tx) => {
+      // Validation conditionnelle : deux validations simultanées ne peuvent pas
+      // doubler le stock (seule la première passe)
+      const claimed = await tx.goodsReceipt.updateMany({
+        where: { id, isValidated: false },
+        data: { isValidated: true, isDraft: false, validatedAt: new Date(), validatedById: user.id },
+      });
+      if (claimed.count === 0) throw new ApiError(409, "Réception déjà validée", "ALREADY_VALIDATED");
+
       for (const line of receipt.lines) {
-        // Upsert stock (crée s'il n'existe pas)
         const stock = await tx.stock.upsert({
-          where: {
-            centerId_productId: {
-              centerId: receipt.centerId,
-              productId: line.productId,
-            },
-          },
-          create: {
-            centerId: receipt.centerId,
-            productId: line.productId,
-            quantity: Number(line.netWeight),
-          },
-          update: {
-            quantity: { increment: Number(line.netWeight) },
-            version: { increment: 1 },
-          },
+          where: { centerId_productId: { centerId: receipt.centerId, productId: line.productId } },
+          create: { centerId: receipt.centerId, productId: line.productId, quantity: line.netWeight },
+          update: { quantity: { increment: line.netWeight }, version: { increment: 1 } },
         });
 
-        // Créer un lot (batch)
         const batch = await tx.batch.create({
           data: {
             receiptId: id,
@@ -60,51 +54,43 @@ export async function POST(
           },
         });
 
-        // Mouvement de stock
         await tx.stockMovement.create({
           data: {
             stockId: stock.id,
             type: "RECEPTION",
-            quantity: Number(line.netWeight),
+            quantity: line.netWeight,
             unitId: line.unitId ?? undefined,
             batchId: batch.id,
             referenceType: "GoodsReceipt",
             referenceId: id,
-            performedById: validatedById ?? "system",
+            performedById: user.id,
             centerId: receipt.centerId,
           },
         });
       }
 
-      // Valider la réception
-      await tx.goodsReceipt.update({
-        where: { id },
-        data: {
-          isValidated: true,
-          isDraft: false,
-          validatedAt: new Date(),
-          validatedById: validatedById ?? "system",
+      await writeAuditLog(
+        {
+          eventType: "STOCK_RECEIVED",
+          companyId,
+          centerId: receipt.centerId,
+          userId: user.id,
+          referenceType: "GoodsReceipt",
+          referenceId: id,
+          result: "SUCCESS",
+          newValues: {
+            linesCount: receipt.lines.length,
+            totalNetWeight: receipt.lines.reduce((s, l) => s + Number(l.netWeight), 0),
+          },
+          ipAddress: user.ipAddress,
+          userAgent: user.userAgent,
         },
-      });
+        tx
+      );
     });
 
-    await writeAuditLog({
-      eventType: "STOCK_RECEIVED",
-      companyId: receipt.center.companyId,
-      centerId: receipt.centerId,
-      userId: validatedById,
-      referenceType: "GoodsReceipt",
-      referenceId: id,
-      result: "SUCCESS",
-      newValues: { linesCount: receipt.lines.length },
-    });
-
-    return NextResponse.json({
-      success: true,
-      message: "Réception validée. Stock mis à jour.",
-    });
+    return NextResponse.json({ success: true, message: "Réception validée. Stock mis à jour." });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erreur interne";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return handleApiError(error, "GOODS_RECEIPTS");
   }
 }

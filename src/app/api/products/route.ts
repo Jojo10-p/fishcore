@@ -1,39 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { productSchema } from "@/lib/validations";
+import { writeAuditLog } from "@/lib/audit";
+import {
+  ApiError,
+  getCurrentUser,
+  handleApiError,
+  parseBody,
+  readJson,
+  requireCenterAccess,
+  requireCompany,
+  requirePermission,
+} from "@/lib/auth";
 
-// GET /api/products — Catalogue produits pour un centre (ou toute l'entreprise)
+const PRODUCT_TYPES = ["FRESH", "FROZEN", "SMOKED", "DRIED", "OTHER"] as const;
+type ProductTypeValue = (typeof PRODUCT_TYPES)[number];
+
+// GET /api/products — Catalogue de l'entreprise (avec le stock d'un centre si centerId)
 export async function GET(req: NextRequest) {
   try {
+    const user = await getCurrentUser(req);
+    await requirePermission(user, "product:view");
+    const companyId = requireCompany(user);
+
     const { searchParams } = new URL(req.url);
-    const companyId = searchParams.get("companyId");
     const centerId = searchParams.get("centerId");
     const search = searchParams.get("search") ?? "";
-    const type = searchParams.get("type");
+    const typeParam = searchParams.get("type");
+    const type = PRODUCT_TYPES.includes(typeParam as ProductTypeValue) ? (typeParam as ProductTypeValue) : undefined;
     const activeOnly = searchParams.get("active") !== "false";
 
-    // Si centerId fourni, on remonte le companyId depuis le centre
-    let resolvedCompanyId = companyId;
-    if (!resolvedCompanyId && centerId) {
-      const center = await prisma.center.findUnique({
-        where: { id: centerId },
-        select: { companyId: true },
-      });
-      resolvedCompanyId = center?.companyId ?? null;
-    }
-
-    if (!resolvedCompanyId) {
-      return NextResponse.json(
-        { success: false, error: "companyId ou centerId requis" },
-        { status: 400 }
-      );
-    }
+    if (centerId) await requireCenterAccess(user, centerId);
 
     const products = await prisma.product.findMany({
       where: {
-        companyId: resolvedCompanyId,
+        companyId,
         isActive: activeOnly ? true : undefined,
-        ...(type ? { type: type as "FRESH" | "FROZEN" | "SMOKED" | "DRIED" | "OTHER" } : {}),
+        ...(type ? { type } : {}),
         ...(search
           ? {
               OR: [
@@ -47,20 +50,13 @@ export async function GET(req: NextRequest) {
       },
       include: {
         baseUnit: { select: { id: true, name: true, symbol: true } },
-        // Stock du centre si centerId fourni
         ...(centerId
-          ? {
-              stocks: {
-                where: { centerId },
-                select: { quantity: true, reservedQty: true, version: true },
-              },
-            }
+          ? { stocks: { where: { centerId }, select: { quantity: true, reservedQty: true, version: true } } }
           : {}),
       },
       orderBy: { name: "asc" },
     });
 
-    // Format optimisé pour l'offline (IndexedDB)
     const offlineData = products.map((p) => ({
       id: p.id,
       name: p.name,
@@ -76,66 +72,64 @@ export async function GET(req: NextRequest) {
       isActive: p.isActive,
     }));
 
-    return NextResponse.json({
-      success: true,
-      data: products,
-      offlineData,
-    });
+    return NextResponse.json({ success: true, data: products, offlineData });
   } catch (error) {
-    return NextResponse.json(
-      { success: false, error: "Erreur serveur" },
-      { status: 500 }
-    );
+    return handleApiError(error, "PRODUCTS");
   }
 }
 
 // POST /api/products — Créer un produit
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const parsed = productSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { success: false, error: parsed.error.errors[0].message },
-        { status: 400 }
-      );
-    }
+    const user = await getCurrentUser(req);
+    await requirePermission(user, "product:create");
+    const companyId = requireCompany(user);
+    const data = parseBody(productSchema, await readJson(req));
 
-    const { companyId } = body;
-    if (!companyId) {
-      return NextResponse.json(
-        { success: false, error: "companyId requis" },
-        { status: 400 }
-      );
-    }
+    // L'unité doit être une unité de l'entreprise ou une unité globale
+    const unit = await prisma.unit.findFirst({
+      where: { id: data.baseUnitId, OR: [{ companyId }, { companyId: null }] },
+      select: { id: true },
+    });
+    if (!unit) throw new ApiError(400, "Unité de mesure invalide");
 
     const product = await prisma.$transaction(async (tx) => {
       const newProduct = await tx.product.create({
-        data: {
-          companyId,
-          ...parsed.data,
-        },
+        data: { companyId, ...data },
         include: { baseUnit: true },
       });
 
-      // Enregistrer le prix initial dans l'historique
-      if (parsed.data.sellingPrice || parsed.data.purchasePrice) {
-        await tx.productPriceHistory.create({
-          data: {
-            productId: newProduct.id,
-            purchasePrice: parsed.data.purchasePrice ?? 0,
-            sellingPrice: parsed.data.sellingPrice ?? 0,
-            changedById: body.createdById ?? "system",
-          },
-        });
-      }
+      // Prix initial dans l'historique (sert de référence aux ventes hors connexion)
+      await tx.productPriceHistory.create({
+        data: {
+          productId: newProduct.id,
+          purchasePrice: data.purchasePrice ?? 0,
+          sellingPrice: data.sellingPrice ?? 0,
+          changedById: user.id,
+        },
+      });
+
+      await writeAuditLog(
+        {
+          eventType: "PRICE_CHANGED",
+          companyId,
+          userId: user.id,
+          referenceType: "Product",
+          referenceId: newProduct.id,
+          result: "SUCCESS",
+          reason: "Création du produit",
+          newValues: { name: newProduct.name, sellingPrice: data.sellingPrice, purchasePrice: data.purchasePrice },
+          ipAddress: user.ipAddress,
+          userAgent: user.userAgent,
+        },
+        tx
+      );
 
       return newProduct;
     });
 
     return NextResponse.json({ success: true, data: product }, { status: 201 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erreur interne";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return handleApiError(error, "PRODUCTS");
   }
 }
