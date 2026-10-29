@@ -59,15 +59,18 @@ function InstallClientPage({
   // Extraire le token de l'URL au montage (jamais de setState pendant le rendu)
   useEffect(() => {
     if (hasVerified) return;
-    setHasVerified(true);
-    const t = new URLSearchParams(window.location.search).get("token");
-    if (t) {
-      setToken(t);
-      void verifyToken(t);
-    } else {
-      setStep("error");
-      setError("Lien d'installation invalide. Aucun token fourni.");
-    }
+    const timer = setTimeout(() => {
+      setHasVerified(true);
+      const t = new URLSearchParams(window.location.search).get("token");
+      if (t) {
+        setToken(t);
+        void verifyToken(t);
+      } else {
+        setStep("error");
+        setError("Lien d'installation invalide. Aucun token fourni.");
+      }
+    }, 0);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

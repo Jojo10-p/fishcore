@@ -11,7 +11,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "test": "tsx --test tests/*.test.mts"
+    "test": "tsx --test --test-concurrency=1 tests/*.test.mts"
   },
   "dependencies": {
     "@hookform/resolvers": "^6.0.0",

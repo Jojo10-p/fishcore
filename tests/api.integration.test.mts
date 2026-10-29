@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Tests d'intégration des scénarios critiques du cahier des charges (§26).
  *
@@ -33,6 +34,7 @@ const cashRoute = await import("@/app/api/cash/sessions/route");
 const productsRoute = await import("@/app/api/products/route");
 const stockRoute = await import("@/app/api/stock/route");
 const usersRoute = await import("@/app/api/users/route");
+const productRoute = await import("@/app/api/products/[id]/route");
 
 const BASE = "http://localhost:3000";
 const PASSWORD = "Motdepasse1";
@@ -428,3 +430,27 @@ test("§17 — journal d'audit : chaîne intègre et non modifiable", async () =
   const saleLogs = await prisma.auditLog.count({ where: { companyId: ctx.A.id, eventType: "SALE_CREATED" } });
   assert.equal(saleLogs, sales);
 });
+
+test("changement de prix : historisé, journalisé, refusé au caissier", async () => {
+  const denied = await call(productRoute.PATCH, {
+    path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.cashier1,
+    params: { id: ctx.carpe.id }, body: { sellingPrice: 1 },
+  });
+  assert.equal(denied.status, 403);
+
+  const ok = await call(productRoute.PATCH, {
+    path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.managerA1,
+    params: { id: ctx.carpe.id }, body: { sellingPrice: 3200 },
+  });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  assert.equal(await prisma.productPriceHistory.count({ where: { productId: ctx.carpe.id } }), 1);
+  const log = await prisma.auditLog.findFirstOrThrow({ where: { eventType: "PRICE_CHANGED", referenceId: ctx.carpe.id } });
+  assert.deepEqual(log.oldValues, { sellingPrice: "3000", purchasePrice: "2000" });
+
+  const otherCompany = await call(productRoute.PATCH, {
+    path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.cashierB,
+    params: { id: ctx.carpe.id }, body: { sellingPrice: 1 },
+  });
+  assert.equal(otherCompany.status, 403, "un caissier n'a pas le droit product:edit");
+});
+

@@ -31,6 +31,10 @@ interface POSContextProps {
   centerId: string;
   companyId: string;
   currency: string;
+  /** Appelé après chaque vente (id serveur, ou clé locale si hors ligne). */
+  onSaleRecorded?: (sale: { id: string; offline: boolean }) => void;
+  /** Change après chaque rafraîchissement du catalogue local : recharge les produits. */
+  catalogVersion?: number;
 }
 
 // ─────────────────────────────────────────────
@@ -43,6 +47,8 @@ export default function POSInterface({
   centerId,
   companyId,
   currency,
+  onSaleRecorded,
+  catalogVersion = 0,
 }: POSContextProps) {
   const [products, setProducts] = useState<OfflineProduct[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -72,7 +78,7 @@ export default function POSInterface({
       .filter((p) => p.isActive)
       .toArray()
       .then(setProducts);
-  }, []);
+  }, [catalogVersion]);
 
   // Connectivité
   useEffect(() => {
@@ -163,25 +169,12 @@ export default function POSInterface({
     setIsProcessing(true);
     try {
       let saleId: string;
+      let recordedOffline = !isOnline;
+      // Même clé en ligne et en repli hors ligne : si la requête est arrivée au
+      // serveur avant la coupure, la synchronisation ne créera pas de doublon.
+      const idempotencyKey = (saleKeyRef.current ??= generateIdempotencyKey("sale"));
 
-      if (isOnline) {
-        // Vente en ligne
-        const res = await fetch("/api/sales", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId,
-            lines: cart,
-            payments,
-            idempotencyKey: (saleKeyRef.current ??= generateIdempotencyKey("sale")),
-            createdOffline: false,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) throw new Error(data.error ?? "Erreur serveur");
-        saleId = data.data.id;
-      } else {
-        // Vente offline
+      const saveOffline = async () => {
         const result = await createOfflineSale({
           sessionId,
           cashierId,
@@ -189,19 +182,46 @@ export default function POSInterface({
           companyId,
           lines: cart,
           payments,
+          idempotencyKey,
         });
         if (!result.success) throw new Error(result.error);
-        saleId = result.saleId!;
+        return result.saleId!;
+      };
+
+      if (isOnline) {
+        let res: Response | null = null;
+        try {
+          res = await fetch("/api/sales", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId, lines: cart, payments, idempotencyKey, createdOffline: false }),
+          });
+        } catch {
+          res = null; // réseau injoignable alors que le navigateur se croit en ligne
+        }
+        if (res === null || res.status >= 502) {
+          saleId = await saveOffline();
+          recordedOffline = true;
+        } else {
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error ?? "Erreur serveur");
+          saleId = data.data.id;
+        }
+      } else {
+        saleId = await saveOffline();
       }
 
       setLastSaleId(saleId);
+      onSaleRecorded?.({ id: saleId, offline: recordedOffline });
       saleKeyRef.current = null;
       setCart([]);
       setPayments([{ method: "CASH", amount: 0 }]);
       setShowPayment(false);
       setNotification({
         type: "success",
-        message: `Vente enregistrée${!isOnline ? " (hors connexion)" : ""}`,
+        message: recordedOffline
+          ? "Vente enregistrée sur cet appareil — en attente d'envoi au serveur"
+          : "Vente enregistrée",
       });
     } catch (err) {
       setNotification({
@@ -222,11 +242,11 @@ export default function POSInterface({
   }, [notification]);
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <div className="flex h-full min-h-0 bg-gray-50 overflow-hidden">
       {/* NOTIFICATION */}
       {notification && (
         <div
-          className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all ${
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[90vw] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all ${
             notification.type === "success" ? "bg-green-600" : "bg-red-600"
           }`}
         >
@@ -288,7 +308,7 @@ export default function POSInterface({
                     <p className="text-xs text-gray-500 mt-0.5">{product.species}</p>
                   )}
                   <p className="text-blue-600 font-bold text-sm mt-1">
-                    {formatCurrency(product.sellingPrice, "XOF")}
+                    {formatCurrency(product.sellingPrice, currency)}
                     <span className="text-gray-400 font-normal">/{product.baseUnitSymbol}</span>
                   </p>
                   {product.internalCode && (
@@ -331,7 +351,7 @@ export default function POSInterface({
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-gray-900 text-sm truncate">{item.productName}</p>
                       <p className="text-xs text-gray-500">
-                        {formatCurrency(item.unitPrice, "XOF")} / unité
+                        {formatCurrency(item.unitPrice, currency)} / unité
                       </p>
                     </div>
                     <button
@@ -368,7 +388,7 @@ export default function POSInterface({
                       </button>
                     </div>
                     <span className="font-bold text-gray-900 text-sm">
-                      {formatCurrency(item.lineTotal, "XOF")}
+                      {formatCurrency(item.lineTotal, currency)}
                     </span>
                   </div>
                 </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { getOfflineDB, type OfflineSale, type OfflineSaleLine, type OfflinePayment } from "./db";
+import { getOfflineDB, getUnconfirmedQuantities, type OfflineSale, type OfflineSaleLine, type OfflinePayment } from "./db";
 import { queueSaleForSync } from "./sync";
 import { generateIdempotencyKey } from "@/lib/utils";
 
@@ -13,11 +13,33 @@ interface CreateOfflineSaleParams {
   lines: OfflineSaleLine[];
   payments: OfflinePayment[];
   notes?: string;
+  /** Clé déjà utilisée pour une tentative en ligne (repli hors ligne sans doublon). */
+  idempotencyKey?: string;
 }
 
 /**
- * Crée une vente en mode offline.
- * Vérifie le stock local et met à jour IndexedDB.
+ * Disponible hors ligne pour la session : réserve confirmée par le serveur
+ * moins les ventes locales non encore synchronisées.
+ */
+export async function getOfflineAvailability(sessionId: string): Promise<Map<string, number>> {
+  const db = getOfflineDB();
+  const [reservations, unconfirmed] = await Promise.all([
+    db.reservations.where("sessionId").equals(sessionId).toArray(),
+    getUnconfirmedQuantities(sessionId),
+  ]);
+  const available = new Map<string, number>();
+  for (const r of reservations) {
+    available.set(r.productId, Math.max(0, r.serverQuantity - (unconfirmed.get(r.productId) ?? 0)));
+  }
+  return available;
+}
+
+/**
+ * Crée une vente hors connexion (cahier §9.4).
+ * La caisse ne peut vendre que dans la limite de SA réserve : sans réserve
+ * suffisante, la vente est bloquée (pas de survente possible entre caisses).
+ * La vente et son opération de synchronisation sont écrites dans la même
+ * transaction locale (une coupure de courant ne peut pas les séparer).
  */
 export async function createOfflineSale(params: CreateOfflineSaleParams): Promise<{
   success: boolean;
@@ -25,96 +47,95 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
   error?: string;
 }> {
   const db = getOfflineDB();
+  const idempotencyKey = params.idempotencyKey ?? generateIdempotencyKey("sale");
 
-  const idempotencyKey = generateIdempotencyKey();
-
-  // Calculer les totaux
-  const subtotal = params.lines.reduce((sum, l) => sum + l.lineTotal, 0);
+  const subtotal = params.lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
   const discountAmount = params.lines.reduce((sum, l) => sum + l.discount * l.quantity, 0);
   const totalAmount = subtotal - discountAmount;
 
-  // Vérifier et réserver le stock local
-  const stockUpdates: Array<{ id: string; newQuantity: number; newReservedQty: number }> = [];
-
+  // Quantités demandées par produit (un produit peut figurer sur plusieurs lignes)
+  const requested = new Map<string, { qty: number; name: string }>();
   for (const line of params.lines) {
-    const stockId = `${params.centerId}_${line.productId}`;
-    const stock = await db.stocks.get(stockId);
-
-    if (!stock) {
-      return {
-        success: false,
-        error: `Stock introuvable pour le produit "${line.productName}". Synchronisez les données.`,
-      };
-    }
-
-    const available = stock.quantity - stock.reservedQty;
-    if (available < line.quantity) {
-      return {
-        success: false,
-        error: `Stock insuffisant pour "${line.productName}" : disponible ${available}, demandé ${line.quantity}.`,
-      };
-    }
-
-    stockUpdates.push({
-      id: stockId,
-      newQuantity: stock.quantity - line.quantity,
-      newReservedQty: stock.reservedQty,
-    });
+    const cur = requested.get(line.productId);
+    requested.set(line.productId, { qty: (cur?.qty ?? 0) + line.quantity, name: line.productName });
   }
 
-  // Appliquer les mises à jour de stock
-  await db.transaction("rw", db.stocks, db.sales, db.syncQueue, async () => {
-    // Mettre à jour stocks
-    for (const update of stockUpdates) {
-      await db.stocks.update(update.id, {
-        quantity: update.newQuantity,
-        reservedQty: update.newReservedQty,
+  try {
+    await db.transaction("rw", [db.reservations, db.stocks, db.sales, db.syncQueue], async () => {
+      // Contrôle dans la transaction : deux validations rapides ne peuvent pas
+      // consommer deux fois la même réserve
+      const available = await getOfflineAvailability(params.sessionId);
+      for (const [productId, { qty, name }] of requested) {
+        const left = available.get(productId) ?? 0;
+        if (left < qty) {
+          throw new Error(
+            left <= 0
+              ? `Aucune réserve hors ligne pour « ${name} ». Réservez du stock pour cette caisse quand la connexion est disponible.`
+              : `Réserve hors ligne insuffisante pour « ${name} » : ${left} disponible(s), ${qty} demandé(s).`
+          );
+        }
+      }
+
+      // Affichage local du stock du centre (la vérité reste côté serveur)
+      for (const [productId, { qty }] of requested) {
+        const stockId = `${params.centerId}_${productId}`;
+        const stock = await db.stocks.get(stockId);
+        if (stock) await db.stocks.update(stockId, { quantity: Math.max(0, stock.quantity - qty) });
+      }
+
+      const sale: OfflineSale = {
+        id: idempotencyKey,
+        idempotencyKey,
+        sessionId: params.sessionId,
+        cashierId: params.cashierId,
+        centerId: params.centerId,
+        companyId: params.companyId,
+        customerId: params.customerId,
+        lines: params.lines,
+        payments: params.payments,
+        subtotal,
+        discountAmount,
+        totalAmount,
+        notes: params.notes,
+        createdAt: new Date().toISOString(),
+        syncStatus: "pending",
+        retryCount: 0,
+      };
+      await db.sales.add(sale);
+
+      await queueSaleForSync(idempotencyKey, {
+        idempotencyKey,
+        sessionId: params.sessionId,
+        customerId: params.customerId,
+        lines: params.lines.map((l) => ({
+          productId: l.productId,
+          quantity: l.quantity,
+          unitId: l.unitId,
+          unitPrice: l.unitPrice,
+          discount: l.discount,
+        })),
+        payments: params.payments,
+        notes: params.notes,
+        createdOffline: true,
+        deviceId: getDeviceId(),
       });
-    }
-
-    // Créer la vente offline
-    const sale: OfflineSale = {
-      id: idempotencyKey,
-      idempotencyKey,
-      sessionId: params.sessionId,
-      cashierId: params.cashierId,
-      centerId: params.centerId,
-      companyId: params.companyId,
-      customerId: params.customerId,
-      lines: params.lines,
-      payments: params.payments,
-      subtotal,
-      discountAmount,
-      totalAmount,
-      notes: params.notes,
-      createdAt: new Date().toISOString(),
-      syncStatus: "pending",
-      retryCount: 0,
-    };
-
-    await db.sales.add(sale);
-
-    // Ajouter à la file de sync DANS la même transaction locale : une coupure
-    // de courant ne peut pas laisser une vente sans opération de synchronisation.
-    await queueSaleForSync(idempotencyKey, {
-    idempotencyKey,
-    sessionId: params.sessionId,
-    customerId: params.customerId,
-    lines: params.lines.map((l) => ({
-      productId: l.productId,
-      quantity: l.quantity,
-      unitId: l.unitId,
-      unitPrice: l.unitPrice,
-      discount: l.discount,
-    })),
-    payments: params.payments,
-    notes: params.notes,
-    createdOffline: true,
-    deviceId: getDeviceId(),
     });
-  });
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Erreur d'enregistrement local" };
+  }
 
   return { success: true, saleId: idempotencyKey };
+}
+
+/** Vrai s'il reste des ventes de cette session à envoyer (à vérifier avant la clôture). */
+export async function hasUnsyncedSales(sessionId: string): Promise<boolean> {
+  const db = getOfflineDB();
+  const count = await db.sales
+    .where("sessionId")
+    .equals(sessionId)
+    .and((s) => s.syncStatus === "pending" || s.syncStatus === "syncing" || s.syncStatus === "failed")
+    .count();
+  return count > 0;
 }
 
 /**
@@ -122,7 +143,7 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
  */
 export async function getPendingOfflineSales(): Promise<OfflineSale[]> {
   const db = getOfflineDB();
-  return db.sales.where("syncStatus").anyOf(["pending", "failed"]).toArray();
+  return db.sales.where("syncStatus").anyOf(["pending", "failed", "conflict"]).toArray();
 }
 
 /**

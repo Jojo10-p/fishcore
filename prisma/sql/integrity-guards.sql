@@ -45,3 +45,8 @@ ALTER TABLE "stocks" ADD CONSTRAINT "stocks_quantity_non_negative"
 -- 4. Une demande d'annulation en attente au plus par vente (cahier §10)
 CREATE UNIQUE INDEX IF NOT EXISTS "cancellations_one_pending_per_sale"
   ON "cancellations" ("saleId") WHERE "status" = 'PENDING';
+
+-- 5. Réserves hors ligne : jamais négatives (cahier §9.4)
+ALTER TABLE "stock_reservations" DROP CONSTRAINT IF EXISTS "stock_reservations_quantity_non_negative";
+ALTER TABLE "stock_reservations" ADD CONSTRAINT "stock_reservations_quantity_non_negative"
+  CHECK ("quantity" >= 0);

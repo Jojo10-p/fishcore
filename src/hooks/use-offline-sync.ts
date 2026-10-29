@@ -1,114 +1,126 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getOfflineDB } from "@/lib/offline/db";
-import { syncCatalogFromServer, syncPendingOperations, installConnectivityListener, getPendingSyncCount } from "@/lib/offline/sync";
+import {
+  getConflictCount,
+  getPendingSyncCount,
+  installConnectivityListener,
+  syncCatalogFromServer,
+  syncPendingOperations,
+  type SyncResult,
+} from "@/lib/offline/sync";
+
+const AUTO_SYNC_INTERVAL_MS = 30_000;
 
 interface UseOfflineSyncOptions {
   centerId: string;
-  onSyncComplete?: (result: { success: number; failed: number; total: number }) => void;
+  /** Session de caisse ouverte : ses réserves hors ligne sont rafraîchies aussi. */
+  sessionId?: string;
+  onSyncComplete?: (result: SyncResult) => void;
 }
 
-interface UseOfflineSyncReturn {
+export interface UseOfflineSyncReturn {
   isOnline: boolean;
   isSyncing: boolean;
   pendingCount: number;
+  conflictCount: number;
+  needsLogin: boolean;
   lastSyncAt: Date | null;
   syncNow: () => Promise<void>;
 }
 
 /**
- * Hook qui gère la connectivité et la synchronisation offline/online.
+ * Connectivité + synchronisation automatique (au retour du réseau et toutes
+ * les 30 s : l'événement « online » du navigateur n'est pas toujours fiable).
  */
-export function useOfflineSync({
-  centerId,
-  onSyncComplete,
-}: UseOfflineSyncOptions): UseOfflineSyncReturn {
-  const [isOnline, setIsOnline] = useState(
-    typeof navigator !== "undefined" ? navigator.onLine : true
-  );
+export function useOfflineSync({ centerId, sessionId, onSyncComplete }: UseOfflineSyncOptions): UseOfflineSyncReturn {
+  const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const [conflictCount, setConflictCount] = useState(0);
+  const [needsLogin, setNeedsLogin] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
-  const hasSyncedCatalog = useRef(false);
-
-  // Mettre à jour le compteur de pending
-  const refreshPendingCount = async () => {
-    const count = await getPendingSyncCount();
-    setPendingCount(count);
-  };
-
-  // Sync catalogue au premier montage
+  const onSyncRef = useRef(onSyncComplete);
   useEffect(() => {
-    if (isOnline && !hasSyncedCatalog.current && centerId) {
-      hasSyncedCatalog.current = true;
-      syncCatalogFromServer(centerId).then(() => {
-        setLastSyncAt(new Date());
-      });
-    }
-    refreshPendingCount();
-  }, [centerId, isOnline]);
+    onSyncRef.current = onSyncComplete;
+  }, [onSyncComplete]);
 
-  // Écouteur connectivité
+  const refreshCounts = useCallback(async () => {
+    const [p, c] = await Promise.all([getPendingSyncCount(), getConflictCount()]);
+    setPendingCount(p);
+    setConflictCount(c);
+  }, []);
+
+  const syncNow = useCallback(async () => {
+    if (!centerId || (typeof navigator !== "undefined" && !navigator.onLine)) return;
+    setIsSyncing(true);
+    try {
+      const result = await syncPendingOperations();
+      setNeedsLogin(result.needsLogin);
+      // Le catalogue est rafraîchi APRÈS l'envoi : le stock serveur inclut alors nos ventes
+      if (await syncCatalogFromServer(centerId, sessionId)) setLastSyncAt(new Date());
+      onSyncRef.current?.(result);
+    } finally {
+      await refreshCounts();
+      setIsSyncing(false);
+    }
+  }, [centerId, sessionId, refreshCounts]);
+
+  // Synchro initiale + périodique
+  useEffect(() => {
+    if (!centerId) return;
+    const first = setTimeout(() => void syncNow(), 0);
+    const timer = setInterval(() => void syncNow(), AUTO_SYNC_INTERVAL_MS);
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
+  }, [centerId, syncNow]);
+
+  // Connectivité
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
-
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
-
-    // Sync auto quand reconnexion
-    const cleanup = installConnectivityListener(async (result) => {
-      setLastSyncAt(new Date());
-      await refreshPendingCount();
-      onSyncComplete?.(result);
-    });
-
+    const cleanup = installConnectivityListener(() => void syncNow());
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
       cleanup();
     };
-  }, [onSyncComplete]);
+  }, [syncNow]);
 
-  // Sync manuelle
-  const syncNow = async () => {
-    if (isSyncing || !isOnline) return;
-    setIsSyncing(true);
-    try {
-      const result = await syncPendingOperations();
-      await syncCatalogFromServer(centerId);
-      setLastSyncAt(new Date());
-      await refreshPendingCount();
-      onSyncComplete?.(result);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+  // Compteurs à jour après chaque vente locale
+  useEffect(() => {
+    const db = getOfflineDB();
+    const onChange = () => void refreshCounts();
+    db.syncQueue.hook("creating", onChange);
+    db.syncQueue.hook("updating", onChange);
+    const first = setTimeout(onChange, 0);
+    return () => {
+      clearTimeout(first);
+      db.syncQueue.hook("creating").unsubscribe(onChange);
+      db.syncQueue.hook("updating").unsubscribe(onChange);
+    };
+  }, [refreshCounts]);
 
-  return { isOnline, isSyncing, pendingCount, lastSyncAt, syncNow };
+  return { isOnline, isSyncing, pendingCount, conflictCount, needsLogin, lastSyncAt, syncNow };
 }
 
-/**
- * Hook pour accéder au stock offline d'un centre.
- */
+/** Stock local d'un centre (affichage). */
 export function useOfflineStock(centerId: string) {
-  const [stocks, setStocks] = useState<Array<{
-    productId: string;
-    quantity: number;
-    reservedQty: number;
-  }>>([]);
+  const [stocks, setStocks] = useState<Array<{ productId: string; quantity: number; reservedQty: number }>>([]);
 
   useEffect(() => {
     if (!centerId) return;
     const db = getOfflineDB();
-    db.stocks.where("centerId").equals(centerId).toArray().then((s) => {
-      setStocks(s.map((item) => ({
-        productId: item.productId,
-        quantity: item.quantity,
-        reservedQty: item.reservedQty,
-      })));
-    });
+    db.stocks
+      .where("centerId")
+      .equals(centerId)
+      .toArray()
+      .then((s) => setStocks(s.map(({ productId, quantity, reservedQty }) => ({ productId, quantity, reservedQty }))));
   }, [centerId]);
 
   return stocks;

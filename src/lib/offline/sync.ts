@@ -1,13 +1,20 @@
 "use client";
 
-import { getOfflineDB, type SyncOperation } from "./db";
+import { getOfflineDB, getUnconfirmedQuantities, type OfflineProduct, type SyncOperation } from "./db";
 import { generateIdempotencyKey } from "@/lib/utils";
 
 // ─────────────────────────────────────────────
-// Gestionnaire de synchronisation offline → online
+// Synchronisation hors ligne → serveur (cahier §11.3, §11.4)
 // ─────────────────────────────────────────────
+// - Ordre chronologique préservé (les opérations dépendantes passent dans l'ordre).
+// - Une seule synchronisation à la fois (verrou en mémoire).
+// - Reprise après coupure : une opération restée « syncing » est retentée
+//   (sans risque : le serveur est idempotent).
+// - Refus métier (stock, prix, session clôturée) → statut « conflict »,
+//   conservé pour traitement humain, jamais retenté automatiquement.
 
 const MAX_RETRIES = 5;
+const STALE_SYNCING_MS = 60_000;
 
 /** Refus définitif du serveur (règle métier) : inutile de réessayer. */
 export class SyncConflictError extends Error {
@@ -19,13 +26,16 @@ export class SyncConflictError extends Error {
 /** Session expirée : on garde l'opération en attente sans consommer d'essai. */
 class SyncAuthError extends Error {}
 
+export type SyncResult = { success: number; failed: number; conflicts: number; total: number; needsLogin: boolean };
+
 /**
  * Ajoute une vente offline à la file d'attente de sync.
+ * Peut être appelée dans une transaction Dexie qui inclut db.syncQueue.
  */
 export async function queueSaleForSync(saleId: string, payload: Record<string, unknown>): Promise<void> {
   const db = getOfflineDB();
   const op: SyncOperation = {
-    id: generateIdempotencyKey(),
+    id: generateIdempotencyKey("op"),
     type: "sale",
     referenceId: saleId,
     payload,
@@ -36,102 +46,78 @@ export async function queueSaleForSync(saleId: string, payload: Record<string, u
   await db.syncQueue.add(op);
 }
 
-/**
- * Lance la synchronisation des opérations en attente.
- * À appeler quand la connexion est rétablie.
- */
-export async function syncPendingOperations(): Promise<{
-  success: number;
-  failed: number;
-  total: number;
-}> {
+let running: Promise<SyncResult> | null = null;
+
+/** Lance la synchronisation (un seul passage à la fois, les appels concurrents attendent le même). */
+export function syncPendingOperations(): Promise<SyncResult> {
+  running ??= runSync().finally(() => {
+    running = null;
+  });
+  return running;
+}
+
+async function runSync(): Promise<SyncResult> {
   const db = getOfflineDB();
-  const pendingOps = await db.syncQueue
-    .where("status")
-    .anyOf(["pending", "failed"])
-    .and((op) => op.attemptCount < MAX_RETRIES)
-    .toArray();
+  const now = Date.now();
+  const ops = (await db.syncQueue.where("status").anyOf(["pending", "failed", "syncing"]).toArray())
+    .filter((op) => {
+      if (op.status === "syncing") {
+        // Restée « en cours » après une coupure : on la reprend
+        return !op.lastAttemptAt || now - Date.parse(op.lastAttemptAt) > STALE_SYNCING_MS;
+      }
+      return op.attemptCount < MAX_RETRIES;
+    })
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
-  let successCount = 0;
-  let failedCount = 0;
+  const result: SyncResult = { success: 0, failed: 0, conflicts: 0, total: ops.length, needsLogin: false };
 
-  for (const op of pendingOps) {
-    // Marquer comme en cours
-    await db.syncQueue.update(op.id, {
-      status: "syncing",
-      lastAttemptAt: new Date().toISOString(),
-    });
+  for (const op of ops) {
+    await db.syncQueue.update(op.id, { status: "syncing", lastAttemptAt: new Date().toISOString() });
+    if (op.type === "sale") await db.sales.update(op.referenceId, { syncStatus: "syncing" });
 
     try {
-      await syncOperation(op);
-
-      // Succès
-      await db.syncQueue.update(op.id, { status: "synced" });
-
-      // Si c'est une vente, marquer la vente comme synchronisée
-      if (op.type === "sale") {
-        await db.sales.update(op.referenceId, {
-          syncStatus: "synced",
-          syncedAt: new Date().toISOString(),
-        });
-      }
-
-      successCount++;
+      await sendOperation(op);
+      await db.transaction("rw", db.syncQueue, db.sales, async () => {
+        await db.syncQueue.update(op.id, { status: "synced", error: undefined });
+        if (op.type === "sale") {
+          await db.sales.update(op.referenceId, { syncStatus: "synced", syncedAt: new Date().toISOString(), syncError: undefined });
+        }
+      });
+      result.success++;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Erreur inconnue";
+      const message = error instanceof Error ? error.message : "Erreur inconnue";
 
       if (error instanceof SyncAuthError) {
-        await db.syncQueue.update(op.id, { status: "pending", error: errorMessage });
-        failedCount++;
+        await db.syncQueue.update(op.id, { status: "pending", error: message });
+        if (op.type === "sale") await db.sales.update(op.referenceId, { syncStatus: "pending", syncError: message });
+        result.needsLogin = true;
         break; // inutile d'envoyer les suivantes tant que l'utilisateur n'est pas reconnecté
       }
 
       if (error instanceof SyncConflictError) {
-        await db.syncQueue.update(op.id, { status: "conflict", error: errorMessage });
-        if (op.type === "sale") {
-          await db.sales.update(op.referenceId, { syncStatus: "conflict", syncError: errorMessage });
-        }
-        failedCount++;
+        await db.syncQueue.update(op.id, { status: "conflict", error: message });
+        if (op.type === "sale") await db.sales.update(op.referenceId, { syncStatus: "conflict", syncError: message });
+        result.conflicts++;
         continue;
       }
 
-      await db.syncQueue.update(op.id, {
-        status: "failed",
-        error: errorMessage,
-        attemptCount: op.attemptCount + 1,
-      });
-
+      // Erreur réseau / serveur : nouvel essai plus tard
+      await db.syncQueue.update(op.id, { status: "failed", error: message, attemptCount: op.attemptCount + 1 });
       if (op.type === "sale") {
-        await db.sales.update(op.referenceId, {
-          syncStatus: "failed",
-          syncError: errorMessage,
-          retryCount: op.attemptCount + 1,
-        });
+        await db.sales.update(op.referenceId, { syncStatus: "failed", syncError: message, retryCount: op.attemptCount + 1 });
       }
-
-      failedCount++;
+      result.failed++;
+      // Probablement hors ligne : on s'arrête pour garder l'ordre des opérations
+      break;
     }
   }
 
-  return { success: successCount, failed: failedCount, total: pendingOps.length };
+  return result;
 }
 
-/**
- * Exécute une opération de sync vers le serveur.
- */
-async function syncOperation(op: SyncOperation): Promise<void> {
-  let endpoint: string;
-
-  switch (op.type) {
-    case "sale":
-      endpoint = "/api/sales";
-      break;
-    case "cash_session":
-      endpoint = "/api/cash/sessions";
-      break;
-    default:
-      throw new Error(`Type d'opération inconnu : ${op.type}`);
-  }
+async function sendOperation(op: SyncOperation): Promise<void> {
+  const endpoint = op.type === "sale" ? "/api/sales" : op.type === "cash_session" ? "/api/cash/sessions" : null;
+  if (!endpoint) throw new SyncConflictError(`Type d'opération inconnu : ${op.type}`);
 
   const response = await fetch(endpoint, {
     method: "POST",
@@ -151,84 +137,95 @@ async function syncOperation(op: SyncOperation): Promise<void> {
   }
 }
 
-/**
- * Synchronise le catalogue produits et les stocks depuis le serveur.
- * À appeler au démarrage ou après reconnexion.
- */
-export async function syncCatalogFromServer(centerId: string): Promise<void> {
+/** Remet une opération (échouée ou en conflit) dans la file, à la demande d'un utilisateur. */
+export async function retryOperation(opId: string): Promise<void> {
   const db = getOfflineDB();
-
-  try {
-    // Sync produits
-    const productsRes = await fetch(`/api/products?centerId=${centerId}`);
-    if (productsRes.ok) {
-      const { data: products } = await productsRes.json();
-      if (Array.isArray(products)) {
-        await db.transaction("rw", db.products, async () => {
-          await db.products.clear();
-          await db.products.bulkAdd(products);
-        });
-      }
-    }
-
-    // Sync stocks
-    const stockRes = await fetch(`/api/stock?centerId=${centerId}`);
-    if (stockRes.ok) {
-      const { data: stocks } = await stockRes.json();
-      if (Array.isArray(stocks)) {
-        await db.transaction("rw", db.stocks, async () => {
-          await db.stocks.where("centerId").equals(centerId).delete();
-          await db.stocks.bulkAdd(stocks.map((s: {
-            centerId: string;
-            productId: string;
-            quantity: number;
-            reservedQty: number;
-            version: number;
-          }) => ({
-            ...s,
-            id: `${s.centerId}_${s.productId}`,
-            lastSyncedAt: new Date().toISOString(),
-          })));
-        });
-      }
-    }
-  } catch (error) {
-    console.warn("[SYNC] Échec sync catalogue:", error);
-    // Ne pas bloquer le fonctionnement offline
-  }
+  const op = await db.syncQueue.get(opId);
+  if (!op) return;
+  await db.syncQueue.update(opId, { status: "pending", attemptCount: 0, error: undefined });
+  if (op.type === "sale") await db.sales.update(op.referenceId, { syncStatus: "pending", syncError: undefined });
 }
 
 /**
- * Retourne le nombre d'opérations refusées par le serveur, à traiter par un responsable.
+ * Rafraîchit le catalogue, le stock et les réserves de la session depuis le serveur.
+ * Le stock local = stock serveur − ventes locales non encore confirmées :
+ * une vente hors ligne en attente n'est jamais « effacée » par le rafraîchissement.
  */
+export async function syncCatalogFromServer(centerId: string, sessionId?: string): Promise<boolean> {
+  const db = getOfflineDB();
+  try {
+    const [productsRes, stockRes, reservationsRes] = await Promise.all([
+      fetch(`/api/products?centerId=${encodeURIComponent(centerId)}`),
+      fetch(`/api/stock?centerId=${encodeURIComponent(centerId)}`),
+      sessionId ? fetch(`/api/stock/reservations?sessionId=${encodeURIComponent(sessionId)}`) : Promise.resolve(null),
+    ]);
+    if (!productsRes.ok || !stockRes.ok) return false;
+
+    // offlineData : nombres (et non chaînes Decimal) au format attendu par IndexedDB
+    const { offlineData: products } = (await productsRes.json()) as { offlineData: OfflineProduct[] };
+    const { offlineData: stocks } = (await stockRes.json()) as {
+      offlineData: Array<{ id: string; centerId: string; productId: string; quantity: number; reservedQty: number; version: number }>;
+    };
+    const reservations = reservationsRes?.ok
+      ? ((await reservationsRes.json()) as { data: Array<{ productId: string; quantity: number }> }).data
+      : null;
+
+    const unconfirmed = await getUnconfirmedQuantities();
+    const syncedAt = new Date().toISOString();
+
+    await db.transaction("rw", [db.products, db.stocks, db.reservations], async () => {
+      if (Array.isArray(products)) {
+        await db.products.clear();
+        await db.products.bulkPut(products);
+      }
+      if (Array.isArray(stocks)) {
+        await db.stocks.where("centerId").equals(centerId).delete();
+        await db.stocks.bulkPut(
+          stocks.map((s) => ({
+            ...s,
+            quantity: Math.max(0, s.quantity - (unconfirmed.get(s.productId) ?? 0)),
+            lastSyncedAt: syncedAt,
+          }))
+        );
+      }
+      if (sessionId && reservations) {
+        await db.reservations.where("sessionId").equals(sessionId).delete();
+        await db.reservations.bulkPut(
+          reservations.map((r) => ({
+            id: `${sessionId}_${r.productId}`,
+            sessionId,
+            productId: r.productId,
+            serverQuantity: r.quantity,
+            lastSyncedAt: syncedAt,
+          }))
+        );
+      }
+    });
+    return true;
+  } catch (error) {
+    console.warn("[SYNC] Échec sync catalogue:", error);
+    return false; // ne pas bloquer le fonctionnement hors ligne
+  }
+}
+
+/** Nombre d'opérations refusées par le serveur, à traiter par un responsable. */
 export async function getConflictCount(): Promise<number> {
   const db = getOfflineDB();
   return db.syncQueue.where("status").equals("conflict").count();
 }
 
-/**
- * Retourne le nombre d'opérations en attente de sync.
- */
+/** Nombre d'opérations en attente d'envoi. */
 export async function getPendingSyncCount(): Promise<number> {
   const db = getOfflineDB();
-  return db.syncQueue
-    .where("status")
-    .anyOf(["pending", "failed"])
-    .count();
+  return db.syncQueue.where("status").anyOf(["pending", "failed", "syncing"]).count();
 }
 
-/**
- * Installe un écouteur de connectivité pour auto-syncer.
- */
-export function installConnectivityListener(
-  onSync?: (result: { success: number; failed: number; total: number }) => void
-): () => void {
+/** Lance une synchronisation à chaque retour de la connexion. */
+export function installConnectivityListener(onSync?: (result: SyncResult) => void): () => void {
   const handleOnline = async () => {
-    console.log("[SYNC] Connexion rétablie — lancement de la synchronisation...");
     const result = await syncPendingOperations();
     onSync?.(result);
   };
-
   window.addEventListener("online", handleOnline);
   return () => window.removeEventListener("online", handleOnline);
 }

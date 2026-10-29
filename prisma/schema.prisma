@@ -126,6 +126,8 @@ enum AuditEventType {
   STOCK_ADJUSTED
   STOCK_TRANSFERRED
   STOCK_LOSS_RECORDED
+  STOCK_RESERVED
+  STOCK_RESERVATION_RELEASED
   // Inventaire
   INVENTORY_STARTED
   INVENTORY_VALIDATED
@@ -429,9 +431,29 @@ model Stock {
   version       Int       @default(0)                        // Verrou optimiste
 
   movements     StockMovement[]
+  reservations  StockReservation[]
 
   @@unique([centerId, productId])
   @@map("stocks")
+}
+
+// Réserve de stock attribuée à une session de caisse avant une période hors
+// connexion (cahier §9.4). La somme des réserves d'un stock = Stock.reservedQty,
+// et ne peut jamais dépasser Stock.quantity.
+model StockReservation {
+  id          String      @id @default(cuid())
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  sessionId   String
+  session     CashSession @relation(fields: [sessionId], references: [id])
+  stockId     String
+  stock       Stock       @relation(fields: [stockId], references: [id])
+
+  quantity    Decimal     @db.Decimal(12, 3)   // Quantité encore réservée (unité de base)
+
+  @@unique([sessionId, stockId])
+  @@map("stock_reservations")
 }
 
 /// Mouvement de stock (toute modification passe ici)
@@ -652,6 +674,8 @@ model CashSession {
   sales           Sale[]
   cashMovements   CashMovement[]
   closure         CashClosure?
+  reservations    StockReservation[]
+  refunds         Refund[]
 
   @@map("cash_sessions")
 }
@@ -816,6 +840,10 @@ model Refund {
   createdAt     DateTime  @default(now())
   saleId        String
   sale          Sale      @relation(fields: [saleId], references: [id])
+  // Session de caisse d'où l'argent est sorti (null = remboursement hors caisse,
+  // ex. mobile money rendu à distance). Sert au calcul de la clôture.
+  sessionId     String?
+  session       CashSession? @relation(fields: [sessionId], references: [id])
   amount        Decimal   @db.Decimal(12, 2)
   method        PaymentMethod
   reason        String

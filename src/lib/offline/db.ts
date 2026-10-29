@@ -77,6 +77,26 @@ export interface OfflineCashSession {
   isOpen: boolean;
 }
 
+/**
+ * Réserve hors ligne de la session de caisse (miroir de StockReservation).
+ * serverQuantity = valeur confirmée par le serveur à la dernière synchro ;
+ * le disponible local = serverQuantity − ventes hors ligne non encore confirmées.
+ */
+export interface OfflineReservation {
+  id: string; // sessionId_productId
+  sessionId: string;
+  productId: string;
+  serverQuantity: number;
+  lastSyncedAt: string;
+}
+
+/** Brouillon de formulaire sauvegardé au fil de la saisie (cahier §11.1). */
+export interface OfflineDraft {
+  key: string; // ex. "goods-receipt:<centerId>"
+  data: unknown;
+  updatedAt: string;
+}
+
 export interface SyncOperation {
   id: string;
   type: "sale" | "stock_update" | "cash_session";
@@ -99,6 +119,8 @@ export class FishcoreOfflineDB extends Dexie {
   sales!: Table<OfflineSale>;
   cashSessions!: Table<OfflineCashSession>;
   syncQueue!: Table<SyncOperation>;
+  reservations!: Table<OfflineReservation>;
+  drafts!: Table<OfflineDraft>;
 
   constructor() {
     super("fishcore-offline");
@@ -109,6 +131,12 @@ export class FishcoreOfflineDB extends Dexie {
       sales: "id, idempotencyKey, sessionId, centerId, syncStatus, createdAt",
       cashSessions: "id, cashRegisterId, isOpen",
       syncQueue: "id, type, status, createdAt",
+    });
+
+    // v2 : réserves hors ligne par session + brouillons de formulaires
+    this.version(2).stores({
+      reservations: "id, sessionId, productId",
+      drafts: "key, updatedAt",
     });
   }
 }
@@ -124,4 +152,24 @@ export function getOfflineDB(): FishcoreOfflineDB {
     _db = new FishcoreOfflineDB();
   }
   return _db;
+}
+
+/** Statuts d'une vente locale pas encore confirmée par le serveur. */
+export const UNCONFIRMED_STATUSES = ["pending", "syncing", "failed", "conflict"] as const;
+
+/**
+ * Quantités vendues hors ligne et pas encore confirmées par le serveur,
+ * par produit (optionnellement pour une seule session de caisse).
+ */
+export async function getUnconfirmedQuantities(sessionId?: string): Promise<Map<string, number>> {
+  const db = getOfflineDB();
+  const sales = await db.sales.where("syncStatus").anyOf([...UNCONFIRMED_STATUSES]).toArray();
+  const totals = new Map<string, number>();
+  for (const sale of sales) {
+    if (sessionId && sale.sessionId !== sessionId) continue;
+    for (const line of sale.lines) {
+      totals.set(line.productId, (totals.get(line.productId) ?? 0) + line.quantity);
+    }
+  }
+  return totals;
 }

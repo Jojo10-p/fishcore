@@ -95,6 +95,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       await requirePermission(user, "sale:cancel_approve");
       const { cancellationId, decision, rejectionReason } = parseBody(cancellationDecisionSchema, body);
       const sale = await loadSale(user, saleId);
+      const refundSessionId = typeof body.refundSessionId === "string" ? body.refundSessionId : undefined;
 
       const cancellation = await prisma.cancellation.findFirst({
         where: { id: cancellationId, saleId },
@@ -148,6 +149,24 @@ export async function POST(req: NextRequest, { params }: Params) {
         return NextResponse.json({ success: true, message: "Demande rejetée." });
       }
 
+      // Caisse d'où sort l'argent rendu : celle indiquée (ouverte, même centre),
+      // sinon la session d'origine si elle est encore ouverte, sinon hors caisse.
+      let refundSession: string | null = null;
+      if (refundSessionId) {
+        const s = await prisma.cashSession.findFirst({
+          where: { id: refundSessionId, closedAt: null, cashRegister: { centerId: sale.centerId } },
+          select: { id: true },
+        });
+        if (!s) throw new ApiError(400, "Session de remboursement introuvable ou clôturée", "INVALID_REFUND_SESSION");
+        refundSession = s.id;
+      } else {
+        const origin = await prisma.cashSession.findFirst({
+          where: { id: sale.sessionId, closedAt: null },
+          select: { id: true },
+        });
+        refundSession = origin?.id ?? null;
+      }
+
       // APPROVED : retour de stock + remboursement + statut, en une transaction
       await prisma.$transaction(async (tx) => {
         // Changements conditionnels : protègent contre deux approbations simultanées
@@ -166,6 +185,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         // Retour en stock, dans l'unité de base (celle des mouvements de vente)
         const saleMovements = await tx.stockMovement.findMany({
           where: { referenceType: "Sale", referenceId: saleId, type: "SALE" },
+          orderBy: { stockId: "asc" }, // ordre fixe des verrous : pas d'interblocage
         });
         const stockImpact: Array<{ stockId: string; quantity: string }> = [];
         for (const mv of saleMovements) {
@@ -196,6 +216,7 @@ export async function POST(req: NextRequest, { params }: Params) {
           await tx.refund.create({
             data: {
               saleId,
+              sessionId: refundSession,
               amount: p.amount,
               method: p.method,
               reason: `Annulation : ${cancellation.requestReason}`,
@@ -221,7 +242,7 @@ export async function POST(req: NextRequest, { params }: Params) {
             referenceId: saleId,
             result: "SUCCESS",
             oldValues: { status: "COMPLETED" },
-            newValues: { status: "CANCELLED", cancellationId, refunded: cashImpact, stockImpact },
+            newValues: { status: "CANCELLED", cancellationId, refunded: cashImpact, refundSessionId: refundSession, stockImpact },
             ipAddress: user.ipAddress,
             userAgent: user.userAgent,
           },

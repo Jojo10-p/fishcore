@@ -18,6 +18,11 @@ const PUBLIC_PATHS = [
   "/api/auth/register",
   "/api/install",
   "/api/health",
+  // Fichiers de l'application installable (doivent rester accessibles hors session)
+  "/sw.js",
+  "/manifest.webmanifest",
+  "/offline.html",
+  "/icons",
 ];
 
 function isPublicPath(pathname: string): boolean {

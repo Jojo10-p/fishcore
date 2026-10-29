@@ -17,6 +17,7 @@ import {
 import { hasPermission } from "@/lib/rbac";
 import { generateSaleNumber } from "@/lib/utils";
 import { priceLines, settlePayments } from "@/lib/sales";
+import { consumeStockForSale } from "@/lib/stock";
 
 
 const saleInclude = { lines: true, payments: true } satisfies Prisma.SaleInclude;
@@ -104,23 +105,19 @@ export async function POST(req: NextRequest) {
         throw new ApiError(409, "La session de caisse est clôturée", "SESSION_CLOSED");
       }
 
-      // 7a. Sortie de stock conditionnelle (verrou de ligne PostgreSQL)
+      // 7a. Sortie de stock : réserve de la session d'abord, puis stock libre.
+      //     Produits traités dans un ordre fixe pour éviter les interblocages.
       const stockIds = new Map<string, string>();
-      for (const [productId, qty] of pricing.baseQtyByProduct) {
-        const rows = await tx.$queryRaw<{ id: string }[]>`
-          UPDATE "stocks"
-             SET "quantity" = "quantity" - ${qty.toString()}::numeric,
-                 "version" = "version" + 1,
-                 "updatedAt" = NOW()
-           WHERE "centerId" = ${centerId}
-             AND "productId" = ${productId}
-             AND "quantity" - "reservedQty" >= ${qty.toString()}::numeric
-       RETURNING "id"`;
-        if (rows.length === 0) {
-          const name = pricing.productNames.get(productId) ?? productId;
-          throw new ApiError(409, `Stock insuffisant pour « ${name} »`, "INSUFFICIENT_STOCK");
-        }
-        stockIds.set(productId, rows[0].id);
+      const productOrder = [...pricing.baseQtyByProduct.keys()].sort();
+      for (const productId of productOrder) {
+        const { stockId } = await consumeStockForSale(tx, {
+          centerId,
+          productId,
+          qty: pricing.baseQtyByProduct.get(productId)!,
+          sessionId: cashSession.id,
+          productName: pricing.productNames.get(productId) ?? productId,
+        });
+        stockIds.set(productId, stockId);
       }
 
       // 7b. Numéro de facture : incrément atomique (la ligne entreprise est verrouillée)

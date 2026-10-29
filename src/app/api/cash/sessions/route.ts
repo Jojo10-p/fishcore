@@ -17,6 +17,7 @@ import {
   resolveCenterScope,
 } from "@/lib/auth";
 import { hasPermission } from "@/lib/rbac";
+import { releaseSessionReservations } from "@/lib/stock";
 
 const D = Prisma.Decimal;
 
@@ -184,6 +185,27 @@ export async function POST(req: NextRequest) {
 
         await tx.cashRegister.update({ where: { id: session.cashRegisterId }, data: { state: "CLOSED" } });
 
+        // Les réserves hors ligne non consommées retournent au stock libre
+        const released = await releaseSessionReservations(tx, sessionId);
+        if (released.length > 0) {
+          await writeAuditLog(
+            {
+              eventType: "STOCK_RESERVATION_RELEASED",
+              companyId,
+              centerId: session.cashRegister.centerId,
+              userId: user.id,
+              referenceType: "CashSession",
+              referenceId: sessionId,
+              result: "SUCCESS",
+              reason: "Clôture de caisse",
+              newValues: { released },
+              sessionId,
+              ...meta,
+            },
+            tx
+          );
+        }
+
         await writeAuditLog(
           {
             eventType: "CASH_SESSION_CLOSED",
@@ -304,7 +326,8 @@ export async function POST(req: NextRequest) {
  * Solde théorique = fond de caisse + encaissements espèces
  *                   − remboursements espèces + entrées − sorties/avances.
  * Les ventes annulées restent comptées en encaissement : leur remboursement
- * est une opération distincte (cahier §10.3) qui vient en déduction.
+ * est une opération distincte (cahier §10.3), déduite de la caisse qui a
+ * effectivement rendu l'argent (Refund.sessionId).
  */
 async function computeSessionTotals(
   tx: Prisma.TransactionClient,
@@ -317,9 +340,10 @@ async function computeSessionTotals(
       where: { sale: { sessionId } },
       _sum: { amount: true },
     }),
+    // Remboursements sortis de CETTE caisse (pas forcément des ventes de cette session)
     tx.refund.groupBy({
       by: ["method"],
-      where: { sale: { sessionId } },
+      where: { sessionId },
       _sum: { amount: true },
     }),
     tx.cashMovement.groupBy({
@@ -377,6 +401,7 @@ export async function GET(req: NextRequest) {
       where: {
         cashRegister: { center: { companyId }, ...(centerScope ? { centerId: centerScope } : {}) },
         ...(cashRegisterId ? { cashRegisterId } : {}),
+        ...(searchParams.get("open") === "true" ? { closedAt: null } : {}),
         // Sans vue globale, un caissier ne voit que ses sessions
         ...(hasPermission(user.role, "cash:view_all_sessions") ? {} : { cashierId: user.id }),
       },
