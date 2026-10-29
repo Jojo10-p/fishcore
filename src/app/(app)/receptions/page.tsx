@@ -18,13 +18,23 @@ interface Receipt {
   handlingCost: string;
   otherCosts: string;
   supplier: { name: string } | null;
-  lines: Array<{ id: string; netWeight: string; cartonCount: number | null; totalPrice: string; product: { name: string } }>;
+  lines: Array<{
+    id: string;
+    quantity: string;
+    packageCount: number | null;
+    totalPrice: string;
+    lotNumber: string | null;
+    expiresAt: string | null;
+    product: { name: string; baseUnit: { symbol: string } };
+  }>;
 }
 interface ProductOption {
   id: string;
   name: string;
   purchasePrice: string;
-  baseUnit: { symbol: string };
+  trackBatches: boolean;
+  requiresExpiry: boolean;
+  baseUnit: { symbol: string; allowsDecimal: boolean };
 }
 interface Supplier {
   id: string;
@@ -33,9 +43,11 @@ interface Supplier {
 
 interface DraftLine {
   productId: string;
-  cartonCount: string;
+  packageCount: string;
   grossWeight: string;
-  netWeight: string;
+  quantity: string;
+  lotNumber: string;
+  expiresAt: string;
   unitPrice: string;
 }
 interface ReceiptDraft {
@@ -49,7 +61,7 @@ interface ReceiptDraft {
   lines: DraftLine[];
 }
 
-const emptyLine = (): DraftLine => ({ productId: "", cartonCount: "", grossWeight: "", netWeight: "", unitPrice: "" });
+const emptyLine = (): DraftLine => ({ productId: "", packageCount: "", grossWeight: "", quantity: "", unitPrice: "", lotNumber: "", expiresAt: "" });
 const emptyDraft = (): ReceiptDraft => ({
   supplierId: "",
   reference: "",
@@ -125,7 +137,7 @@ export default function ReceptionsPage() {
         ) : receipts.length === 0 ? (
           <EmptyState icon="🚚" title="Aucune réception" />
         ) : (
-          <Table head={["Date", "Fournisseur", "Produits", "Poids net", "Coût total", "Statut", ""]}>
+          <Table head={["Date", "Fournisseur", "Articles reçus", "Coût total", "Statut", ""]}>
             {receipts.map((r) => {
               const goods = r.lines.reduce((s, l) => s + Number(l.totalPrice), 0);
               const fees = num(r.transportCost) + num(r.iceCost) + num(r.handlingCost) + num(r.otherCosts);
@@ -136,9 +148,14 @@ export default function ReceptionsPage() {
                     {r.reference && <p className="text-xs text-gray-500">{r.reference}</p>}
                   </Td>
                   <Td>{r.supplier?.name ?? "—"}</Td>
-                  <Td className="whitespace-normal">{r.lines.map((l) => l.product.name).join(", ")}</Td>
-                  <Td>
-                    <Qty value={r.lines.reduce((s, l) => s + Number(l.netWeight), 0)} unit="kg" />
+                  <Td className="whitespace-normal">
+                    {r.lines.map((l) => (
+                      <span key={l.id} className="block">
+                        {l.product.name} — <Qty value={l.quantity} unit={l.product.baseUnit.symbol} />
+                        {l.lotNumber && <span className="text-xs text-gray-500"> · lot {l.lotNumber}</span>}
+                        {l.expiresAt && <span className="text-xs text-gray-500"> · exp. {new Date(l.expiresAt).toLocaleDateString("fr-FR")}</span>}
+                      </span>
+                    ))}
                   </Td>
                   <Td>
                     <Money value={goods + fees} currency={currency} />
@@ -173,10 +190,13 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
   const [error, setError] = useState<string | null>(null);
 
   const touched = useMemo(
-    () => draft.supplierId !== "" || draft.reference !== "" || draft.lines.some((l) => l.productId || l.netWeight || l.cartonCount),
+    () => draft.supplierId !== "" || draft.reference !== "" || draft.lines.some((l) => l.productId || l.quantity || l.packageCount),
     [draft]
   );
-  const autosave = useAutosaveDraft(`goods-receipt:${centerId}`, draft, { enabled: touched });
+  const { profile, session } = useSession();
+  // Poids brut utile pour les marchandises pesées (poisson, vrac…)
+  const showWeight = ["FISHMONGER", "WHOLESALE", "BUILDING_MATERIALS"].includes(session?.company?.businessType ?? "") || !!profile.units.find((u) => u.kind === "WEIGHT" && u.symbol === profile.defaultUnit);
+  const autosave = useAutosaveDraft(`goods-receipt:v2:${centerId}`, draft, { enabled: touched });
 
   useEffect(() => {
     apiGet<{ data: ProductOption[] }>("/api/products").then((r) => setProducts(r.data)).catch(() => undefined);
@@ -188,9 +208,10 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
   const setLine = (i: number, k: keyof DraftLine, v: string) =>
     setDraft((d) => ({ ...d, lines: d.lines.map((l, j) => (j === i ? { ...l, [k]: v } : l)) }));
 
-  const goods = draft.lines.reduce((s, l) => s + num(l.netWeight) * num(l.unitPrice), 0);
+  const goods = draft.lines.reduce((s, l) => s + num(l.quantity) * num(l.unitPrice), 0);
   const fees = num(draft.transportCost) + num(draft.iceCost) + num(draft.handlingCost) + num(draft.otherCosts);
-  const validLines = draft.lines.filter((l) => l.productId && num(l.netWeight) > 0);
+  const validLines = draft.lines.filter((l) => l.productId && num(l.quantity) > 0);
+  const missingExpiry = draft.lines.some((l) => l.productId && !l.expiresAt && products.find((p) => p.id === l.productId)?.requiresExpiry);
 
   const addSupplier = async () => {
     if (!newSupplier.trim()) return;
@@ -219,11 +240,13 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
         otherCosts: num(draft.otherCosts),
         lines: validLines.map((l) => ({
           productId: l.productId,
-          cartonCount: l.cartonCount ? Math.round(num(l.cartonCount)) : undefined,
+          packageCount: l.packageCount ? Math.round(num(l.packageCount)) : undefined,
           grossWeight: l.grossWeight ? num(l.grossWeight) : undefined,
-          netWeight: num(l.netWeight),
+          quantity: num(l.quantity),
+          lotNumber: l.lotNumber || undefined,
+          expiresAt: l.expiresAt || undefined,
           unitPrice: num(l.unitPrice),
-          totalPrice: Math.round(num(l.netWeight) * num(l.unitPrice)),
+          totalPrice: Math.round(num(l.quantity) * num(l.unitPrice)),
         })),
       });
       if (andValidate) await apiSend(`/api/goods-receipts/${res.data.id}/validate`, {});
@@ -307,13 +330,13 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
       </div>
 
       <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-gray-700">Produits reçus</h3>
+        <h3 className="text-sm font-semibold text-gray-700">Articles reçus</h3>
         {draft.lines.map((l, i) => {
           const product = products.find((p) => p.id === l.productId);
           return (
             <div key={i} className="grid grid-cols-2 sm:grid-cols-6 gap-2 items-end rounded-lg border border-gray-200 p-3">
               <div className="col-span-2">
-                <Field label="Produit">
+                <Field label="Article">
                   <Select
                     value={l.productId}
                     onChange={(e) => {
@@ -331,24 +354,36 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
                   </Select>
                 </Field>
               </div>
-              <Field label="Cartons">
-                <Input inputMode="numeric" value={l.cartonCount} onChange={(e) => setLine(i, "cartonCount", e.target.value)} />
+              <Field label="Colis (cartons, sacs…)">
+                <Input inputMode="numeric" value={l.packageCount} onChange={(e) => setLine(i, "packageCount", e.target.value)} />
               </Field>
-              <Field label="Poids brut">
-                <Input inputMode="decimal" value={l.grossWeight} onChange={(e) => setLine(i, "grossWeight", e.target.value)} />
+              <Field label={`Quantité (${product?.baseUnit.symbol ?? "unité"})`}>
+                <Input inputMode={product?.baseUnit.allowsDecimal ? "decimal" : "numeric"} value={l.quantity} onChange={(e) => setLine(i, "quantity", e.target.value)} />
               </Field>
-              <Field label={`Poids net (${product?.baseUnit.symbol ?? "kg"})`}>
-                <Input inputMode="decimal" value={l.netWeight} onChange={(e) => setLine(i, "netWeight", e.target.value)} />
+              <Field label={`Coût / ${product?.baseUnit.symbol ?? "unité"}`}>
+                <Input inputMode="decimal" value={l.unitPrice} onChange={(e) => setLine(i, "unitPrice", e.target.value)} />
               </Field>
-              <Field label={`Prix / ${product?.baseUnit.symbol ?? "kg"}`}>
-                <Input inputMode="numeric" value={l.unitPrice} onChange={(e) => setLine(i, "unitPrice", e.target.value)} />
-              </Field>
+              {showWeight && (
+                <Field label="Poids brut">
+                  <Input inputMode="decimal" value={l.grossWeight} onChange={(e) => setLine(i, "grossWeight", e.target.value)} />
+                </Field>
+              )}
+              {product?.trackBatches && (
+                <>
+                  <Field label="N° de lot">
+                    <Input value={l.lotNumber} onChange={(e) => setLine(i, "lotNumber", e.target.value)} />
+                  </Field>
+                  <Field label={`Péremption${product.requiresExpiry ? " *" : ""}`}>
+                    <Input type="date" value={l.expiresAt} onChange={(e) => setLine(i, "expiresAt", e.target.value)} />
+                  </Field>
+                </>
+              )}
               <div className="col-span-2 sm:col-span-6 flex items-center justify-between text-xs text-gray-500">
                 <span>
-                  {num(l.cartonCount) > 0 && num(l.netWeight) > 0 && (
-                    <>Poids moyen : <Qty value={num(l.netWeight) / num(l.cartonCount)} unit={`${product?.baseUnit.symbol ?? "kg"}/carton`} /> · </>
+                  {num(l.packageCount) > 0 && num(l.quantity) > 0 && (
+                    <>Moyenne : <Qty value={num(l.quantity) / num(l.packageCount)} unit={`${product?.baseUnit.symbol ?? ""}/colis`} /> · </>
                   )}
-                  Montant : <Money value={num(l.netWeight) * num(l.unitPrice)} currency={currency} />
+                  Montant : <Money value={num(l.quantity) * num(l.unitPrice)} currency={currency} />
                 </span>
                 {draft.lines.length > 1 && (
                   <button className="text-red-600 hover:underline" onClick={() => setDraft((d) => ({ ...d, lines: d.lines.filter((_, j) => j !== i) }))}>
@@ -360,7 +395,7 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
           );
         })}
         <Button variant="secondary" onClick={() => setDraft((d) => ({ ...d, lines: [...d.lines, emptyLine()] }))}>
-          + Ajouter un produit
+          + Ajouter un article
         </Button>
       </div>
 
@@ -379,6 +414,7 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
         </Field>
       </div>
 
+      {missingExpiry && <Alert tone="amber">Indiquez la date de péremption des articles marqués « * » avant de valider.</Alert>}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-gray-100 pt-4">
         <p className="text-sm text-gray-700">
           Marchandise <Money value={goods} currency={currency} /> + frais <Money value={fees} currency={currency} /> ={" "}
@@ -391,7 +427,7 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
           <Button variant="secondary" onClick={() => save(false)} loading={busy} disabled={!online || validLines.length === 0}>
             Enregistrer en brouillon
           </Button>
-          <Button variant="success" onClick={() => save(true)} loading={busy} disabled={!online || validLines.length === 0}>
+          <Button variant="success" onClick={() => save(true)} loading={busy} disabled={!online || validLines.length === 0 || missingExpiry}>
             Enregistrer et valider
           </Button>
         </div>

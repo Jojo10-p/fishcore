@@ -22,9 +22,9 @@ type Decimal = Prisma.Decimal;
  */
 export async function consumeStockForSale(
   tx: Tx,
-  params: { centerId: string; productId: string; qty: Decimal; sessionId: string; productName: string }
-): Promise<{ stockId: string; fromReservation: Decimal }> {
-  const { centerId, productId, qty, sessionId, productName } = params;
+  params: { centerId: string; productId: string; qty: Decimal; sessionId: string; productName: string; trackBatches?: boolean }
+): Promise<{ stockId: string; fromReservation: Decimal; allocations: BatchAllocation[] }> {
+  const { centerId, productId, qty, sessionId, productName, trackBatches = false } = params;
 
   // Verrouille la ligne de stock (sérialise les ventes concurrentes du produit)
   const stocks = await tx.$queryRaw<{ id: string }[]>`
@@ -64,7 +64,72 @@ export async function consumeStockForSale(
     throw new ApiError(409, `Stock insuffisant pour « ${productName} »`, "INSUFFICIENT_STOCK");
   }
 
-  return { stockId, fromReservation };
+  // 3. Produits suivis par lot : sortie des lots non périmés, le plus proche de la péremption d'abord
+  const allocations = trackBatches ? await allocateBatchesFefo(tx, { centerId, productId, qty, productName }) : [];
+
+  return { stockId, fromReservation, allocations };
+}
+
+export interface BatchAllocation {
+  batchId: string;
+  quantity: Decimal;
+  lotNumber: string | null;
+  expiresAt: Date | null;
+}
+
+/** Début du jour courant (UTC) : un lot qui expire aujourd'hui n'est plus vendable demain. */
+function startOfToday(): Date {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
+ * Prélève `qty` sur les lots du produit selon la règle FEFO (premier périmé,
+ * premier sorti). Les lots périmés ne sont JAMAIS vendus : s'il ne reste que
+ * du périmé, la vente est refusée (le stock périmé se sort en « détérioration »).
+ */
+export async function allocateBatchesFefo(
+  tx: Tx,
+  params: { centerId: string; productId: string; qty: Decimal; productName: string }
+): Promise<BatchAllocation[]> {
+  const { centerId, productId, qty, productName } = params;
+  const today = startOfToday();
+
+  const batches = await tx.$queryRaw<Array<{ id: string; remainingQty: Prisma.Decimal; lotNumber: string | null; expiresAt: Date | null }>>`
+    SELECT "id", "remainingQty", "lotNumber", "expiresAt"
+      FROM "batches"
+     WHERE "productId" = ${productId} AND "centerId" = ${centerId}
+       AND "remainingQty" > 0
+       AND ("expiresAt" IS NULL OR "expiresAt" >= ${today})
+     ORDER BY "expiresAt" ASC NULLS LAST, "createdAt" ASC, "id" ASC
+       FOR UPDATE`;
+
+  let left = new D(qty);
+  const allocations: BatchAllocation[] = [];
+  for (const b of batches) {
+    if (left.lte(0)) break;
+    const take = D.min(left, new D(b.remainingQty));
+    await tx.$executeRaw`
+      UPDATE "batches" SET "remainingQty" = "remainingQty" - ${take.toString()}::numeric WHERE "id" = ${b.id}`;
+    allocations.push({ batchId: b.id, quantity: take, lotNumber: b.lotNumber, expiresAt: b.expiresAt });
+    left = left.sub(take);
+  }
+
+  if (left.gt(0)) {
+    throw new ApiError(
+      409,
+      `Stock non périmé insuffisant pour « ${productName} » (il manque ${left.toString()}). Retirez les lots périmés du stock.`,
+      "EXPIRED_STOCK"
+    );
+  }
+  return allocations;
+}
+
+/** Remet une quantité dans un lot (annulation, retour client, ajustement positif). */
+export async function restoreBatch(tx: Tx, batchId: string, qty: Decimal) {
+  await tx.$executeRaw`
+    UPDATE "batches" SET "remainingQty" = "remainingQty" + ${qty.toString()}::numeric WHERE "id" = ${batchId}`;
 }
 
 /**

@@ -11,7 +11,8 @@ export class ClientApiError extends Error {
 async function handle<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
   if (res.status === 401 && typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-    window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+    // Rechargement complet volontaire : la session a expiré, on repart d'un état propre
+    window.location.replace(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
   }
   if (!res.ok || body.success === false) {
     throw new ClientApiError(body.error ?? `Erreur ${res.status}`, res.status, body.code);

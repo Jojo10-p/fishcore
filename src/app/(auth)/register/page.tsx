@@ -4,11 +4,13 @@ import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { BUSINESS_PROFILES, BUSINESS_TYPE_ORDER } from "@/lib/business-profiles";
 
 // ─────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────
 interface StepOneData {
+  businessType: string;
   tradeName: string;
   ownerName: string;
   phone: string;
@@ -93,6 +95,7 @@ export default function RegisterPage() {
   const Step1 = () => {
     const { register, handleSubmit, watch, formState: { errors } } = useForm<StepOneData>({
       defaultValues: step1Data ?? {
+        businessType: "GENERAL",
         country: "BJ",
         currency: "XOF",
         city: "Cotonou",
@@ -113,7 +116,31 @@ export default function RegisterPage() {
 
     return (
       <form onSubmit={handleSubmit(onNext)} className="space-y-4">
-        <h2 className="text-lg font-semibold text-gray-900">Informations de l'entreprise</h2>
+        <h2 className="text-lg font-semibold text-gray-900">Votre activité</h2>
+        <p className="text-sm text-gray-500 -mt-2">
+          Nous préparons les unités, catégories et options adaptées. Tout reste modifiable ensuite.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {BUSINESS_TYPE_ORDER.map((type) => {
+            const p = BUSINESS_PROFILES[type];
+            const selected = watchAll.businessType === type;
+            return (
+              <label
+                key={type}
+                className={`flex cursor-pointer items-start gap-2 rounded-xl border p-3 text-sm transition-colors ${selected ? "border-blue-600 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}
+              >
+                <input type="radio" value={type} className="sr-only" {...register("businessType")} />
+                <span className="text-xl leading-none" aria-hidden>{p.icon}</span>
+                <span>
+                  <span className="block font-medium text-gray-900">{p.label}</span>
+                  <span className="block text-xs text-gray-500">{p.description}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+
+        <h2 className="text-lg font-semibold text-gray-900 pt-2">Informations de l&apos;entreprise</h2>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
@@ -122,7 +149,7 @@ export default function RegisterPage() {
             </label>
             <input
               type="text"
-              placeholder="ex. Poissonnerie Atchavé"
+              placeholder="ex. Établissements Atchavé"
               className={`w-full px-3.5 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.tradeName ? "border-red-300" : "border-gray-300"}`}
               {...register("tradeName", { required: "Nom commercial requis" })}
             />
@@ -198,7 +225,7 @@ export default function RegisterPage() {
             >
               <option value="BJ">Bénin</option>
               <option value="TG">Togo</option>
-              <option value="CI">Côte d'Ivoire</option>
+              <option value="CI">Côte d&apos;Ivoire</option>
               <option value="SN">Sénégal</option>
               <option value="CM">Cameroun</option>
             </select>
@@ -261,7 +288,7 @@ export default function RegisterPage() {
       <form onSubmit={handleSubmit(onNext)} className="space-y-5">
         <h2 className="text-lg font-semibold text-gray-900">Sécurité du compte</h2>
         <p className="text-sm text-gray-500">
-          Ce mot de passe protège l'accès à votre espace propriétaire.
+          Ce mot de passe protège l&apos;accès à votre espace propriétaire.
         </p>
 
         <div>
@@ -366,10 +393,10 @@ export default function RegisterPage() {
     <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
       <div className="text-center mb-6">
         <div className="inline-flex items-center justify-center w-12 h-12 bg-blue-600 rounded-2xl mb-3 shadow-lg">
-          <span className="text-xl">🐟</span>
+          <img src="/icons/icon.svg" alt="" className="h-7 w-7" />
         </div>
         <h1 className="text-xl font-bold text-gray-900">Créer mon espace</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Configuration initiale de votre poissonnerie</p>
+        <p className="text-sm text-gray-500 mt-0.5">Configuration initiale de votre entreprise</p>
       </div>
 
       <ProgressBar step={step} />

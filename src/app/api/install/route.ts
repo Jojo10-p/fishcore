@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
     };
 
     return NextResponse.json({ success: true, data: agencyConfig });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { success: false, error: "Erreur serveur" },
       { status: 500 }
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
       success: true,
       message: "Installation confirmée. L'agence est maintenant configurée.",
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { success: false, error: "Erreur serveur" },
       { status: 500 }

@@ -14,6 +14,7 @@ import {
   requirePermission,
 } from "@/lib/auth";
 import { hasPermission } from "@/lib/rbac";
+import { restoreBatch } from "@/lib/stock";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -187,19 +188,22 @@ export async function POST(req: NextRequest, { params }: Params) {
           where: { referenceType: "Sale", referenceId: saleId, type: "SALE" },
           orderBy: { stockId: "asc" }, // ordre fixe des verrous : pas d'interblocage
         });
-        const stockImpact: Array<{ stockId: string; quantity: string }> = [];
+        const stockImpact: Array<{ stockId: string; quantity: string; batchId?: string }> = [];
         for (const mv of saleMovements) {
           const qty = mv.quantity.negated(); // la sortie était négative
           await tx.stock.update({
             where: { id: mv.stockId },
             data: { quantity: { increment: qty }, version: { increment: 1 } },
           });
+          // Le produit retourne dans son lot d'origine (traçabilité, péremption)
+          if (mv.batchId) await restoreBatch(tx, mv.batchId, qty);
           await tx.stockMovement.create({
             data: {
               stockId: mv.stockId,
               type: "CUSTOMER_RETURN",
               quantity: qty,
               unitId: mv.unitId,
+              batchId: mv.batchId,
               referenceType: "Cancellation",
               referenceId: cancellationId,
               notes: `Annulation de la vente ${sale.saleNumber}`,
@@ -207,7 +211,7 @@ export async function POST(req: NextRequest, { params }: Params) {
               centerId: sale.centerId,
             },
           });
-          stockImpact.push({ stockId: mv.stockId, quantity: qty.toString() });
+          stockImpact.push({ stockId: mv.stockId, quantity: qty.toString(), ...(mv.batchId ? { batchId: mv.batchId } : {}) });
         }
 
         // Remboursement : une opération par moyen de paiement d'origine

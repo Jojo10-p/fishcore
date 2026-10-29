@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { productSchema } from "@/lib/validations";
 import { writeAuditLog } from "@/lib/audit";
@@ -6,107 +7,128 @@ import {
   ApiError,
   getCurrentUser,
   handleApiError,
+  isUniqueViolation,
   parseBody,
   readJson,
   requireCenterAccess,
   requireCompany,
   requirePermission,
 } from "@/lib/auth";
+import { getBusinessProfile } from "@/lib/business-profiles";
+import { assertBarcodeFree, productClientSelect, replacePackagings, toOfflineProduct } from "@/lib/catalog";
 
-const PRODUCT_TYPES = ["FRESH", "FROZEN", "SMOKED", "DRIED", "OTHER"] as const;
-type ProductTypeValue = (typeof PRODUCT_TYPES)[number];
-
-// GET /api/products — Catalogue de l'entreprise (avec le stock d'un centre si centerId)
+// GET /api/products — Catalogue de l'entreprise
+//   ?search=…  ?categoryId=…  ?active=false  ?barcode=… (recherche exacte, conditionnements compris)
+//   ?centerId=… ajoute le stock du centre
 export async function GET(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
     await requirePermission(user, "product:view");
     const companyId = requireCompany(user);
 
-    const { searchParams } = new URL(req.url);
-    const centerId = searchParams.get("centerId");
-    const search = searchParams.get("search") ?? "";
-    const typeParam = searchParams.get("type");
-    const type = PRODUCT_TYPES.includes(typeParam as ProductTypeValue) ? (typeParam as ProductTypeValue) : undefined;
-    const activeOnly = searchParams.get("active") !== "false";
-
+    const sp = req.nextUrl.searchParams;
+    const centerId = sp.get("centerId");
+    const search = sp.get("search")?.trim() ?? "";
+    const categoryId = sp.get("categoryId");
+    const barcode = sp.get("barcode")?.trim();
+    const activeOnly = sp.get("active") !== "false";
     if (centerId) await requireCenterAccess(user, centerId);
 
+    const where: Prisma.ProductWhereInput = {
+      companyId,
+      ...(activeOnly ? { isActive: true } : {}),
+      ...(categoryId ? { categoryId } : {}),
+      ...(barcode ? { OR: [{ barcode }, { unitConversions: { some: { barcode } } }] } : {}),
+      ...(search
+        ? {
+            AND: [
+              {
+                OR: [
+                  { name: { contains: search, mode: "insensitive" } },
+                  { internalCode: { contains: search, mode: "insensitive" } },
+                  { barcode: { contains: search } },
+                  { brand: { contains: search, mode: "insensitive" } },
+                ],
+              },
+            ],
+          }
+        : {}),
+    };
+
     const products = await prisma.product.findMany({
-      where: {
-        companyId,
-        isActive: activeOnly ? true : undefined,
-        ...(type ? { type } : {}),
-        ...(search
-          ? {
-              OR: [
-                { name: { contains: search, mode: "insensitive" } },
-                { internalCode: { contains: search, mode: "insensitive" } },
-                { barcode: { contains: search, mode: "insensitive" } },
-                { species: { contains: search, mode: "insensitive" } },
-              ],
-            }
-          : {}),
-      },
-      include: {
-        baseUnit: { select: { id: true, name: true, symbol: true } },
-        ...(centerId
-          ? { stocks: { where: { centerId }, select: { quantity: true, reservedQty: true, version: true } } }
-          : {}),
+      where,
+      select: {
+        ...productClientSelect,
+        ...(centerId ? { stocks: { where: { centerId }, select: { quantity: true, reservedQty: true } } } : {}),
       },
       orderBy: { name: "asc" },
     });
 
-    const offlineData = products.map((p) => ({
-      id: p.id,
-      name: p.name,
-      internalCode: p.internalCode,
-      barcode: p.barcode,
-      species: p.species,
-      type: p.type,
-      sellingPrice: Number(p.sellingPrice),
-      purchasePrice: Number(p.purchasePrice),
-      baseUnitId: p.baseUnitId,
-      baseUnitSymbol: p.baseUnit.symbol,
-      stockAlertQty: Number(p.stockAlertQty),
-      isActive: p.isActive,
-    }));
-
-    return NextResponse.json({ success: true, data: products, offlineData });
+    return NextResponse.json({ success: true, data: products, offlineData: products.map(toOfflineProduct) });
   } catch (error) {
     return handleApiError(error, "PRODUCTS");
   }
 }
 
-// POST /api/products — Créer un produit
+// POST /api/products — Créer un produit (options par défaut = profil métier)
 export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
     await requirePermission(user, "product:create");
     const companyId = requireCompany(user);
-    const data = parseBody(productSchema, await readJson(req));
+    const { packagings, attributes, ...data } = parseBody(productSchema, await readJson(req));
 
-    // L'unité doit être une unité de l'entreprise ou une unité globale
+    const company = await prisma.company.findUniqueOrThrow({
+      where: { id: companyId },
+      select: { businessType: true, vatEnabled: true, defaultTaxRate: true },
+    });
+    const profile = getBusinessProfile(company.businessType);
+
     const unit = await prisma.unit.findFirst({
       where: { id: data.baseUnitId, OR: [{ companyId }, { companyId: null }] },
       select: { id: true },
     });
     if (!unit) throw new ApiError(400, "Unité de mesure invalide");
+    if (data.categoryId) {
+      const cat = await prisma.category.findFirst({ where: { id: data.categoryId, companyId }, select: { id: true } });
+      if (!cat) throw new ApiError(400, "Catégorie invalide");
+    }
+
+    const trackBatches = data.trackBatches ?? profile.productDefaults.trackBatches;
+    const requiresExpiry = data.requiresExpiry ?? profile.productDefaults.requiresExpiry;
 
     const product = await prisma.$transaction(async (tx) => {
-      const newProduct = await tx.product.create({
-        data: { companyId, ...data },
-        include: { baseUnit: true },
+      if (data.barcode) await assertBarcodeFree(tx, companyId, data.barcode);
+
+      const created = await tx.product.create({
+        data: {
+          companyId,
+          name: data.name,
+          internalCode: data.internalCode || null,
+          barcode: data.barcode || null,
+          brand: data.brand || null,
+          categoryId: data.categoryId || null,
+          baseUnitId: data.baseUnitId,
+          description: data.description,
+          attributes: attributes ?? undefined,
+          purchasePrice: data.purchasePrice,
+          sellingPrice: data.sellingPrice,
+          stockAlertQty: data.stockAlertQty,
+          // Une date de péremption n'a de sens que si le stock est suivi par lot
+          trackBatches: trackBatches || requiresExpiry,
+          requiresExpiry,
+          requiresPrescription: data.requiresPrescription ?? profile.productDefaults.requiresPrescription,
+          taxRate: data.taxRate ?? (company.vatEnabled ? company.defaultTaxRate : 0),
+        },
       });
+
+      if (packagings?.length) {
+        await replacePackagings(tx, { companyId, productId: created.id, baseUnitId: data.baseUnitId, packagings, productBarcode: data.barcode });
+      }
 
       // Prix initial dans l'historique (sert de référence aux ventes hors connexion)
       await tx.productPriceHistory.create({
-        data: {
-          productId: newProduct.id,
-          purchasePrice: data.purchasePrice ?? 0,
-          sellingPrice: data.sellingPrice ?? 0,
-          changedById: user.id,
-        },
+        data: { productId: created.id, purchasePrice: data.purchasePrice, sellingPrice: data.sellingPrice, changedById: user.id },
       });
 
       await writeAuditLog(
@@ -115,21 +137,24 @@ export async function POST(req: NextRequest) {
           companyId,
           userId: user.id,
           referenceType: "Product",
-          referenceId: newProduct.id,
+          referenceId: created.id,
           result: "SUCCESS",
           reason: "Création du produit",
-          newValues: { name: newProduct.name, sellingPrice: data.sellingPrice, purchasePrice: data.purchasePrice },
+          newValues: { name: created.name, sellingPrice: data.sellingPrice, purchasePrice: data.purchasePrice },
           ipAddress: user.ipAddress,
           userAgent: user.userAgent,
         },
         tx
       );
 
-      return newProduct;
+      return tx.product.findUniqueOrThrow({ where: { id: created.id }, select: productClientSelect });
     });
 
     return NextResponse.json({ success: true, data: product }, { status: 201 });
   } catch (error) {
+    if (isUniqueViolation(error)) {
+      return NextResponse.json({ success: false, error: "Ce code-barres est déjà utilisé", code: "BARCODE_TAKEN" }, { status: 409 });
+    }
     return handleApiError(error, "PRODUCTS");
   }
 }

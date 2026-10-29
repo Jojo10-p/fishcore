@@ -11,8 +11,9 @@ interface ReceiptData {
   subtotal: string;
   discountAmount: string;
   totalAmount: string;
+  taxAmount: string;
   createdOffline: boolean;
-  lines: Array<{ id: string; quantity: string; unitPrice: string; discount: string; lineTotal: string; product: { name: string; baseUnit: { symbol: string } } }>;
+  lines: Array<{ id: string; quantity: string; unitPrice: string; discount: string; lineTotal: string; taxRate: string; unitSymbol: string; lots: Array<{ lotNumber: string | null; expiresAt: string | null }>; product: { name: string } }>;
   payments: Array<{ id: string; method: string; amount: string; notes: string | null }>;
   refunds: Array<{ id: string; amount: string }>;
   cashier: { firstName: string; lastName: string };
@@ -75,11 +76,17 @@ export default function ReceiptPage({ params }: { params: Promise<{ id: string }
             <p>{l.product.name}</p>
             <div className="flex justify-between">
               <span>
-                {Number(l.quantity).toLocaleString("fr-FR", { maximumFractionDigits: 3 })} {l.product.baseUnit.symbol} × {money(l.unitPrice)}
+                {Number(l.quantity).toLocaleString("fr-FR", { maximumFractionDigits: 3 })} {l.unitSymbol} × {money(l.unitPrice)}
                 {Number(l.discount) > 0 && ` (−${money(l.discount)})`}
               </span>
               <span>{money(l.lineTotal)}</span>
             </div>
+            {l.lots?.map((lot, k) => (
+              <p key={k} className="text-[10px]">
+                Lot {lot.lotNumber ?? "—"}
+                {lot.expiresAt && ` · exp. ${new Date(lot.expiresAt).toLocaleDateString("fr-FR")}`}
+              </p>
+            ))}
           </div>
         ))}
 
@@ -91,9 +98,21 @@ export default function ReceiptPage({ params }: { params: Promise<{ id: string }
           </div>
         )}
         <div className="flex justify-between text-sm font-bold">
-          <span>TOTAL</span>
+          <span>TOTAL{Number(sale.taxAmount) > 0 ? " TTC" : ""}</span>
           <span>{money(sale.totalAmount)}</span>
         </div>
+        {Number(sale.taxAmount) > 0 && (
+          <>
+            <div className="flex justify-between text-[11px]">
+              <span>dont TVA</span>
+              <span>{money(sale.taxAmount)}</span>
+            </div>
+            <div className="flex justify-between text-[11px]">
+              <span>Total HT</span>
+              <span>{money(Number(sale.totalAmount) - Number(sale.taxAmount))}</span>
+            </div>
+          </>
+        )}
         {sale.payments.map((p) => (
           <div key={p.id}>
             <div className="flex justify-between">

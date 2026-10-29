@@ -11,6 +11,8 @@ interface DashboardData {
   date: string;
   today: { salesCount: number; revenue: number };
   lowStockCount: number;
+  expiredBatches: number;
+  expiringBatches: number;
   openSessions: number;
   hourlyRevenue: Array<{ hour: string; revenue: number; count: number }>;
   recentSales: Array<{
@@ -106,6 +108,15 @@ export default function DashboardPage() {
             />
             <Kpi label="Caisses ouvertes" value={data.openSessions} href={can("cash:view_all_sessions") ? "/caisses" : undefined} />
           </div>
+
+          {(data.expiredBatches > 0 || data.expiringBatches > 0) && (
+            <Link href="/stock" className="block">
+              <Alert tone={data.expiredBatches > 0 ? "red" : "amber"}>
+                {data.expiredBatches > 0 && <strong>{data.expiredBatches} lot(s) périmé(s) encore en stock — à retirer de la vente. </strong>}
+                {data.expiringBatches > 0 && <span>{data.expiringBatches} lot(s) arrivent à péremption dans les 30 jours.</span>}
+              </Alert>
+            </Link>
+          )}
 
           <Card className="p-4 sm:p-6">
             <h2 className="font-semibold text-gray-900 mb-4">Ventes par heure</h2>

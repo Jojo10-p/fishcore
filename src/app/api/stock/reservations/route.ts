@@ -23,7 +23,7 @@ import { setSessionReservation } from "@/lib/stock";
 // Avant une coupure prévisible (ou dès l'ouverture), une caisse réserve les
 // quantités qu'elle pourra vendre hors connexion. Hors ligne, la caisse ne
 // vend que dans la limite de SA réserve : deux caisses ne peuvent jamais
-// vendre le même poisson.
+// vendre la même marchandise.
 
 const reserveSchema = z.object({
   sessionId: z.string().min(1),

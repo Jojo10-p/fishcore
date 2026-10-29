@@ -9,6 +9,7 @@ import { clearSessionCache, useSession } from "@/components/app/session-provider
 import { ConnectionBadge } from "@/components/app/connection-badge";
 import { Select, Spinner } from "@/components/ui";
 import { getPendingSyncCount } from "@/lib/offline/sync";
+import { APP_NAME } from "@/lib/app-config";
 
 interface NavItem {
   href: string;
@@ -21,14 +22,15 @@ interface NavItem {
 // Chaque rôle ne voit que ce qui sert à son travail (cahier §2.1, §20)
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Tableau de bord", icon: "📊", any: ["report:view"] },
-  { href: "/caisse", label: "Caisse", icon: "🧾", any: ["sale:create"] },
-  { href: "/ventes", label: "Ventes", icon: "🐟", any: ["sale:view"] },
+  { href: "/caisse", label: "Caisse", icon: "🛒", any: ["sale:create"] },
+  { href: "/ventes", label: "Ventes", icon: "🧾", any: ["sale:view"] },
   { href: "/annulations", label: "Annulations", icon: "↩️", any: ["sale:cancel_request", "sale:cancel_approve"] },
-  { href: "/produits", label: "Produits", icon: "🏷️", any: ["product:create", "product:edit"] },
+  { href: "/produits", label: "Articles", icon: "🏷️", any: ["product:create", "product:edit"] },
   { href: "/stock", label: "Stock", icon: "📦", any: ["stock:view"] },
   { href: "/receptions", label: "Réceptions", icon: "🚚", any: ["stock:receive"] },
   { href: "/caisses", label: "Caisses & clôtures", icon: "💰", any: ["cash:view_all_sessions"] },
   { href: "/utilisateurs", label: "Utilisateurs", icon: "👥", any: ["user:view"] },
+  { href: "/parametres", label: "Paramètres", icon: "⚙️", any: ["company:edit"] },
   { href: "/synchronisation", label: "Synchronisation", icon: "🔄", any: [] },
 ];
 
@@ -116,7 +118,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-white border-r border-gray-200 p-4">
         <Link href="/dashboard" className="flex items-center gap-2 px-1 mb-6">
           <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
-          <span className="font-bold text-gray-900">fishcore</span>
+          <span className="font-bold text-gray-900">{APP_NAME}</span>
         </Link>
         <div className="mb-4">{centerPicker}</div>
         <div className="flex-1 overflow-y-auto">{nav}</div>
@@ -128,7 +130,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <button onClick={() => setMenuOpen(true)} className="text-2xl leading-none" aria-label="Ouvrir le menu">
           ☰
         </button>
-        <span className="font-bold text-gray-900 truncate">{session.company?.tradeName ?? "fishcore"}</span>
+        <span className="font-bold text-gray-900 truncate">{session.company?.tradeName ?? APP_NAME}</span>
         <ConnectionBadge compact />
       </header>
 

@@ -267,7 +267,7 @@ test("§26.4 — accès à une autre entreprise refusé et historisé", async ()
 
   const list = await call(productsRoute.GET, { path: `/api/products?companyId=${ctx.A.id}`, cookie: ctx.cookies.cashierB });
   assert.equal(list.status, 200);
-  assert.ok(list.json.data.every((p: Json) => p.companyId === ctx.B.id), "le companyId de l'URL est ignoré");
+  assert.deepEqual(list.json.data.map((p: Json) => p.name), ["Produit B"], "le companyId de l'URL est ignoré");
 
   const sales = await call(salesRoute.GET, { path: "/api/sales", cookie: ctx.cookies.cashierB });
   assert.equal(sales.json.data.length, 0);

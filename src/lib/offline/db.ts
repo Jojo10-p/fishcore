@@ -4,19 +4,36 @@ import Dexie, { type Table } from "dexie";
 // Types IndexedDB (miroir simplifié du schéma Prisma)
 // ─────────────────────────────────────────────
 
+/** Conditionnement vendable (carton, boîte, pack…) : 1 conditionnement = factor × unité de base. */
+export interface OfflinePackaging {
+  unitId: string;
+  name: string;
+  symbol: string;
+  factor: number;
+  sellingPrice: number;
+  barcode?: string;
+}
+
+/** Produit en cache local (format renvoyé par /api/products → offlineData). */
 export interface OfflineProduct {
   id: string;
   name: string;
   internalCode?: string;
   barcode?: string;
-  species?: string;
-  type: string;
+  brand?: string;
+  categoryName?: string;
+  attributes?: Record<string, string>;
   sellingPrice: number;
   purchasePrice: number;
+  taxRate: number;
   baseUnitId: string;
   baseUnitSymbol: string;
+  allowsDecimal: boolean;
+  trackBatches: boolean;
+  requiresPrescription: boolean;
   stockAlertQty: number;
   isActive: boolean;
+  packagings: OfflinePackaging[];
 }
 
 export interface OfflineStock {
@@ -55,8 +72,10 @@ export interface OfflineSale {
 export interface OfflineSaleLine {
   productId: string;
   productName: string;
-  quantity: number;
+  quantity: number;         // dans l'unité vendue
+  baseQuantity: number;     // dans l'unité de base (celle du stock et des réserves)
   unitId?: string;
+  unitSymbol?: string;
   unitPrice: number;
   discount: number;
   lineTotal: number;
@@ -138,6 +157,12 @@ export class FishcoreOfflineDB extends Dexie {
       reservations: "id, sessionId, productId",
       drafts: "key, updatedAt",
     });
+
+    // v3 : catalogue multi-métiers (conditionnements, TVA, lots) — on vide l'ancien
+    // format de produits ; il est rechargé à la synchronisation suivante.
+    this.version(3)
+      .stores({ products: "id, barcode, internalCode, categoryName" })
+      .upgrade((tx) => tx.table("products").clear());
   }
 }
 
@@ -168,7 +193,8 @@ export async function getUnconfirmedQuantities(sessionId?: string): Promise<Map<
   for (const sale of sales) {
     if (sessionId && sale.sessionId !== sessionId) continue;
     for (const line of sale.lines) {
-      totals.set(line.productId, (totals.get(line.productId) ?? 0) + line.quantity);
+      // baseQuantity absent sur les ventes enregistrées avant la v3 : vendues en unité de base
+      totals.set(line.productId, (totals.get(line.productId) ?? 0) + (line.baseQuantity ?? line.quantity));
     }
   }
   return totals;

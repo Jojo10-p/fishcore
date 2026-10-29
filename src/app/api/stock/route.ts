@@ -14,18 +14,20 @@ import {
   requirePermission,
 } from "@/lib/auth";
 import type { Permission } from "@/lib/rbac";
+import { restoreBatch } from "@/lib/stock";
 
 const D = Prisma.Decimal;
 
-// GET /api/stock?centerId=xxx — Stock d'un centre (avec données produits)
+// GET /api/stock?centerId=xxx — Stock d'un centre, avec ses lots (péremptions)
+//   &lowStock=true  : seulement les produits au seuil d'alerte
 export async function GET(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
     await requirePermission(user, "stock:view");
 
-    const { searchParams } = new URL(req.url);
-    const centerId = searchParams.get("centerId");
-    const lowStock = searchParams.get("lowStock") === "true";
+    const sp = req.nextUrl.searchParams;
+    const centerId = sp.get("centerId");
+    const lowStock = sp.get("lowStock") === "true";
     if (!centerId) throw new ApiError(400, "centerId requis");
     await requireCenterAccess(user, centerId);
 
@@ -38,13 +40,19 @@ export async function GET(req: NextRequest) {
             name: true,
             internalCode: true,
             barcode: true,
-            species: true,
-            type: true,
+            brand: true,
+            category: { select: { name: true } },
             sellingPrice: true,
             purchasePrice: true,
             stockAlertQty: true,
+            trackBatches: true,
             isActive: true,
-            baseUnit: { select: { id: true, name: true, symbol: true } },
+            baseUnit: { select: { id: true, name: true, symbol: true, allowsDecimal: true } },
+            batches: {
+              where: { centerId, remainingQty: { gt: 0 } },
+              select: { id: true, lotNumber: true, expiresAt: true, remainingQty: true, receivedAt: true },
+              orderBy: [{ expiresAt: { sort: "asc", nulls: "last" } }, { receivedAt: "asc" }],
+            },
           },
         },
       },
@@ -55,20 +63,17 @@ export async function GET(req: NextRequest) {
       ? stocks.filter((s) => s.quantity.lte(s.product.stockAlertQty) && s.product.isActive)
       : stocks;
 
-    // Format pour le client offline (IndexedDB)
-    const formattedForOffline = filtered.map((s) => ({
+    // Format pour le client hors ligne (IndexedDB)
+    const offlineData = filtered.map((s) => ({
       id: `${s.centerId}_${s.productId}`,
       centerId: s.centerId,
       productId: s.productId,
       quantity: Number(s.quantity),
       reservedQty: Number(s.reservedQty),
       version: s.version,
-      productName: s.product.name,
-      sellingPrice: Number(s.product.sellingPrice),
-      baseUnitSymbol: s.product.baseUnit.symbol,
     }));
 
-    return NextResponse.json({ success: true, data: filtered, offlineData: formattedForOffline });
+    return NextResponse.json({ success: true, data: filtered, offlineData });
   } catch (error) {
     return handleApiError(error, "STOCK");
   }
@@ -94,6 +99,8 @@ const adjustmentSchema = z.object({
   type: z.enum(Object.keys(MANUAL_TYPES) as [keyof typeof MANUAL_TYPES, ...(keyof typeof MANUAL_TYPES)[]]),
   quantity: z.coerce.number().refine((n) => n !== 0, "Quantité invalide"),
   reason: z.string().trim().min(3, "Motif obligatoire (min. 3 caractères)"),
+  /** Lot concerné : obligatoire pour les produits suivis par lot (ex. retrait d'un lot périmé). */
+  batchId: z.string().optional(),
 });
 
 // POST /api/stock — Mouvement de stock manuel (toujours justifié et historisé, cahier §8.4)
@@ -101,7 +108,7 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
     const companyId = requireCompany(user);
-    const { centerId, productId, type, quantity, reason } = parseBody(adjustmentSchema, await readJson(req));
+    const { centerId, productId, type, quantity, reason, batchId } = parseBody(adjustmentSchema, await readJson(req));
 
     const rule = MANUAL_TYPES[type];
     await requirePermission(user, rule.permission);
@@ -109,13 +116,25 @@ export async function POST(req: NextRequest) {
 
     const product = await prisma.product.findFirst({
       where: { id: productId, companyId },
-      select: { id: true, name: true, baseUnitId: true },
+      select: { id: true, name: true, baseUnitId: true, trackBatches: true, baseUnit: { select: { allowsDecimal: true, symbol: true } } },
     });
     if (!product) throw new ApiError(404, "Produit introuvable");
 
     // Quantité signée : sorties toujours négatives, entrées toujours positives
     const abs = new D(quantity).abs();
     const delta = rule.sign === "out" ? abs.negated() : rule.sign === "in" ? abs : new D(quantity);
+    if (!product.baseUnit.allowsDecimal && !delta.isInteger()) {
+      throw new ApiError(400, `Quantité entière attendue (${product.baseUnit.symbol})`, "INTEGER_QUANTITY");
+    }
+
+    // Produit suivi par lot : le lot doit être précisé, appartenir au produit et au centre
+    if (product.trackBatches && !batchId) {
+      throw new ApiError(400, "Précisez le lot concerné par ce mouvement", "BATCH_REQUIRED");
+    }
+    if (batchId) {
+      const batch = await prisma.batch.findFirst({ where: { id: batchId, productId, centerId }, select: { id: true } });
+      if (!batch) throw new ApiError(400, "Lot introuvable pour ce produit dans ce centre");
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       // S'assure que la ligne de stock existe (quantité 0 si nouvelle)
@@ -140,12 +159,26 @@ export async function POST(req: NextRequest) {
       }
       const stock = rows[0];
 
+      // Le lot suit le même mouvement (jamais négatif lui non plus)
+      if (batchId) {
+        if (delta.lt(0)) {
+          const updated = await tx.$queryRaw<{ id: string }[]>`
+            UPDATE "batches" SET "remainingQty" = "remainingQty" + ${delta.toString()}::numeric
+             WHERE "id" = ${batchId} AND "remainingQty" + ${delta.toString()}::numeric >= 0
+         RETURNING "id"`;
+          if (updated.length === 0) throw new ApiError(409, "Quantité supérieure à ce qui reste dans le lot", "INSUFFICIENT_BATCH");
+        } else {
+          await restoreBatch(tx, batchId, delta);
+        }
+      }
+
       const movement = await tx.stockMovement.create({
         data: {
           stockId: stock.id,
           type,
           quantity: delta,
           unitId: product.baseUnitId,
+          batchId: batchId ?? null,
           referenceType: "Manual",
           notes: reason,
           performedById: user.id,
@@ -164,7 +197,7 @@ export async function POST(req: NextRequest) {
           result: "SUCCESS",
           reason,
           oldValues: { quantity: new D(stock.quantity).sub(delta).toString() },
-          newValues: { quantity: new D(stock.quantity).toString(), delta: delta.toString(), type, productId },
+          newValues: { quantity: new D(stock.quantity).toString(), delta: delta.toString(), type, productId, batchId: batchId ?? null },
           ipAddress: user.ipAddress,
           userAgent: user.userAgent,
         },

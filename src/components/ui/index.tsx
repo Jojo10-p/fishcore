@@ -123,7 +123,7 @@ export function Alert({ tone = "red", children }: { tone?: "red" | "amber" | "gr
   return <div className={cn("rounded-lg border px-4 py-3 text-sm", styles)}>{children}</div>;
 }
 
-export function EmptyState({ icon = "🐟", title, children }: { icon?: string; title: string; children?: React.ReactNode }) {
+export function EmptyState({ icon = "📦", title, children }: { icon?: string; title: string; children?: React.ReactNode }) {
   return (
     <div className="text-center py-12 px-4">
       <div className="text-4xl mb-3">{icon}</div>

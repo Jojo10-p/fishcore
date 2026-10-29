@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // fishcore — Schéma Prisma (PostgreSQL via Supabase)
-// Modèle de données complet — Phase 1
+// Gestion commerciale multi-métiers : poissonnerie, quincaillerie, matériaux,
+// huile, supermarché, pharmacie… Le métier de l'entreprise (BusinessType)
+// fixe les réglages par défaut ; tout reste paramétrable par produit.
 // ═══════════════════════════════════════════════════════════════════
 
 generator client {
@@ -40,12 +42,27 @@ enum CashRegisterState {
   CLOSED
 }
 
-enum ProductType {
-  FRESH     // Frais
-  FROZEN    // Congelé
-  SMOKED    // Fumé
-  DRIED     // Séché
-  OTHER
+/// Métier de l'entreprise : fixe les unités, catégories et options proposées
+/// par défaut (voir src/lib/business-profiles.ts). Ne restreint rien.
+enum BusinessType {
+  GENERAL             // Commerce général
+  FISHMONGER          // Poissonnerie
+  HARDWARE            // Quincaillerie
+  BUILDING_MATERIALS  // Matériaux de construction (maçonnerie)
+  OIL_DISTRIBUTION    // Vente d'huile / produits liquides
+  SUPERMARKET         // Supermarché / alimentation générale
+  PHARMACY            // Pharmacie
+  WHOLESALE           // Grossiste / dépôt
+}
+
+/// Nature d'une unité : décide notamment si les quantités décimales ont un sens.
+enum UnitKind {
+  COUNT       // pièce, unité, boîte…
+  WEIGHT      // kg, g, tonne
+  VOLUME      // L, mL
+  LENGTH      // m, cm
+  AREA        // m²
+  PACKAGING   // carton, sac, bidon, palette…
 }
 
 enum StockMovementType {
@@ -140,6 +157,8 @@ enum AuditEventType {
   PRICE_CHANGED
   // Documents
   DOCUMENT_EXPORTED
+  // Entreprise
+  COMPANY_SETTINGS_CHANGED
   // Agences
   CENTER_CREATED
   INSTALL_LINK_GENERATED
@@ -182,6 +201,11 @@ model Company {
   // Paramètres
   currency        String    @default("XOF")
   timezone        String    @default("Africa/Porto-Novo")
+  businessType    BusinessType @default(GENERAL)
+
+  // Fiscalité : prix de vente affichés TTC ; la TVA est extraite du prix.
+  vatEnabled      Boolean   @default(false)
+  defaultTaxRate  Decimal   @db.Decimal(5, 2) @default(0)   // ex. 18.00 (TVA Bénin)
   invoicePrefix   String    @default("FACT")
   invoiceCounter  Int       @default(1)
 
@@ -194,6 +218,7 @@ model Company {
   centers         Center[]
   users           User[]
   products        Product[]
+  categories      Category[]
   suppliers       Supplier[]
   customers       Customer[]
   auditLogs       AuditLog[]
@@ -341,11 +366,23 @@ model Product {
   company         Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   name            String
-  internalCode    String?
-  barcode         String?
-  species         String?                        // Espèce (tilapia, carpe, etc.)
-  type            ProductType @default(FRESH)
+  internalCode    String?                        // Référence interne / SKU
+  barcode         String?                        // Code-barres de l'unité de base
+  brand           String?                        // Marque / fabricant / laboratoire
+  categoryId      String?
+  category        Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   description     String?
+  // Caractéristiques libres selon le métier : {"Espèce":"Tilapia"},
+  // {"Dosage":"500 mg","Forme":"Comprimé"}, {"Section":"12 mm"}…
+  attributes      Json?
+
+  // Options de suivi (préremplies par le profil métier, modifiables)
+  trackBatches         Boolean @default(false)  // Stock suivi par lot (FEFO à la vente)
+  requiresExpiry       Boolean @default(false)  // Date de péremption obligatoire à la réception
+  requiresPrescription Boolean @default(false)  // Rappel « sur ordonnance » à la caisse
+
+  // TVA applicable (en %, incluse dans le prix de vente)
+  taxRate         Decimal     @db.Decimal(5, 2) @default(0)
 
   // Unité principale
   baseUnitId      String
@@ -366,8 +403,25 @@ model Product {
   receiptLines    GoodsReceiptLine[]
   priceHistory    ProductPriceHistory[]
   unitConversions UnitConversion[]
+  batches         Batch[]
 
+  @@unique([companyId, barcode])
+  @@index([companyId, name])
   @@map("products")
+}
+
+/// Catégorie de produits propre à chaque entreprise (rayon, famille…)
+model Category {
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name        String
+  sortOrder   Int       @default(0)
+  products    Product[]
+
+  @@unique([companyId, name])
+  @@map("categories")
 }
 
 /// Unité de mesure
@@ -377,11 +431,14 @@ model Unit {
   name        String                             // "Kilogramme"
   symbol      String                             // "kg"
   isBaseUnit  Boolean   @default(false)
+  kind        UnitKind  @default(COUNT)
+  allowsDecimal Boolean @default(false)          // 1,25 kg oui ; 1,25 pièce non
 
   products        Product[]       @relation("ProductBaseUnit")
   conversionsFrom UnitConversion[] @relation("ConversionFrom")
   conversionsTo   UnitConversion[] @relation("ConversionTo")
 
+  @@unique([companyId, symbol])
   @@map("units")
 }
 
@@ -394,8 +451,13 @@ model UnitConversion {
   fromUnit    Unit      @relation("ConversionFrom", fields: [fromUnitId], references: [id])
   toUnitId    String
   toUnit      Unit      @relation("ConversionTo", fields: [toUnitId], references: [id])
-  factor      Decimal   @db.Decimal(12, 6)       // 1 fromUnit = factor toUnit
+  factor      Decimal   @db.Decimal(12, 6)       // 1 fromUnit = factor toUnit (unité de base du produit)
+  // Conditionnement vendable : prix propre (ex. carton de 12 moins cher que 12 pièces)
+  // et code-barres propre (ex. code du carton en supermarché).
+  sellingPrice Decimal? @db.Decimal(12, 2)
+  barcode     String?
 
+  @@unique([productId, fromUnitId])
   @@map("unit_conversions")
 }
 
@@ -486,15 +548,22 @@ model Batch {
   createdAt       DateTime  @default(now())
   receiptId       String?
   receipt         GoodsReceipt? @relation(fields: [receiptId], references: [id])
+  productId       String?
+  product         Product?  @relation(fields: [productId], references: [id])
+  centerId        String?
+  // Quantités dans l'unité de base du produit. remainingQty est décrémenté
+  // à chaque vente (premier périmé, premier sorti).
+  initialQty      Decimal?  @db.Decimal(12, 3)
+  remainingQty    Decimal   @db.Decimal(12, 3) @default(0)
   lotNumber       String?
-  cartonCount     Int?
+  packageCount    Int?
   grossWeight     Decimal?  @db.Decimal(12, 3)
-  netWeight       Decimal?  @db.Decimal(12, 3)
   receivedAt      DateTime  @default(now())
   expiresAt       DateTime?
   notes           String?
   movements       StockMovement[]
 
+  @@index([productId, centerId, expiresAt])
   @@map("batches")
 }
 
@@ -593,12 +662,14 @@ model GoodsReceiptLine {
   productId       String
   product         Product   @relation(fields: [productId], references: [id])
 
-  cartonCount     Int?
-  grossWeight     Decimal?  @db.Decimal(12, 3)
-  netWeight       Decimal   @db.Decimal(12, 3)
+  packageCount    Int?                         // Nombre de colis (cartons, sacs, bidons…)
+  grossWeight     Decimal?  @db.Decimal(12, 3) // Poids brut, si pertinent
+  quantity        Decimal   @db.Decimal(12, 3) // Quantité reçue dans l'unité de base
   unitId          String?
-  unitPrice       Decimal   @db.Decimal(12, 2)
+  unitPrice       Decimal   @db.Decimal(12, 2) // Coût par unité de base
   totalPrice      Decimal   @db.Decimal(12, 2)
+  lotNumber       String?
+  expiresAt       DateTime?
 
   @@map("goods_receipt_lines")
 }
@@ -749,7 +820,8 @@ model Sale {
 
   subtotal        Decimal     @db.Decimal(12, 2)
   discountAmount  Decimal     @db.Decimal(12, 2) @default(0)
-  totalAmount     Decimal     @db.Decimal(12, 2)
+  totalAmount     Decimal     @db.Decimal(12, 2)              // TTC
+  taxAmount       Decimal     @db.Decimal(12, 2) @default(0)  // TVA incluse dans le total
 
   notes           String?
 
@@ -781,7 +853,10 @@ model SaleLine {
   unitId        String?
   unitPrice     Decimal   @db.Decimal(12, 2)
   discount      Decimal   @db.Decimal(12, 2) @default(0)
-  lineTotal     Decimal   @db.Decimal(12, 2)
+  lineTotal     Decimal   @db.Decimal(12, 2)           // TTC
+  baseQuantity  Decimal   @db.Decimal(12, 3) @default(0) // Quantité sortie du stock (unité de base)
+  taxRate       Decimal   @db.Decimal(5, 2) @default(0)
+  taxAmount     Decimal   @db.Decimal(12, 2) @default(0)
 
   @@map("sale_lines")
 }

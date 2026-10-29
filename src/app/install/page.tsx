@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 interface InstallConfig {
@@ -22,15 +21,11 @@ export default function InstallPage({
 }: {
   searchParams: Promise<{ token?: string }>;
 }) {
-  return <InstallClientPage searchParams={searchParams} />;
+  void searchParams; // le jeton est lu côté client (window.location)
+  return <InstallClientPage />;
 }
 
-function InstallClientPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ token?: string }>;
-}) {
-  const router = useRouter();
+function InstallClientPage() {
   const [step, setStep] = useState<InstallStep>("verifying");
   const [config, setConfig] = useState<InstallConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -129,7 +124,7 @@ function InstallClientPage({
                 <img src={config.logoUrl} alt={config.companyName} className="w-16 h-16 rounded-xl mx-auto mb-3 object-contain shadow" />
               ) : (
                 <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-2xl mb-3 shadow-lg">
-                  <span className="text-2xl">🐟</span>
+                  <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
                 </div>
               )}
               <h1 className="text-xl font-bold text-gray-900">{config.companyName}</h1>
@@ -156,7 +151,7 @@ function InstallClientPage({
             </div>
 
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-6 text-xs text-blue-700">
-              ℹ️ Ce lien est à usage unique. Une fois installé, les paramètres de l'agence seront
+              ℹ️ Ce lien est à usage unique. Une fois installé, les paramètres de l&apos;agence seront
               synchronisés automatiquement depuis le portail principal.
             </div>
 
@@ -175,7 +170,7 @@ function InstallClientPage({
             <div className="text-4xl mb-4 animate-bounce">⚙️</div>
             <h2 className="text-lg font-semibold text-gray-900">Installation en cours…</h2>
             <p className="text-sm text-gray-500 mt-2">
-              Configuration de l'agence et synchronisation des données.
+              Configuration de l&apos;agence et synchronisation des données.
             </p>
           </div>
         )}
@@ -186,7 +181,7 @@ function InstallClientPage({
             <div className="text-5xl mb-4">✅</div>
             <h2 className="text-xl font-bold text-gray-900">Installation réussie !</h2>
             <p className="text-sm text-gray-500 mt-2 mb-6">
-              L'agence est configurée. Connectez-vous pour commencer.
+              L&apos;agence est configurée. Connectez-vous pour commencer.
             </p>
             <Link
               href="/login"
@@ -204,7 +199,7 @@ function InstallClientPage({
             <h2 className="text-lg font-semibold text-gray-900">Lien invalide</h2>
             <p className="text-sm text-red-600 mt-2">{error}</p>
             <p className="text-xs text-gray-500 mt-3">
-              Demandez un nouveau lien d'installation à votre administrateur.
+              Demandez un nouveau lien d&apos;installation à votre administrateur.
             </p>
           </div>
         )}

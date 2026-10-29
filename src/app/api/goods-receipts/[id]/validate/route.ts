@@ -11,7 +11,8 @@ import {
 } from "@/lib/auth";
 
 // POST /api/goods-receipts/[id]/validate — Valider une réception : c'est ici, et
-// seulement ici, que le stock augmente (cahier §8.3).
+// seulement ici, que le stock augmente (cahier §8.3). Chaque ligne crée un lot
+// (numéro, péremption, quantité restante) utilisé ensuite par les ventes.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await getCurrentUser(req);
@@ -21,12 +22,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const receipt = await prisma.goodsReceipt.findFirst({
       where: { id, center: { companyId } },
-      include: { lines: true, center: { select: { companyId: true } } },
+      include: {
+        lines: { include: { product: { select: { name: true, trackBatches: true, requiresExpiry: true, baseUnitId: true } } } },
+      },
     });
     if (!receipt) throw new ApiError(404, "Réception introuvable");
     await requireCenterAccess(user, receipt.centerId);
     if (receipt.isValidated) throw new ApiError(409, "Réception déjà validée", "ALREADY_VALIDATED");
     if (receipt.lines.length === 0) throw new ApiError(400, "Réception sans ligne");
+
+    // Péremption obligatoire (pharmacie, alimentaire…) et jamais déjà dépassée
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    for (const line of receipt.lines) {
+      if (line.product.requiresExpiry && !line.expiresAt) {
+        throw new ApiError(400, `Date de péremption obligatoire pour « ${line.product.name} »`, "EXPIRY_REQUIRED");
+      }
+      if (line.expiresAt && line.expiresAt < today) {
+        throw new ApiError(400, `Le lot de « ${line.product.name} » est déjà périmé`, "ALREADY_EXPIRED");
+      }
+    }
 
     await prisma.$transaction(async (tx) => {
       // Validation conditionnelle : deux validations simultanées ne peuvent pas
@@ -40,16 +55,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       for (const line of receipt.lines) {
         const stock = await tx.stock.upsert({
           where: { centerId_productId: { centerId: receipt.centerId, productId: line.productId } },
-          create: { centerId: receipt.centerId, productId: line.productId, quantity: line.netWeight },
-          update: { quantity: { increment: line.netWeight }, version: { increment: 1 } },
+          create: { centerId: receipt.centerId, productId: line.productId, quantity: line.quantity },
+          update: { quantity: { increment: line.quantity }, version: { increment: 1 } },
         });
 
         const batch = await tx.batch.create({
           data: {
             receiptId: id,
-            cartonCount: line.cartonCount,
+            productId: line.productId,
+            centerId: receipt.centerId,
+            lotNumber: line.lotNumber,
+            expiresAt: line.expiresAt,
+            packageCount: line.packageCount,
             grossWeight: line.grossWeight,
-            netWeight: line.netWeight,
+            initialQty: line.quantity,
+            remainingQty: line.quantity,
             receivedAt: receipt.receivedAt,
           },
         });
@@ -58,8 +78,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           data: {
             stockId: stock.id,
             type: "RECEPTION",
-            quantity: line.netWeight,
-            unitId: line.unitId ?? undefined,
+            quantity: line.quantity,
+            unitId: line.unitId ?? line.product.baseUnitId,
             batchId: batch.id,
             referenceType: "GoodsReceipt",
             referenceId: id,
@@ -79,8 +99,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           referenceId: id,
           result: "SUCCESS",
           newValues: {
-            linesCount: receipt.lines.length,
-            totalNetWeight: receipt.lines.reduce((s, l) => s + Number(l.netWeight), 0),
+            lines: receipt.lines.map((l) => ({
+              productId: l.productId,
+              quantity: l.quantity.toString(),
+              lotNumber: l.lotNumber,
+              expiresAt: l.expiresAt?.toISOString() ?? null,
+            })),
           },
           ipAddress: user.ipAddress,
           userAgent: user.userAgent,

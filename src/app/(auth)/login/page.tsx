@@ -64,7 +64,7 @@ function LoginForm() {
       {/* Logo / En-tête */}
       <div className="text-center mb-8">
         <div className="inline-flex items-center justify-center w-14 h-14 bg-blue-600 rounded-2xl mb-4 shadow-lg">
-          <span className="text-2xl">🐟</span>
+          <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
         </div>
         <h1 className="text-2xl font-bold text-gray-900">Connexion</h1>
         <p className="text-sm text-gray-500 mt-1">

@@ -58,12 +58,14 @@ export async function POST(req: NextRequest) {
         lines: {
           create: data.lines.map((line) => ({
             productId: line.productId,
-            cartonCount: line.cartonCount,
+            packageCount: line.packageCount,
             grossWeight: line.grossWeight,
-            netWeight: line.netWeight,
+            quantity: line.quantity,
             unitId: line.unitId,
             unitPrice: line.unitPrice,
             totalPrice: line.totalPrice,
+            lotNumber: line.lotNumber || null,
+            expiresAt: line.expiresAt ?? null,
           })),
         },
       },
@@ -94,7 +96,7 @@ export async function GET(req: NextRequest) {
         ...(validated !== null ? { isValidated: validated === "true" } : {}),
       },
       include: {
-        lines: { include: { product: { select: { name: true } } } },
+        lines: { include: { product: { select: { name: true, baseUnit: { select: { symbol: true } } } } } },
         supplier: { select: { name: true } },
       },
       orderBy: { createdAt: "desc" },

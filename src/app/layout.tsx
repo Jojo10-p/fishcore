@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/pwa/service-worker-register";
+import { APP_NAME, APP_TAGLINE } from "@/lib/app-config";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,10 +15,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: { default: "fishcore", template: "%s · fishcore" },
-  description: "Gestion intégrée des poissonneries : caisse, stocks, ventes et pilotage multi-centres.",
-  applicationName: "fishcore",
-  appleWebApp: { capable: true, title: "fishcore", statusBarStyle: "default" },
+  title: { default: APP_NAME, template: `%s · ${APP_NAME}` },
+  description: APP_TAGLINE,
+  applicationName: APP_NAME,
+  appleWebApp: { capable: true, title: APP_NAME, statusBarStyle: "default" },
   icons: { icon: "/icons/icon.svg", apple: "/icons/icon-192.png" },
 };
 

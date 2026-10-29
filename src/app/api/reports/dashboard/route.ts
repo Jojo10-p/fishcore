@@ -77,7 +77,14 @@ export async function GET(req: NextRequest) {
             : Prisma.sql`AND FALSE`
           : Prisma.empty;
 
-    const [salesStats, daySales, lowStockRows, openSessions, recentSales] = await Promise.all([
+    // Lots à surveiller : périmés encore en stock, et péremption sous 30 jours
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const soon = new Date(today.getTime() + 30 * 24 * 3600 * 1000);
+    const batchCenter = centerScope ? { centerId: centerScope } : { centerId: { not: null } };
+    const batchBase = { remainingQty: { gt: 0 }, product: { companyId }, ...batchCenter };
+
+    const [salesStats, daySales, lowStockRows, openSessions, recentSales, expiredBatches, expiringBatches] = await Promise.all([
       prisma.sale.aggregate({ where: saleWhere, _sum: { totalAmount: true }, _count: { id: true } }),
 
       prisma.sale.findMany({ where: saleWhere, select: { createdAt: true, totalAmount: true } }),
@@ -106,6 +113,9 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: "desc" },
         take: 10,
       }),
+
+      prisma.batch.count({ where: { ...batchBase, expiresAt: { lt: today } } }),
+      prisma.batch.count({ where: { ...batchBase, expiresAt: { gte: today, lte: soon } } }),
     ]);
 
     // CA par heure locale (24 tranches) calculé sur TOUTES les ventes du jour
@@ -131,6 +141,8 @@ export async function GET(req: NextRequest) {
           revenue: Number(salesStats._sum.totalAmount ?? 0),
         },
         lowStockCount: Number(lowStockRows[0]?.count ?? 0),
+        expiredBatches,
+        expiringBatches,
         openSessions,
         recentSales,
         hourlyRevenue,

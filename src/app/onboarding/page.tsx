@@ -17,7 +17,6 @@ export default function OnboardingPage() {
   const [step, setStep] = useState<"center" | "products" | "done">("center");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [centerId, setCenterId] = useState<string | null>(null);
 
   const { register, handleSubmit, formState: { errors } } = useForm<OnboardingData>({
     defaultValues: { centerCity: "Cotonou", centerCode: "SIEG" },
@@ -47,7 +46,6 @@ export default function OnboardingPage() {
         return;
       }
 
-      setCenterId(result.data.id);
       setStep("done");
     } catch {
       setError("Erreur réseau. Vérifiez votre connexion.");

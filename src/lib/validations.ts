@@ -44,6 +44,9 @@ export const companySchema = z.object({
   currency: z.string().default("XOF"),
   timezone: z.string().default("Africa/Porto-Novo"),
   invoicePrefix: z.string().default("FACT"),
+  businessType: z
+    .enum(["GENERAL", "FISHMONGER", "HARDWARE", "BUILDING_MATERIALS", "OIL_DISTRIBUTION", "SUPERMARKET", "PHARMACY", "WHOLESALE"])
+    .default("GENERAL"),
   password: z
     .string()
     .min(8, "Mot de passe : min. 8 caractères")
@@ -97,17 +100,37 @@ export const createUserSchema = z.object({
 // PRODUIT
 // ─────────────────────────────────────────────
 
+/** Conditionnement vendable : 1 <unité> = factor × unité de base du produit. */
+export const packagingSchema = z.object({
+  unitId: z.string().min(1, "Unité du conditionnement requise"),
+  factor: z.coerce.number().positive("Contenance invalide"),
+  sellingPrice: z.coerce.number().min(0).optional().nullable(),
+  barcode: z.string().trim().optional().nullable(),
+});
+
+/** Caractéristiques libres : { "Dosage": "500 mg", "Espèce": "Tilapia" } */
+export const attributesSchema = z
+  .record(z.string().trim().min(1).max(40), z.string().trim().max(120))
+  .refine((r) => Object.keys(r).length <= 20, "20 caractéristiques au maximum");
+
 export const productSchema = z.object({
-  name: z.string().min(1, "Nom du produit requis"),
-  internalCode: z.string().optional(),
-  barcode: z.string().optional(),
-  species: z.string().optional(),
-  type: z.enum(["FRESH", "FROZEN", "SMOKED", "DRIED", "OTHER"]),
+  name: z.string().trim().min(1, "Nom du produit requis"),
+  internalCode: z.string().trim().optional(),
+  barcode: z.string().trim().optional(),
+  brand: z.string().trim().optional(),
+  categoryId: z.string().optional().nullable(),
   baseUnitId: z.string().min(1, "Unité principale requise"),
   purchasePrice: z.coerce.number().min(0),
   sellingPrice: z.coerce.number().min(0),
   stockAlertQty: z.coerce.number().min(0),
   description: z.string().optional(),
+  attributes: attributesSchema.optional(),
+  // Non fournis → valeurs par défaut du profil métier de l'entreprise
+  trackBatches: z.boolean().optional(),
+  requiresExpiry: z.boolean().optional(),
+  requiresPrescription: z.boolean().optional(),
+  taxRate: z.coerce.number().min(0).max(100).optional(),
+  packagings: z.array(packagingSchema).max(10).optional(),
 });
 
 // ─────────────────────────────────────────────
@@ -161,12 +184,14 @@ export const closeSessionSchema = z.object({
 
 export const goodsReceiptLineSchema = z.object({
   productId: z.string().min(1, "Produit requis"),
-  cartonCount: z.coerce.number().int().optional(),
-  grossWeight: z.coerce.number().optional(),
-  netWeight: z.coerce.number().positive("Poids net invalide"),
+  packageCount: z.coerce.number().int().min(0).optional(),
+  grossWeight: z.coerce.number().min(0).optional(),
+  quantity: z.coerce.number().positive("Quantité reçue invalide"), // unité de base
   unitId: z.string().optional(),
   unitPrice: z.coerce.number().min(0),
   totalPrice: z.coerce.number().min(0),
+  lotNumber: z.string().trim().max(60).optional(),
+  expiresAt: z.coerce.date().optional(),
 });
 
 export const goodsReceiptSchema = z.object({

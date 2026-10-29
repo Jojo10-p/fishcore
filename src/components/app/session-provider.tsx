@@ -3,10 +3,19 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { Permission } from "@/lib/rbac";
 import { apiGet } from "@/lib/client/api";
+import { getBusinessProfile, type BusinessProfile } from "@/lib/business-profiles";
 
 export interface SessionData {
   user: { id: string; email: string; firstName: string; lastName: string; role: string; avatarUrl?: string | null };
-  company: { id: string; tradeName: string; logoUrl?: string | null; currency: string; timezone: string } | null;
+  company: {
+    id: string;
+    tradeName: string;
+    logoUrl?: string | null;
+    currency: string;
+    timezone: string;
+    businessType: string;
+    vatEnabled: boolean;
+  } | null;
   centers: Array<{ id: string; name: string; code: string; status: string }>;
   permissions: Permission[];
 }
@@ -20,6 +29,8 @@ interface SessionContextValue {
   setCenterId: (id: string) => void;
   can: (permission: Permission) => boolean;
   currency: string;
+  /** Réglages du métier de l'entreprise (libellés, unités, options par défaut). */
+  profile: BusinessProfile;
   refresh: () => Promise<void>;
 }
 
@@ -92,6 +103,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setCenterId,
       can: (p) => session?.permissions.includes(p) ?? false,
       currency: session?.company?.currency ?? "XOF",
+      profile: getBusinessProfile(session?.company?.businessType),
       refresh,
     }),
     [session, fromCache, loading, centerId, setCenterId, refresh]

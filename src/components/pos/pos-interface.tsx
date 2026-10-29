@@ -1,28 +1,46 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { getOfflineDB, type OfflineProduct } from "@/lib/offline/db";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getOfflineDB, type OfflinePackaging, type OfflineProduct } from "@/lib/offline/db";
 import { createOfflineSale } from "@/lib/offline/sales";
-import { generateIdempotencyKey, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, generateIdempotencyKey } from "@/lib/utils";
 
 // ─────────────────────────────────────────────
-// Types
+// Caisse — tous métiers (cahier §9.1)
 // ─────────────────────────────────────────────
+// - Douchette : un code-barres suivi de « Entrée » ajoute l'article (ou son
+//   conditionnement : carton, pack, boîte…) au panier.
+// - Vente à l'unité de base (kg, L, m, pièce…) ou par conditionnement à prix propre.
+// - Quantités décimales uniquement pour les unités qui s'y prêtent.
+// Le serveur recalcule tout (prix, stock, TVA) : l'écran n'est jamais la référence.
+
+type PaymentMethod = "CASH" | "MOBILE_MONEY" | "CARD" | "TRANSFER" | "CREDIT";
 
 interface CartItem {
+  key: string; // produit + unité vendue
   productId: string;
   productName: string;
+  unitId: string;
+  unitSymbol: string;
+  factor: number; // unités de base par unité vendue
+  allowsDecimal: boolean;
   quantity: number;
-  unitId?: string;
   unitPrice: number;
   discount: number;
-  lineTotal: number;
+  taxRate: number;
+  requiresPrescription: boolean;
 }
 
 interface PaymentEntry {
-  method: "CASH" | "MOBILE_MONEY" | "CARD" | "TRANSFER" | "CREDIT";
+  method: PaymentMethod;
   amount: number;
   reference?: string;
+}
+
+interface Customer {
+  id: string;
+  name: string;
+  phone: string | null;
 }
 
 interface POSContextProps {
@@ -37,9 +55,17 @@ interface POSContextProps {
   catalogVersion?: number;
 }
 
-// ─────────────────────────────────────────────
-// Composant principal Point de Vente
-// ─────────────────────────────────────────────
+const METHODS: Record<PaymentMethod, string> = {
+  CASH: "Espèces",
+  MOBILE_MONEY: "Mobile money",
+  CARD: "Carte",
+  TRANSFER: "Virement",
+  CREDIT: "Crédit client",
+};
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const lineTotal = (i: CartItem) => round2(i.quantity * i.unitPrice - i.discount * i.quantity);
+const fmtQty = (n: number) => n.toLocaleString("fr-FR", { maximumFractionDigits: 3 });
 
 export default function POSInterface({
   sessionId,
@@ -52,138 +78,177 @@ export default function POSInterface({
 }: POSContextProps) {
   const [products, setProducts] = useState<OfflineProduct[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [search, setSearch] = useState("");
+  const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
+  const [showPayment, setShowPayment] = useState(false);
+  const [showCartMobile, setShowCartMobile] = useState(false);
+  const [payments, setPayments] = useState<PaymentEntry[]>([{ method: "CASH", amount: 0 }]);
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [notification, setNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   // Une clé d'idempotence par vente (et non par clic) : si la connexion coupe
   // après l'enregistrement côté serveur, le nouvel essai ne crée pas de doublon.
   const saleKeyRef = useRef<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [isOnline, setIsOnline] = useState(
-    typeof navigator !== "undefined" ? navigator.onLine : true
-  );
-  const [showPayment, setShowPayment] = useState(false);
-  const [payments, setPayments] = useState<PaymentEntry[]>([
-    { method: "CASH", amount: 0 },
-  ]);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [lastSaleId, setLastSaleId] = useState<string | null>(null);
-  const [notification, setNotification] = useState<{
-    type: "success" | "error";
-    message: string;
-  } | null>(null);
 
-  // Charger produits depuis IndexedDB
+  const fmt = useCallback((n: number) => formatCurrency(n, currency), [currency]);
+
   useEffect(() => {
-    const db = getOfflineDB();
-    // Les booléens ne sont pas indexables dans IndexedDB : filtre en mémoire
-    db.products
-      .filter((p) => p.isActive)
+    getOfflineDB()
+      .products.filter((p) => p.isActive) // les booléens ne sont pas indexables dans IndexedDB
       .toArray()
-      .then(setProducts);
+      .then((list) => setProducts(list.sort((a, b) => a.name.localeCompare(b.name))));
   }, [catalogVersion]);
 
-  // Connectivité
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
+    const on = () => setIsOnline(true);
+    const off = () => setIsOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
     return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
     };
   }, []);
 
-  // Filtrer produits
+  useEffect(() => {
+    if (!notification) return;
+    const t = setTimeout(() => setNotification(null), 4000);
+    return () => clearTimeout(t);
+  }, [notification]);
+
+  // Index code-barres → (produit, conditionnement)
+  const barcodeIndex = useMemo(() => {
+    const map = new Map<string, { product: OfflineProduct; packaging?: OfflinePackaging }>();
+    for (const p of products) {
+      if (p.barcode) map.set(p.barcode, { product: p });
+      for (const pk of p.packagings ?? []) if (pk.barcode) map.set(pk.barcode, { product: p, packaging: pk });
+    }
+    return map;
+  }, [products]);
+
   const filteredProducts = useMemo(() => {
-    const q = search.toLowerCase();
+    const q = search.trim().toLowerCase();
+    if (!q) return products;
     return products.filter(
       (p) =>
         p.name.toLowerCase().includes(q) ||
         p.internalCode?.toLowerCase().includes(q) ||
         p.barcode?.includes(q) ||
-        p.species?.toLowerCase().includes(q)
+        p.brand?.toLowerCase().includes(q) ||
+        p.categoryName?.toLowerCase().includes(q) ||
+        Object.values(p.attributes ?? {}).some((v) => v.toLowerCase().includes(q))
     );
   }, [products, search]);
 
-  // Totaux panier
-  const cartTotals = useMemo(() => {
-    const subtotal = cart.reduce((s, i) => s + i.lineTotal, 0);
-    const discount = cart.reduce((s, i) => s + i.discount * i.quantity, 0);
-    return { subtotal, discount, total: subtotal - discount };
+  const totals = useMemo(() => {
+    const total = round2(cart.reduce((s, i) => s + lineTotal(i), 0));
+    const discount = round2(cart.reduce((s, i) => s + i.discount * i.quantity, 0));
+    const tax = round2(cart.reduce((s, i) => s + (i.taxRate > 0 ? (lineTotal(i) * i.taxRate) / (100 + i.taxRate) : 0), 0));
+    return { subtotal: round2(total + discount), discount, total, tax };
   }, [cart]);
 
-  // Ajouter au panier
-  const addToCart = useCallback((product: OfflineProduct) => {
+  const addToCart = useCallback((product: OfflineProduct, packaging?: OfflinePackaging, qty = 1) => {
+    const unitId = packaging?.unitId ?? product.baseUnitId;
+    const key = `${product.id}:${unitId}`;
     setCart((prev) => {
-      const existing = prev.find((i) => i.productId === product.id);
-      if (existing) {
-        return prev.map((i) =>
-          i.productId === product.id
-            ? { ...i, quantity: i.quantity + 1, lineTotal: (i.quantity + 1) * i.unitPrice - i.discount * (i.quantity + 1) }
-            : i
-        );
-      }
+      const existing = prev.find((i) => i.key === key);
+      if (existing) return prev.map((i) => (i.key === key ? { ...i, quantity: round2(i.quantity + qty) } : i));
       return [
         ...prev,
         {
+          key,
           productId: product.id,
           productName: product.name,
-          quantity: 1,
-          unitId: product.baseUnitId,
-          unitPrice: product.sellingPrice,
+          unitId,
+          unitSymbol: packaging?.symbol ?? product.baseUnitSymbol,
+          factor: packaging?.factor ?? 1,
+          allowsDecimal: packaging ? false : product.allowsDecimal,
+          quantity: qty,
+          unitPrice: packaging?.sellingPrice ?? product.sellingPrice,
           discount: 0,
-          lineTotal: product.sellingPrice,
+          taxRate: product.taxRate ?? 0,
+          requiresPrescription: product.requiresPrescription,
         },
       ];
     });
   }, []);
 
-  // Modifier quantité
-  const updateQuantity = useCallback((productId: string, qty: number) => {
-    if (qty <= 0) {
-      setCart((prev) => prev.filter((i) => i.productId !== productId));
-      return;
-    }
+  const setQuantity = useCallback((key: string, qty: number) => {
     setCart((prev) =>
-      prev.map((i) =>
-        i.productId === productId
-          ? { ...i, quantity: qty, lineTotal: qty * i.unitPrice - i.discount * qty }
-          : i
-      )
+      qty <= 0
+        ? prev.filter((i) => i.key !== key)
+        : prev.map((i) => (i.key === key ? { ...i, quantity: i.allowsDecimal ? round2(qty) : Math.round(qty) } : i))
     );
   }, []);
 
-  // Supprimer du panier
-  const removeFromCart = useCallback((productId: string) => {
-    setCart((prev) => prev.filter((i) => i.productId !== productId));
-  }, []);
-
-  // Valider la vente
-  const handleValidateSale = async () => {
-    if (cart.length === 0) return;
-    const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
-    if (totalPaid < cartTotals.total) {
-      setNotification({ type: "error", message: "Montant payé insuffisant" });
+  // Douchette / saisie : « Entrée » sur un code exact ajoute directement l'article
+  const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    const code = search.trim();
+    if (!code) return;
+    const hit = barcodeIndex.get(code);
+    if (hit) {
+      addToCart(hit.product, hit.packaging);
+      setSearch("");
       return;
     }
+    if (filteredProducts.length === 1) {
+      addToCart(filteredProducts[0]);
+      setSearch("");
+      return;
+    }
+    setNotification({ type: "error", message: `Aucun article pour « ${code} »` });
+  };
 
+  const paid = round2(payments.reduce((s, p) => s + (p.amount || 0), 0));
+  const change = Math.max(0, round2(paid - totals.total));
+  const needsCustomer = payments.some((p) => p.method === "CREDIT" && p.amount > 0);
+  const cashPaid = payments.filter((p) => p.method === "CASH").reduce((s, p) => s + p.amount, 0);
+  const paymentError =
+    paid < totals.total
+      ? `Il manque ${fmt(totals.total - paid)}`
+      : change > cashPaid
+        ? "Le rendu de monnaie n'est possible que sur les espèces"
+        : needsCustomer && !customer
+          ? "Choisissez le client pour une vente à crédit"
+          : needsCustomer && !isOnline
+            ? "La vente à crédit nécessite une connexion"
+            : null;
+
+  const resetSale = () => {
+    saleKeyRef.current = null;
+    setCart([]);
+    setPayments([{ method: "CASH", amount: 0 }]);
+    setCustomer(null);
+    setShowPayment(false);
+    setShowCartMobile(false);
+    searchRef.current?.focus();
+  };
+
+  const handleValidateSale = async () => {
+    if (cart.length === 0 || paymentError) return;
     setIsProcessing(true);
+    const idempotencyKey = (saleKeyRef.current ??= generateIdempotencyKey("sale"));
+    const lines = cart.map((i) => ({
+      productId: i.productId,
+      productName: i.productName,
+      quantity: i.quantity,
+      baseQuantity: round2(i.quantity * i.factor * 1000) / 1000,
+      unitId: i.unitId,
+      unitSymbol: i.unitSymbol,
+      unitPrice: i.unitPrice,
+      discount: i.discount,
+      lineTotal: lineTotal(i),
+    }));
+    const cleanPayments = payments.filter((p) => p.amount > 0);
+
     try {
       let saleId: string;
       let recordedOffline = !isOnline;
-      // Même clé en ligne et en repli hors ligne : si la requête est arrivée au
-      // serveur avant la coupure, la synchronisation ne créera pas de doublon.
-      const idempotencyKey = (saleKeyRef.current ??= generateIdempotencyKey("sale"));
 
       const saveOffline = async () => {
-        const result = await createOfflineSale({
-          sessionId,
-          cashierId,
-          centerId,
-          companyId,
-          lines: cart,
-          payments,
-          idempotencyKey,
-        });
+        const result = await createOfflineSale({ sessionId, cashierId, centerId, companyId, lines, payments: cleanPayments, idempotencyKey });
         if (!result.success) throw new Error(result.error);
         return result.saleId!;
       };
@@ -194,12 +259,20 @@ export default function POSInterface({
           res = await fetch("/api/sales", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sessionId, lines: cart, payments, idempotencyKey, createdOffline: false }),
+            body: JSON.stringify({
+              sessionId,
+              lines,
+              payments: cleanPayments,
+              customerId: customer?.id,
+              idempotencyKey,
+              createdOffline: false,
+            }),
           });
         } catch {
           res = null; // réseau injoignable alors que le navigateur se croit en ligne
         }
         if (res === null || res.status >= 502) {
+          if (needsCustomer) throw new Error("Connexion perdue : la vente à crédit n'a pas pu être enregistrée");
           saleId = await saveOffline();
           recordedOffline = true;
         } else {
@@ -211,301 +284,433 @@ export default function POSInterface({
         saleId = await saveOffline();
       }
 
-      setLastSaleId(saleId);
       onSaleRecorded?.({ id: saleId, offline: recordedOffline });
-      saleKeyRef.current = null;
-      setCart([]);
-      setPayments([{ method: "CASH", amount: 0 }]);
-      setShowPayment(false);
       setNotification({
         type: "success",
         message: recordedOffline
           ? "Vente enregistrée sur cet appareil — en attente d'envoi au serveur"
-          : "Vente enregistrée",
+          : `Vente enregistrée${change > 0 ? ` — rendre ${fmt(change)}` : ""}`,
       });
+      resetSale();
     } catch (err) {
-      setNotification({
-        type: "error",
-        message: err instanceof Error ? err.message : "Erreur lors de la vente",
-      });
+      setNotification({ type: "error", message: err instanceof Error ? err.message : "Erreur lors de la vente" });
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Auto-dismiss notification
-  useEffect(() => {
-    if (notification) {
-      const t = setTimeout(() => setNotification(null), 4000);
-      return () => clearTimeout(t);
-    }
-  }, [notification]);
+  const cartCount = cart.length;
 
   return (
-    <div className="flex h-full min-h-0 bg-gray-50 overflow-hidden">
-      {/* NOTIFICATION */}
+    <div className="flex h-full min-h-0 flex-col md:flex-row bg-gray-50 overflow-hidden">
       {notification && (
         <div
-          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[90vw] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all ${
+          role="status"
+          className={cn(
+            "fixed bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[90vw] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium",
             notification.type === "success" ? "bg-green-600" : "bg-red-600"
-          }`}
+          )}
         >
           {notification.message}
         </div>
       )}
 
-      {/* ── GAUCHE : Catalogue produits ── */}
-      <div className="flex-1 flex flex-col border-r border-gray-200">
-        {/* Barre de recherche */}
-        <div className="p-4 bg-white border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <div className="flex-1 relative">
-              <input
-                type="text"
-                placeholder="Rechercher un produit (nom, code, espèce)..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                🔍
-              </span>
-            </div>
-            {/* Indicateur connexion */}
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${
-              isOnline ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-            }`}>
-              <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-red-500"}`} />
-              {isOnline ? "En ligne" : "Hors ligne"}
-            </div>
+      {/* ── Catalogue ── */}
+      <section className="flex-1 min-h-0 flex flex-col md:border-r border-gray-200">
+        <div className="p-3 sm:p-4 bg-white border-b border-gray-200">
+          <div className="relative">
+            <input
+              ref={searchRef}
+              autoFocus
+              type="search"
+              inputMode="search"
+              placeholder="Scanner un code-barres ou rechercher (nom, référence, marque…)"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={onSearchKey}
+              className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" aria-hidden>
+              ⌕
+            </span>
           </div>
+          <p className={cn("mt-2 text-xs", isOnline ? "text-gray-400" : "text-red-600 font-medium")}>
+            {isOnline ? "Connecté — ventes envoyées immédiatement" : "Hors connexion — ventes limitées à la réserve de cette caisse"}
+          </p>
         </div>
 
-        {/* Grille produits */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4">
           {filteredProducts.length === 0 ? (
-            <div className="text-center text-gray-400 py-16">
-              <div className="text-4xl mb-2">🐟</div>
-              <p className="text-sm">
-                {search ? "Aucun produit trouvé" : "Aucun produit disponible"}
-              </p>
+            <div className="text-center text-gray-400 py-16 text-sm">
+              {search ? "Aucun article trouvé" : "Aucun article. Le catalogue se charge à la première connexion."}
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {filteredProducts.map((product) => (
-                <button
-                  key={product.id}
-                  onClick={() => addToCart(product)}
-                  className="bg-white border border-gray-200 rounded-xl p-3 text-left hover:border-blue-400 hover:shadow-md transition-all active:scale-95"
-                >
-                  <div className="text-2xl mb-1">
-                    {product.type === "FRESH" ? "🐟" :
-                     product.type === "FROZEN" ? "🧊" :
-                     product.type === "SMOKED" ? "🔥" : "🐠"}
-                  </div>
-                  <p className="font-medium text-gray-900 text-sm leading-tight">{product.name}</p>
-                  {product.species && (
-                    <p className="text-xs text-gray-500 mt-0.5">{product.species}</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-3">
+              {filteredProducts.map((p) => (
+                <div key={p.id} className="bg-white border border-gray-200 rounded-xl p-3 flex flex-col">
+                  <button onClick={() => addToCart(p)} className="text-left flex-1 active:scale-[0.98] transition-transform">
+                    <p className="font-medium text-gray-900 text-sm leading-tight">{p.name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5 truncate">
+                      {[p.brand, p.categoryName, ...Object.values(p.attributes ?? {}).slice(0, 2)].filter(Boolean).join(" · ") || " "}
+                    </p>
+                    <p className="text-blue-700 font-bold text-sm mt-1">
+                      {fmt(p.sellingPrice)}
+                      <span className="text-gray-400 font-normal"> / {p.baseUnitSymbol}</span>
+                    </p>
+                    {p.requiresPrescription && <p className="text-[11px] text-amber-700 mt-0.5">Sur ordonnance</p>}
+                  </button>
+                  {(p.packagings ?? []).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {p.packagings.map((pk) => (
+                        <button
+                          key={pk.unitId}
+                          onClick={() => addToCart(p, pk)}
+                          className="text-[11px] rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-blue-800 hover:bg-blue-100"
+                          title={`1 ${pk.name} = ${fmtQty(pk.factor)} ${p.baseUnitSymbol}`}
+                        >
+                          {pk.symbol} ×{fmtQty(pk.factor)} · {fmt(pk.sellingPrice)}
+                        </button>
+                      ))}
+                    </div>
                   )}
-                  <p className="text-blue-600 font-bold text-sm mt-1">
-                    {formatCurrency(product.sellingPrice, currency)}
-                    <span className="text-gray-400 font-normal">/{product.baseUnitSymbol}</span>
-                  </p>
-                  {product.internalCode && (
-                    <p className="text-xs text-gray-400 mt-0.5">{product.internalCode}</p>
-                  )}
-                </button>
+                </div>
               ))}
             </div>
           )}
         </div>
-      </div>
+      </section>
 
-      {/* ── DROITE : Panier ── */}
-      <div className="w-96 flex flex-col bg-white">
-        {/* En-tête panier */}
-        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+      {/* Barre panier (téléphone) */}
+      <button
+        onClick={() => setShowCartMobile((v) => !v)}
+        className="md:hidden flex items-center justify-between bg-blue-600 text-white px-4 py-3 text-sm font-semibold"
+      >
+        <span>Panier ({cartCount})</span>
+        <span>{fmt(totals.total)}</span>
+      </button>
+
+      {/* ── Panier ── */}
+      <aside
+        className={cn(
+          "bg-white flex-col md:w-96 md:flex md:static",
+          showCartMobile ? "flex fixed inset-x-0 bottom-0 top-24 z-40 shadow-2xl rounded-t-2xl" : "hidden"
+        )}
+      >
+        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
           <h2 className="font-semibold text-gray-900">
             Panier
-            {cart.length > 0 && (
-              <span className="ml-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">
-                {cart.length}
-              </span>
-            )}
+            {cartCount > 0 && <span className="ml-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">{cartCount}</span>}
           </h2>
+          <button className="md:hidden text-gray-500 text-xl leading-none" onClick={() => setShowCartMobile(false)} aria-label="Fermer le panier">
+            ×
+          </button>
         </div>
 
-        {/* Lignes panier */}
         <div className="flex-1 overflow-y-auto">
           {cart.length === 0 ? (
-            <div className="text-center text-gray-400 py-12">
-              <div className="text-3xl mb-2">🛒</div>
-              <p className="text-sm">Panier vide</p>
-              <p className="text-xs mt-1">Cliquez sur un produit pour l&apos;ajouter</p>
+            <div className="text-center text-gray-400 py-12 text-sm">
+              <p>Panier vide</p>
+              <p className="text-xs mt-1">Scannez ou touchez un article</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-100">
+            <ul className="divide-y divide-gray-100">
               {cart.map((item) => (
-                <div key={item.productId} className="px-4 py-3">
+                <li key={item.key} className="px-4 py-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-gray-900 text-sm truncate">{item.productName}</p>
                       <p className="text-xs text-gray-500">
-                        {formatCurrency(item.unitPrice, currency)} / unité
+                        {fmt(item.unitPrice)} / {item.unitSymbol}
+                        {item.factor !== 1 && ` (${fmtQty(item.factor)} unités)`}
                       </p>
+                      {item.requiresPrescription && <p className="text-[11px] text-amber-700">Vérifier l&apos;ordonnance</p>}
                     </div>
-                    <button
-                      onClick={() => removeFromCart(item.productId)}
-                      className="text-red-400 hover:text-red-600 text-xs"
-                    >
+                    <button onClick={() => setQuantity(item.key, 0)} className="text-red-400 hover:text-red-600 text-xs" aria-label="Retirer">
                       ✕
                     </button>
                   </div>
                   <div className="flex items-center justify-between mt-2">
-                    {/* Contrôle quantité */}
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => updateQuantity(item.productId, item.quantity - 0.5)}
-                        className="w-7 h-7 bg-gray-100 rounded-lg text-gray-600 hover:bg-gray-200 text-sm"
+                        onClick={() => setQuantity(item.key, item.quantity - 1)}
+                        className="w-8 h-8 bg-gray-100 rounded-lg text-gray-700 hover:bg-gray-200"
+                        aria-label="Moins"
                       >
                         −
                       </button>
                       <input
                         type="number"
-                        value={item.quantity}
-                        onChange={(e) =>
-                          updateQuantity(item.productId, parseFloat(e.target.value) || 0)
-                        }
-                        className="w-14 text-center border border-gray-200 rounded-lg py-1 text-sm"
-                        step="0.5"
+                        inputMode={item.allowsDecimal ? "decimal" : "numeric"}
+                        step={item.allowsDecimal ? "0.001" : "1"}
                         min="0"
+                        value={item.quantity}
+                        onChange={(e) => setQuantity(item.key, parseFloat(e.target.value.replace(",", ".")) || 0)}
+                        className="w-20 text-center border border-gray-200 rounded-lg py-1 text-sm"
+                        aria-label={`Quantité (${item.unitSymbol})`}
                       />
                       <button
-                        onClick={() => updateQuantity(item.productId, item.quantity + 0.5)}
-                        className="w-7 h-7 bg-gray-100 rounded-lg text-gray-600 hover:bg-gray-200 text-sm"
+                        onClick={() => setQuantity(item.key, item.quantity + 1)}
+                        className="w-8 h-8 bg-gray-100 rounded-lg text-gray-700 hover:bg-gray-200"
+                        aria-label="Plus"
                       >
                         +
                       </button>
+                      <span className="text-xs text-gray-500 ml-1">{item.unitSymbol}</span>
                     </div>
-                    <span className="font-bold text-gray-900 text-sm">
-                      {formatCurrency(item.lineTotal, currency)}
-                    </span>
+                    <span className="font-bold text-gray-900 text-sm tabular-nums">{fmt(lineTotal(item))}</span>
                   </div>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </div>
 
-        {/* Totaux et actions */}
         <div className="border-t border-gray-200 p-4 space-y-3">
           <div className="space-y-1 text-sm">
-            <div className="flex justify-between text-gray-600">
-              <span>Sous-total</span>
-              <span>{formatCurrency(cartTotals.subtotal, currency)}</span>
-            </div>
-            {cartTotals.discount > 0 && (
-              <div className="flex justify-between text-green-600">
+            {totals.discount > 0 && (
+              <div className="flex justify-between text-green-700">
                 <span>Remise</span>
-                <span>−{formatCurrency(cartTotals.discount, currency)}</span>
+                <span>−{fmt(totals.discount)}</span>
               </div>
             )}
-            <div className="flex justify-between font-bold text-base text-gray-900 pt-1 border-t border-gray-100">
+            <div className="flex justify-between font-bold text-base text-gray-900">
               <span>TOTAL</span>
-              <span className="text-blue-600">{formatCurrency(cartTotals.total, currency)}</span>
+              <span className="text-blue-700 tabular-nums">{fmt(totals.total)}</span>
             </div>
+            {totals.tax > 0 && (
+              <div className="flex justify-between text-xs text-gray-500">
+                <span>dont TVA</span>
+                <span>{fmt(totals.tax)}</span>
+              </div>
+            )}
           </div>
 
-          {/* Paiement rapide */}
           {!showPayment ? (
             <div className="space-y-2">
               <button
                 onClick={() => {
-                  setPayments([{ method: "CASH", amount: cartTotals.total }]);
+                  setPayments([{ method: "CASH", amount: totals.total }]);
                   setShowPayment(true);
                 }}
                 disabled={cart.length === 0}
-                className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Encaisser {cart.length > 0 && formatCurrency(cartTotals.total, currency)}
+                Encaisser {cart.length > 0 && fmt(totals.total)}
               </button>
-              <button
-                onClick={() => setCart([])}
-                disabled={cart.length === 0}
-                className="w-full py-2 text-red-500 text-sm hover:text-red-700 disabled:opacity-40"
-              >
+              <button onClick={() => setCart([])} disabled={cart.length === 0} className="w-full py-2 text-red-500 text-sm hover:text-red-700 disabled:opacity-40">
                 Vider le panier
               </button>
             </div>
           ) : (
-            /* Mode paiement */
-            <div className="space-y-3">
-              <h3 className="font-semibold text-sm text-gray-700">Mode de paiement</h3>
-              {payments.map((payment, idx) => (
-                <div key={idx} className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <select
-                      value={payment.method}
-                      onChange={(e) => {
-                        const updated = [...payments];
-                        updated[idx].method = e.target.value as PaymentEntry["method"];
-                        setPayments(updated);
-                      }}
-                      className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-                    >
-                      <option value="CASH">Espèces</option>
-                      <option value="MOBILE_MONEY">Mobile Money</option>
-                      <option value="CARD">Carte</option>
-                      <option value="TRANSFER">Virement</option>
-                      <option value="CREDIT">Crédit</option>
-                    </select>
-                    <input
-                      type="number"
-                      value={payment.amount}
-                      onChange={(e) => {
-                        const updated = [...payments];
-                        updated[idx].amount = parseFloat(e.target.value) || 0;
-                        setPayments(updated);
-                      }}
-                      className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
-                      placeholder="Montant"
-                    />
-                  </div>
-                </div>
-              ))}
-
-              {/* Monnaie */}
-              {payments[0]?.method === "CASH" && (
-                <div className="bg-gray-50 rounded-lg p-2 text-xs text-gray-600">
-                  Monnaie à rendre :{" "}
-                  <span className="font-bold text-gray-900">
-                    {formatCurrency(
-                      Math.max(0, payments.reduce((s, p) => s + p.amount, 0) - cartTotals.total),
-                      currency
-                    )}
-                  </span>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setShowPayment(false)}
-                  className="py-2.5 border border-gray-300 text-gray-700 rounded-xl text-sm hover:bg-gray-50"
-                >
-                  Retour
-                </button>
-                <button
-                  onClick={handleValidateSale}
-                  disabled={isProcessing}
-                  className="py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700 disabled:opacity-40"
-                >
-                  {isProcessing ? "..." : "Valider"}
-                </button>
-              </div>
-            </div>
+            <PaymentPanel
+              payments={payments}
+              setPayments={setPayments}
+              total={totals.total}
+              change={change}
+              fmt={fmt}
+              online={isOnline}
+              needsCustomer={needsCustomer}
+              customer={customer}
+              setCustomer={setCustomer}
+              error={paymentError}
+              processing={isProcessing}
+              onBack={() => setShowPayment(false)}
+              onValidate={handleValidateSale}
+            />
           )}
         </div>
+      </aside>
+    </div>
+  );
+}
+
+function PaymentPanel({
+  payments,
+  setPayments,
+  total,
+  change,
+  fmt,
+  online,
+  needsCustomer,
+  customer,
+  setCustomer,
+  error,
+  processing,
+  onBack,
+  onValidate,
+}: {
+  payments: PaymentEntry[];
+  setPayments: (p: PaymentEntry[]) => void;
+  total: number;
+  change: number;
+  fmt: (n: number) => string;
+  online: boolean;
+  needsCustomer: boolean;
+  customer: Customer | null;
+  setCustomer: (c: Customer | null) => void;
+  error: string | null;
+  processing: boolean;
+  onBack: () => void;
+  onValidate: () => void;
+}) {
+  const update = (idx: number, patch: Partial<PaymentEntry>) => setPayments(payments.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
+  const quickCash = [...new Set([total, Math.ceil(total / 500) * 500, Math.ceil(total / 1000) * 1000, Math.ceil(total / 5000) * 5000])].filter((v) => v > 0).slice(0, 4);
+
+  return (
+    <div className="space-y-3">
+      {payments.map((p, idx) => (
+        <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+          <select
+            value={p.method}
+            onChange={(e) => update(idx, { method: e.target.value as PaymentMethod })}
+            className="min-w-0 w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
+            aria-label="Mode de paiement"
+          >
+            {(Object.keys(METHODS) as PaymentMethod[]).map((m) => (
+              <option key={m} value={m} disabled={m === "CREDIT" && !online}>
+                {METHODS[m]}
+              </option>
+            ))}
+          </select>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={p.amount || ""}
+            onChange={(e) => update(idx, { amount: parseFloat(e.target.value) || 0 })}
+            className="min-w-0 w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
+            placeholder="Montant"
+            aria-label="Montant"
+          />
+          {payments.length > 1 ? (
+            <button onClick={() => setPayments(payments.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-600 px-1" aria-label="Retirer ce paiement">
+              ✕
+            </button>
+          ) : (
+            <span />
+          )}
+          {(p.method === "MOBILE_MONEY" || p.method === "TRANSFER" || p.method === "CARD") && (
+            <input
+              value={p.reference ?? ""}
+              onChange={(e) => update(idx, { reference: e.target.value })}
+              placeholder="Référence de transaction"
+              className="col-span-3 border border-gray-300 rounded-lg px-2 py-1.5 text-xs"
+            />
+          )}
+        </div>
+      ))}
+
+      {payments.length === 1 && payments[0].method === "CASH" && (
+        <div className="flex flex-wrap gap-1">
+          {quickCash.map((v) => (
+            <button key={v} onClick={() => update(0, { amount: v })} className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50">
+              {fmt(v)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <button
+        onClick={() => setPayments([...payments, { method: "MOBILE_MONEY", amount: Math.max(0, total - payments.reduce((s, x) => s + x.amount, 0)) }])}
+        className="text-xs text-blue-600 hover:underline"
+      >
+        + Paiement mixte (ajouter un mode)
+      </button>
+
+      {needsCustomer && <CustomerPicker customer={customer} setCustomer={setCustomer} />}
+
+      {change > 0 && (
+        <div className="bg-green-50 rounded-lg p-2 text-sm text-green-900">
+          Monnaie à rendre : <strong>{fmt(change)}</strong>
+        </div>
+      )}
+      {error && <p className="text-xs text-red-600">{error}</p>}
+
+      <div className="grid grid-cols-2 gap-2">
+        <button onClick={onBack} className="py-2.5 border border-gray-300 text-gray-700 rounded-xl text-sm hover:bg-gray-50">
+          Retour
+        </button>
+        <button
+          onClick={onValidate}
+          disabled={processing || !!error}
+          className="py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700 disabled:opacity-40"
+        >
+          {processing ? "…" : "Valider la vente"}
+        </button>
       </div>
+    </div>
+  );
+}
+
+function CustomerPicker({ customer, setCustomer }: { customer: Customer | null; setCustomer: (c: Customer | null) => void }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Customer[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [phone, setPhone] = useState("");
+
+  useEffect(() => {
+    if (customer) return;
+    const t = setTimeout(() => {
+      fetch(`/api/customers?search=${encodeURIComponent(query)}`)
+        .then((r) => r.json())
+        .then((j) => setResults(j.data ?? []))
+        .catch(() => setResults([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query, customer]);
+
+  if (customer) {
+    return (
+      <div className="flex items-center justify-between rounded-lg bg-blue-50 px-3 py-2 text-sm">
+        <span>
+          Client : <strong>{customer.name}</strong> {customer.phone && <span className="text-gray-500">({customer.phone})</span>}
+        </span>
+        <button className="text-xs text-blue-700 hover:underline" onClick={() => setCustomer(null)}>
+          Changer
+        </button>
+      </div>
+    );
+  }
+
+  const create = async () => {
+    const res = await fetch("/api/customers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: query, phone: phone || undefined }),
+    });
+    const j = await res.json();
+    if (res.ok) setCustomer(j.data);
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-gray-200 p-2">
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Client (nom ou téléphone)"
+        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+      />
+      <ul className="max-h-28 overflow-y-auto text-sm">
+        {results.map((c) => (
+          <li key={c.id}>
+            <button className="w-full text-left px-2 py-1 rounded hover:bg-gray-100" onClick={() => setCustomer(c)}>
+              {c.name} {c.phone && <span className="text-gray-500">· {c.phone}</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {query.trim().length >= 2 &&
+        (creating ? (
+          <div className="flex gap-2">
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Téléphone" className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
+            <button onClick={create} className="rounded-lg bg-blue-600 px-3 text-sm text-white">
+              Créer
+            </button>
+          </div>
+        ) : (
+          <button className="text-xs text-blue-600 hover:underline" onClick={() => setCreating(true)}>
+            + Nouveau client « {query.trim()} »
+          </button>
+        ))}
     </div>
   );
 }

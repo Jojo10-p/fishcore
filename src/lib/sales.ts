@@ -17,9 +17,25 @@ type SaleLineInput = {
   discount?: number;
 };
 
+export interface ProductSaleInfo {
+  name: string;
+  trackBatches: boolean;
+  requiresPrescription: boolean;
+}
+
+/** Montant de TVA contenu dans un prix TTC. */
+export function taxIncluded(amountTtc: Prisma.Decimal, rate: Prisma.Decimal): Prisma.Decimal {
+  if (rate.lte(0)) return new D(0);
+  return amountTtc.mul(rate).div(rate.add(100)).toDecimalPlaces(2);
+}
+
 /**
- * Calcule les lignes avec les prix de la base et convertit les quantités
- * dans l'unité de base du produit (celle du stock).
+ * Calcule les lignes avec les prix de la base (cahier §9) :
+ * - vente dans l'unité de base ou dans un conditionnement déclaré
+ *   (carton, boîte, pack…) avec son prix propre s'il en a un ;
+ * - quantités entières pour les unités qui ne se fractionnent pas (pièce, boîte…) ;
+ * - quantités converties dans l'unité de base pour le stock ;
+ * - TVA extraite des prix TTC selon le taux du produit.
  */
 export async function priceLines(companyId: string, lines: SaleLineInput[], createdOffline: boolean) {
   const productIds = [...new Set(lines.map((l) => l.productId))];
@@ -29,8 +45,14 @@ export async function priceLines(companyId: string, lines: SaleLineInput[], crea
       id: true,
       name: true,
       sellingPrice: true,
+      taxRate: true,
+      trackBatches: true,
+      requiresPrescription: true,
       baseUnitId: true,
-      unitConversions: { select: { fromUnitId: true, toUnitId: true, factor: true } },
+      baseUnit: { select: { symbol: true, allowsDecimal: true } },
+      unitConversions: {
+        select: { fromUnitId: true, toUnitId: true, factor: true, sellingPrice: true, fromUnit: { select: { symbol: true, allowsDecimal: true } } },
+      },
     },
   });
   const byId = new Map(products.map((p) => [p.id, p]));
@@ -38,49 +60,63 @@ export async function priceLines(companyId: string, lines: SaleLineInput[], crea
   const baseQtyByProduct = new Map<string, Decimal>();
   const baseUnitByProduct = new Map<string, string>();
   const productNames = new Map<string, string>();
+  const productInfo = new Map<string, ProductSaleInfo>();
   let subtotal = new D(0);
   let discountAmount = new D(0);
+  let taxAmount = new D(0);
 
   const priced = lines.map((line) => {
     const product = byId.get(line.productId);
     if (!product) throw new ApiError(400, "Produit introuvable ou inactif", "UNKNOWN_PRODUCT");
     productNames.set(product.id, product.name);
     baseUnitByProduct.set(product.id, product.baseUnitId);
+    productInfo.set(product.id, {
+      name: product.name,
+      trackBatches: product.trackBatches,
+      requiresPrescription: product.requiresPrescription,
+    });
 
-    // Conversion d'unité : uniquement si elle est définie explicitement (cahier §8.2)
-    let factor = new D(1);
+    // Unité vendue : l'unité de base ou un conditionnement explicitement déclaré (cahier §8.2)
     const unitId = line.unitId ?? product.baseUnitId;
+    let factor = new D(1);
+    let unitPrice = new D(product.sellingPrice);
+    let allowsDecimal = product.baseUnit.allowsDecimal;
+    let unitSymbol = product.baseUnit.symbol;
     if (unitId !== product.baseUnitId) {
-      const conv = product.unitConversions.find(
-        (c) => c.fromUnitId === unitId && c.toUnitId === product.baseUnitId
-      );
+      const conv = product.unitConversions.find((c) => c.fromUnitId === unitId && c.toUnitId === product.baseUnitId);
       if (!conv) {
-        throw new ApiError(400, `Aucune conversion définie pour cette unité sur « ${product.name} »`, "NO_CONVERSION");
+        throw new ApiError(400, `Conditionnement non déclaré pour « ${product.name} »`, "NO_CONVERSION");
       }
       factor = new D(conv.factor);
+      unitPrice = conv.sellingPrice !== null ? new D(conv.sellingPrice) : new D(product.sellingPrice).mul(factor);
+      allowsDecimal = conv.fromUnit.allowsDecimal;
+      unitSymbol = conv.fromUnit.symbol;
+    }
+    unitPrice = unitPrice.toDecimalPlaces(2);
+
+    const qty = new D(line.quantity);
+    if (!allowsDecimal && !qty.isInteger()) {
+      throw new ApiError(400, `« ${product.name} » se vend par ${unitSymbol} entier(e)`, "INTEGER_QUANTITY");
     }
 
-    // Prix de l'unité vendue = prix de base × facteur
-    const unitPrice = new D(product.sellingPrice).mul(factor).toDecimalPlaces(2);
     const clientPrice = new D(line.unitPrice);
     if (createdOffline && !clientPrice.equals(unitPrice)) {
       // Le prix a changé pendant la période hors connexion : décision humaine requise
-      throw new ApiError(
-        409,
-        `Le prix de « ${product.name} » a changé depuis la vente hors connexion`,
-        "PRICE_MISMATCH"
-      );
+      throw new ApiError(409, `Le prix de « ${product.name} » a changé depuis la vente hors connexion`, "PRICE_MISMATCH");
     }
 
-    const qty = new D(line.quantity);
     const discount = new D(line.discount ?? 0);
     if (discount.gt(unitPrice)) {
       throw new ApiError(400, `Remise supérieure au prix sur « ${product.name} »`, "INVALID_DISCOUNT");
     }
     const gross = unitPrice.mul(qty).toDecimalPlaces(2);
     const lineDiscount = discount.mul(qty).toDecimalPlaces(2);
+    const lineTotal = gross.sub(lineDiscount);
+    const taxRate = new D(product.taxRate);
+    const lineTax = taxIncluded(lineTotal, taxRate);
     subtotal = subtotal.add(gross);
     discountAmount = discountAmount.add(lineDiscount);
+    taxAmount = taxAmount.add(lineTax);
 
     const baseQty = qty.mul(factor);
     baseQtyByProduct.set(product.id, (baseQtyByProduct.get(product.id) ?? new D(0)).add(baseQty));
@@ -91,7 +127,10 @@ export async function priceLines(companyId: string, lines: SaleLineInput[], crea
       unitId,
       unitPrice,
       discount,
-      lineTotal: gross.sub(lineDiscount),
+      lineTotal,
+      baseQuantity: baseQty,
+      taxRate,
+      taxAmount: lineTax,
     };
   });
 
@@ -99,10 +138,12 @@ export async function priceLines(companyId: string, lines: SaleLineInput[], crea
     lines: priced,
     subtotal,
     discountAmount,
+    taxAmount,
     totalAmount: subtotal.sub(discountAmount),
     baseQtyByProduct,
     baseUnitByProduct,
     productNames,
+    productInfo,
   };
 }
 

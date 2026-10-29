@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { companySchema } from "@/lib/validations";
 import bcrypt from "bcryptjs";
 import { writeAuditLog } from "@/lib/audit";
+import { seedCompanyCatalog } from "@/lib/catalog";
+import { getBusinessProfile } from "@/lib/business-profiles";
 import { handleApiError, isUniqueViolation, requestMeta } from "@/lib/auth";
 
 // POST /api/auth/register — Inscription d'une nouvelle entreprise
@@ -52,6 +54,9 @@ export async function POST(req: NextRequest) {
           currency: data.currency ?? "XOF",
           timezone: data.timezone ?? "Africa/Porto-Novo",
           invoicePrefix: data.invoicePrefix ?? "FACT",
+          businessType: data.businessType,
+          vatEnabled: getBusinessProfile(data.businessType).tax.vatEnabled,
+          defaultTaxRate: getBusinessProfile(data.businessType).tax.defaultTaxRate,
         },
       });
 
@@ -68,16 +73,8 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // 3. Créer les unités de mesure par défaut
-      await tx.unit.createMany({
-        data: [
-          { companyId: company.id, name: "Kilogramme", symbol: "kg", isBaseUnit: true },
-          { companyId: company.id, name: "Gramme", symbol: "g" },
-          { companyId: company.id, name: "Carton", symbol: "carton" },
-          { companyId: company.id, name: "Sac", symbol: "sac" },
-          { companyId: company.id, name: "Pièce", symbol: "pce" },
-        ],
-      });
+      // 3. Unités et catégories adaptées au métier choisi
+      await seedCompanyCatalog(tx, company.id, data.businessType);
 
       await writeAuditLog(
         {

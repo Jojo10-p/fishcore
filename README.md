@@ -1,7 +1,10 @@
 # fishcore
 
-Plateforme de gestion intégrée des poissonneries (Bénin) : multi-entreprises,
-multi-centres, caisses, stocks, ventes en ligne et hors connexion.
+Gestion commerciale multi-métiers (Bénin) : poissonnerie, quincaillerie,
+matériaux de construction, vente d'huile, supermarché, pharmacie, grossiste…
+Multi-entreprises, multi-centres, caisses, stocks, ventes en ligne et hors connexion.
+
+> Le nom affiché se règle avec `NEXT_PUBLIC_APP_NAME` (le nom commercial reste à définir).
 
 Stack : Next.js 16 · React 19 · TypeScript · Prisma 7 (PostgreSQL / Supabase) · Dexie (hors ligne).
 
@@ -32,6 +35,21 @@ npm test           # tests d'intégration (TEST_DATABASE_URL requis)
 
 > Tailwind CSS v4 est chargé par le loader Turbopack (`next.config.ts`) :
 > `src/app/globals.css` doit commencer par `@import "tailwindcss";`.
+
+## Un logiciel, plusieurs métiers
+
+Le métier choisi à l'inscription (modifiable dans *Paramètres*) **pré-remplit** seulement
+les unités, catégories et options ; tout reste réglable article par article
+(`src/lib/business-profiles.ts`).
+
+| Besoin | Comment |
+|---|---|
+| Vente au poids, au litre, au mètre | Unités « décimales » (kg, L, m, m², m³…) ; pièces, boîtes, sacs en quantités entières |
+| Carton, boîte, pack, sac, rouleau | *Conditionnements* : 1 carton = 12 pièces, avec prix et code-barres propres |
+| Supermarché | Caisse au code-barres (douchette), TVA incluse dans le prix, extraite sur le reçu |
+| Pharmacie / alimentaire | Suivi par lot, péremption obligatoire à la réception, vente « premier périmé, premier sorti », lots périmés jamais vendus, lot imprimé sur le reçu |
+| Caractéristiques libres | DCI, dosage, dimension, matière, espèce, contenance… |
+| Vente à crédit | Client obligatoire (créances) |
 
 ## Fonctionnement hors connexion
 

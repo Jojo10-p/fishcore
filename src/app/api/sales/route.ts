@@ -17,7 +17,7 @@ import {
 import { hasPermission } from "@/lib/rbac";
 import { generateSaleNumber } from "@/lib/utils";
 import { priceLines, settlePayments } from "@/lib/sales";
-import { consumeStockForSale } from "@/lib/stock";
+import { consumeStockForSale, type BatchAllocation } from "@/lib/stock";
 
 
 const saleInclude = { lines: true, payments: true } satisfies Prisma.SaleInclude;
@@ -93,6 +93,11 @@ export async function POST(req: NextRequest) {
     //    que sous forme de rendu monnaie sur les espèces.
     const payments = settlePayments(data.payments, pricing.totalAmount);
 
+    // Vente à crédit : le client doit être identifié (suivi des créances)
+    if (payments.some((p) => p.method === "CREDIT") && !data.customerId) {
+      throw new ApiError(400, "Une vente à crédit doit être rattachée à un client", "CUSTOMER_REQUIRED");
+    }
+
     // 7. Transaction atomique
     const sale = await prisma.$transaction(async (tx) => {
       // 7.0 Verrou sur la session : une clôture concurrente attend la fin de la
@@ -107,17 +112,19 @@ export async function POST(req: NextRequest) {
 
       // 7a. Sortie de stock : réserve de la session d'abord, puis stock libre.
       //     Produits traités dans un ordre fixe pour éviter les interblocages.
-      const stockIds = new Map<string, string>();
+      //     Produits suivis par lot : lots non périmés, premier périmé premier sorti.
+      const outputs = new Map<string, { stockId: string; allocations: BatchAllocation[] }>();
       const productOrder = [...pricing.baseQtyByProduct.keys()].sort();
       for (const productId of productOrder) {
-        const { stockId } = await consumeStockForSale(tx, {
+        const { stockId, allocations } = await consumeStockForSale(tx, {
           centerId,
           productId,
           qty: pricing.baseQtyByProduct.get(productId)!,
           sessionId: cashSession.id,
           productName: pricing.productNames.get(productId) ?? productId,
+          trackBatches: pricing.productInfo.get(productId)?.trackBatches ?? false,
         });
-        stockIds.set(productId, stockId);
+        outputs.set(productId, { stockId, allocations });
       }
 
       // 7b. Numéro de facture : incrément atomique (la ligne entreprise est verrouillée)
@@ -141,6 +148,7 @@ export async function POST(req: NextRequest) {
           subtotal: pricing.subtotal,
           discountAmount: pricing.discountAmount,
           totalAmount: pricing.totalAmount,
+          taxAmount: pricing.taxAmount,
           notes: data.notes,
           createdOffline: data.createdOffline ?? false,
           deviceId: data.deviceId,
@@ -159,18 +167,24 @@ export async function POST(req: NextRequest) {
         include: saleInclude,
       });
 
-      // 7d. Mouvements de stock rattachés à la vente
+      // 7d. Mouvements de stock rattachés à la vente (un par lot pour la traçabilité :
+      //     en cas de rappel d'un lot, on retrouve chaque vente concernée)
       await tx.stockMovement.createMany({
-        data: [...pricing.baseQtyByProduct].map(([productId, qty]) => ({
-          stockId: stockIds.get(productId)!,
-          type: "SALE" as const,
-          quantity: qty.negated(),
-          unitId: pricing.baseUnitByProduct.get(productId),
-          referenceType: "Sale",
-          referenceId: newSale.id,
-          performedById: user.id,
-          centerId,
-        })),
+        data: [...pricing.baseQtyByProduct].flatMap(([productId, qty]) => {
+          const { stockId, allocations } = outputs.get(productId)!;
+          const base = {
+            stockId,
+            type: "SALE" as const,
+            unitId: pricing.baseUnitByProduct.get(productId),
+            referenceType: "Sale",
+            referenceId: newSale.id,
+            performedById: user.id,
+            centerId,
+          };
+          return allocations.length
+            ? allocations.map((a) => ({ ...base, quantity: a.quantity.negated(), batchId: a.batchId }))
+            : [{ ...base, quantity: qty.negated() }];
+        }),
       });
 
       // 7e. Journal d'audit dans la même transaction
@@ -187,6 +201,7 @@ export async function POST(req: NextRequest) {
             saleNumber,
             total: pricing.totalAmount.toString(),
             discount: pricing.discountAmount.toString(),
+            tax: pricing.taxAmount.toString(),
             createdOffline: data.createdOffline ?? false,
           },
           deviceId: data.deviceId,

@@ -57,7 +57,7 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
   const requested = new Map<string, { qty: number; name: string }>();
   for (const line of params.lines) {
     const cur = requested.get(line.productId);
-    requested.set(line.productId, { qty: (cur?.qty ?? 0) + line.quantity, name: line.productName });
+    requested.set(line.productId, { qty: (cur?.qty ?? 0) + line.baseQuantity, name: line.productName });
   }
 
   try {
