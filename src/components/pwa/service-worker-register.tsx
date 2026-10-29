@@ -6,7 +6,9 @@ import { useEffect } from "react";
 export function ServiceWorkerRegister() {
   useEffect(() => {
     if (process.env.NODE_ENV !== "production" || !("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" }).catch((error) => {
+    // ?v= : un nouveau déploiement installe un nouveau service worker (et un cache neuf)
+    const version = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
+    navigator.serviceWorker.register(`/sw.js?v=${encodeURIComponent(version)}`, { scope: "/", updateViaCache: "none" }).catch((error) => {
       console.warn("[PWA] Enregistrement du service worker impossible :", error);
     });
   }, []);

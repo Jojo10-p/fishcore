@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOfflineDB, type OfflinePackaging, type OfflineProduct } from "@/lib/offline/db";
 import { createOfflineSale } from "@/lib/offline/sales";
+import { commitNumber, peekNextNumber, refreshNumbering } from "@/lib/offline/numbering";
 import { cn, formatCurrency, generateIdempotencyKey } from "@/lib/utils";
 import { CustomerPicker } from "@/components/app/customer-picker";
 
@@ -52,19 +53,39 @@ interface LoadedQuote {
   customerName: string;
   total: number;
   tax: number;
-  lines: Array<{ id: string; name: string; quantity: number; unitSymbol: string; lineTotal: number }>;
+  lines: Array<{ id: string; name: string; ref: string | null; quantity: number; unitSymbol: string; unitPrice: number; discount: number; lineTotal: number }>;
 }
 
-/** Ce qui a été vendu, pour imprimer un reçu même sans réseau. */
+/**
+ * Ce qui a été vendu, tel qu'imprimé sur la facture : la caisse imprime à partir
+ * de ces données, avec ou sans connexion (numéro définitif compris).
+ */
 export interface SaleSnapshot {
-  at: string;
-  quoteNumber?: string;
-  customerName?: string;
-  lines: Array<{ name: string; ref?: string; quantity: number; unitSymbol: string; unitPrice: number; lineTotal: number }>;
+  saleNumber: string;
+  date: string;
+  customer: { name: string; phone?: string | null } | null;
+  lines: Array<{ key: string; name: string; ref?: string | null; quantity: number; unitSymbol: string; unitPrice: number; discount: number; lineTotal: number }>;
+  discountAmount: number;
   total: number;
-  payments: Array<{ method: string; amount: number; reference?: string }>;
+  tax: number;
+  payments: Array<{ method: string; amount: number; reference?: string | null; notes?: string | null }>;
   change: number;
 }
+
+/** Même règle que le serveur : la monnaie rendue est déduite des espèces. */
+function settleLocally(payments: PaymentEntry[], total: number) {
+  let change = Math.max(0, round2(payments.reduce((s, p) => s + p.amount, 0) - total));
+  return payments
+    .map((p) => {
+      if (p.method !== "CASH" || change <= 0) return { method: p.method, amount: p.amount, reference: p.reference ?? null, notes: null };
+      const deducted = Math.min(change, p.amount);
+      change = round2(change - deducted);
+      return { method: p.method, amount: round2(p.amount - deducted), reference: null, notes: `Reçu ${p.amount}, rendu ${deducted}` };
+    })
+    .filter((p) => p.amount > 0);
+}
+
+const taxOf = (amount: number, rate: number) => (rate > 0 ? Math.round(((amount * rate) / (100 + rate)) * 100) / 100 : 0);
 
 interface POSContextProps {
   sessionId: string;
@@ -227,13 +248,18 @@ export default function POSInterface({
           customerName: q.customer.name,
           total: Number(q.totalAmount),
           tax: Number(q.taxAmount),
-          lines: q.lines.map((l: { id: string; product: { name: string }; quantity: string; unitSymbol: string; lineTotal: string }) => ({
-            id: l.id,
-            name: l.product.name,
-            quantity: Number(l.quantity),
-            unitSymbol: l.unitSymbol,
-            lineTotal: Number(l.lineTotal),
-          })),
+          lines: q.lines.map(
+            (l: { id: string; product: { name: string; internalCode: string | null }; quantity: string; unitSymbol: string; unitPrice: string; discount: string; lineTotal: string }) => ({
+              id: l.id,
+              name: l.product.name,
+              ref: l.product.internalCode,
+              quantity: Number(l.quantity),
+              unitSymbol: l.unitSymbol,
+              unitPrice: Number(l.unitPrice),
+              discount: Number(l.discount),
+              lineTotal: Number(l.lineTotal),
+            })
+          ),
         });
         setCart([]);
         setCustomer(null);
@@ -328,8 +354,31 @@ export default function POSInterface({
       let saleId: string;
       let recordedOffline = !isOnline;
 
+      // Numéro de facture : pris dans la plage de cette caisse, connu avant même
+      // l'envoi — le ticket porte le numéro définitif, avec ou sans connexion.
+      let invoice = await peekNextNumber(sessionId);
+      if (!invoice && isOnline) {
+        await refreshNumbering(sessionId);
+        invoice = await peekNextNumber(sessionId);
+      }
+      if (!invoice && !isOnline) {
+        throw new Error("Plus de numéro de facture disponible sur cette caisse : reconnectez-la au réseau quelques secondes.");
+      }
+      let saleNumber = invoice?.saleNumber ?? "";
+
       const saveOffline = async () => {
-        const result = await createOfflineSale({ sessionId, cashierId, centerId, companyId, lines, payments: cleanPayments, idempotencyKey });
+        if (!invoice) throw new Error("Connexion perdue et aucun numéro de facture disponible : réessayez.");
+        const result = await createOfflineSale({
+          sessionId,
+          cashierId,
+          centerId,
+          companyId,
+          customerId: customer?.id,
+          lines,
+          payments: cleanPayments,
+          idempotencyKey,
+          invoice: { seq: invoice.seq, saleNumber: invoice.saleNumber },
+        });
         if (!result.success) throw new Error(result.error);
         return result.saleId!;
       };
@@ -342,8 +391,8 @@ export default function POSInterface({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(
               quote
-                ? { sessionId, quoteId: quote.id, lines: [], payments: cleanPayments, idempotencyKey, createdOffline: false }
-                : { sessionId, lines, payments: cleanPayments, customerId: customer?.id, idempotencyKey, createdOffline: false }
+                ? { sessionId, quoteId: quote.id, lines: [], payments: cleanPayments, idempotencyKey, invoiceSeq: invoice?.seq, createdOffline: false }
+                : { sessionId, lines, payments: cleanPayments, customerId: customer?.id, idempotencyKey, invoiceSeq: invoice?.seq, createdOffline: false }
             ),
           });
         } catch {
@@ -355,38 +404,49 @@ export default function POSInterface({
           recordedOffline = true;
         } else {
           const data = await res.json();
+          if (data.code === "INVOICE_NUMBER_INVALID") {
+            // Plages de la caisse périmées (clôture faite ailleurs…) : on les recharge
+            await refreshNumbering(sessionId);
+            throw new Error("Numérotation des factures mise à jour : validez à nouveau la vente.");
+          }
           if (!res.ok || !data.success) throw new Error(data.error ?? "Erreur serveur");
           saleId = data.data.id;
+          saleNumber = data.data.saleNumber;
+          if (invoice) await commitNumber(sessionId, invoice.seq);
         }
       } else {
         saleId = await saveOffline();
       }
+      // Réserve de numéros : complétée en arrière-plan dès que le réseau le permet
+      if (navigator.onLine) void refreshNumbering(sessionId);
 
       const refOf = new Map(products.map((p) => [p.id, p.internalCode]));
       const snapshot: SaleSnapshot = {
-        at: new Date().toISOString(),
-        quoteNumber: quote?.number,
-        customerName: quote?.customerName ?? customer?.name,
+        saleNumber,
+        date: new Date().toISOString(),
+        customer: quote ? { name: quote.customerName } : customer ? { name: customer.name, phone: customer.phone } : null,
         lines: quote
-          ? quote.lines.map((l) => ({ name: l.name, quantity: l.quantity, unitSymbol: l.unitSymbol, unitPrice: l.quantity ? l.lineTotal / l.quantity : 0, lineTotal: l.lineTotal }))
+          ? quote.lines.map((l) => ({ key: l.id, name: l.name, ref: l.ref, quantity: l.quantity, unitSymbol: l.unitSymbol, unitPrice: l.unitPrice, discount: l.discount, lineTotal: l.lineTotal }))
           : cart.map((i) => ({
+              key: i.key,
               name: i.productName,
-              ref: refOf.get(i.productId) ?? undefined,
+              ref: refOf.get(i.productId) ?? null,
               quantity: i.quantity,
               unitSymbol: i.unitSymbol,
-              unitPrice: i.unitPrice - i.discount,
+              unitPrice: i.unitPrice,
+              discount: i.discount,
               lineTotal: lineTotal(i),
             })),
+        discountAmount: quote ? round2(quote.lines.reduce((s, l) => s + l.discount * l.quantity, 0)) : totals.discount,
         total: payTotal,
-        payments: cleanPayments.map((p) => ({ method: p.method, amount: p.amount, reference: p.reference })),
+        tax: quote ? quote.tax : round2(cart.reduce((s, i) => s + taxOf(lineTotal(i), i.taxRate), 0)),
+        payments: settleLocally(cleanPayments, payTotal),
         change,
       };
       onSaleRecorded?.({ id: saleId, offline: recordedOffline, snapshot });
       setNotification({
         type: "success",
-        message: recordedOffline
-          ? "Vente enregistrée sur cet appareil — en attente d'envoi au serveur"
-          : `Vente enregistrée${change > 0 ? ` — rendre ${fmt(change)}` : ""}`,
+        message: `Facture ${saleNumber} enregistrée${change > 0 ? ` — rendre ${fmt(change)}` : ""}${recordedOffline ? " (sera envoyée au retour du réseau)" : ""}`,
       });
       resetSale();
     } catch (err) {

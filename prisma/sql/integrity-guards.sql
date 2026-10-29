@@ -69,3 +69,7 @@ ALTER TABLE "delivery_lines" ADD CONSTRAINT "delivery_lines_quantity_positive" C
 -- Plus aucune vente à crédit
 ALTER TABLE "payments" DROP CONSTRAINT IF EXISTS "payments_no_credit";
 ALTER TABLE "payments" ADD CONSTRAINT "payments_no_credit" CHECK ("method" <> 'CREDIT') NOT VALID;
+
+-- Plages de numéros de facture : bornes cohérentes
+ALTER TABLE "invoice_number_blocks" DROP CONSTRAINT IF EXISTS "invoice_number_blocks_range";
+ALTER TABLE "invoice_number_blocks" ADD CONSTRAINT "invoice_number_blocks_range" CHECK ("first" >= 1 AND "last" >= "first");

@@ -1,5 +1,6 @@
 "use client";
 
+import Dexie from "dexie";
 import { getOfflineDB, getUnconfirmedQuantities, type OfflineProduct, type SyncOperation } from "./db";
 import { generateIdempotencyKey } from "@/lib/utils";
 
@@ -50,7 +51,9 @@ let running: Promise<SyncResult> | null = null;
 
 /** Lance la synchronisation (un seul passage à la fois, les appels concurrents attendent le même). */
 export function syncPendingOperations(): Promise<SyncResult> {
-  running ??= runSync().finally(() => {
+  // Hors de toute transaction locale : la synchro peut être déclenchée depuis le
+  // code d'une vente (transaction déjà terminée) — Dexie la rattacherait sinon.
+  running ??= Dexie.ignoreTransaction(() => runSync()).finally(() => {
     running = null;
   });
   return running;
@@ -211,13 +214,13 @@ export async function syncCatalogFromServer(centerId: string, sessionId?: string
 /** Nombre d'opérations refusées par le serveur, à traiter par un responsable. */
 export async function getConflictCount(): Promise<number> {
   const db = getOfflineDB();
-  return db.syncQueue.where("status").equals("conflict").count();
+  return Dexie.ignoreTransaction(() => db.syncQueue.where("status").equals("conflict").count());
 }
 
 /** Nombre d'opérations en attente d'envoi. */
 export async function getPendingSyncCount(): Promise<number> {
   const db = getOfflineDB();
-  return db.syncQueue.where("status").anyOf(["pending", "failed", "syncing"]).count();
+  return Dexie.ignoreTransaction(() => db.syncQueue.where("status").anyOf(["pending", "failed", "syncing"]).count());
 }
 
 /** Lance une synchronisation à chaque retour de la connexion. */

@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import POSInterface, { type SaleSnapshot } from "@/components/pos/pos-interface";
-import { ProvisionalTicket, invoiceUrl, printInFrame, useAutoPrint } from "@/components/pos/printing";
+import { PrintArea, printInFrame, snapshotToTicket, useAutoPrint } from "@/components/pos/printing";
+import type { TicketData } from "@/components/documents/ticket-80";
+import type { TicketHeader } from "@/lib/offline/db";
+import { getNumbering, refreshNumbering, remainingOf } from "@/lib/offline/numbering";
 import { SessionProvider, useSession } from "@/components/app/session-provider";
 import { ConnectionBadge, useOnline } from "@/components/app/connection-badge";
 import { Alert, Badge, Button, Field, Input, Modal, Money, Qty, Select, Spinner } from "@/components/ui";
@@ -279,34 +282,75 @@ function ActiveRegister({
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [lastSale, setLastSale] = useState<{ id: string; offline: boolean; snapshot: SaleSnapshot } | null>(null);
   const [autoPrint, setAutoPrint] = useAutoPrint();
-  const [provisional, setProvisional] = useState<SaleSnapshot | null>(null);
+  const [printJob, setPrintJob] = useState<{ ticket: TicketData; nonce: number } | null>(null);
+  const [header, setHeader] = useState<TicketHeader | null>(null);
+  const [numbersLeft, setNumbersLeft] = useState<number | null>(null);
   const { session } = useSession();
-  const format = session?.company?.invoiceFormat ?? "TICKET_80";
-  const otherFormat = format === "A4" ? "TICKET_80" : "A4";
-  const centerName = session?.centers.find((c) => c.id === cashSession.centerId)?.name ?? "";
+  // Le ticket 80 mm est le format par défaut ; A4 si l'entreprise l'a choisi
+  const format = header?.company.invoiceFormat ?? session?.company?.invoiceFormat ?? "TICKET_80";
 
-  // Reçu provisoire (hors connexion) : imprimé dès qu'il est affiché
+  // Numérotation et en-tête des tickets gardés sur l'appareil (impression sans connexion)
+  const refreshNumbers = useCallback(async () => {
+    const row = (await refreshNumbering(cashSession.id)) ?? (await getNumbering(cashSession.id));
+    if (row?.header) setHeader(row.header);
+    setNumbersLeft(row ? remainingOf(row) : 0);
+  }, [cashSession.id]);
+
   useEffect(() => {
-    if (!provisional) return;
-    const t = setTimeout(() => window.print(), 100);
+    const t = setTimeout(() => void refreshNumbers(), 0);
+    const onOnline = () => void refreshNumbers();
+    window.addEventListener("online", onOnline);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [refreshNumbers]);
+
+  // Ticket affiché dans la zone d'impression : on lance l'impression
+  useEffect(() => {
+    if (!printJob) return;
+    const t = setTimeout(() => window.print(), 150);
     return () => clearTimeout(t);
-  }, [provisional]);
+  }, [printJob]);
 
   const printLast = useCallback(
     (sale = lastSale) => {
       if (!sale) return;
-      if (sale.offline) setProvisional({ ...sale.snapshot });
-      else printInFrame(invoiceUrl(sale.id, format));
+      if (format === "A4" && !sale.offline && navigator.onLine) {
+        printInFrame(`/facture/${sale.id}`);
+        return;
+      }
+      const h: TicketHeader = header ?? {
+        // Secours si l'en-tête n'a jamais pu être chargé (première ouverture sans réseau)
+        company: {
+          tradeName: session?.company?.tradeName ?? "",
+          legalName: null,
+          phone: "",
+          address: null,
+          city: null,
+          taxId: null,
+          tradeRegNumber: null,
+          currency,
+          invoiceNotes: null,
+          requiresPickup: !!session?.company?.requiresPickup,
+          invoiceFormat: "TICKET_80",
+        },
+        center: { id: cashSession.centerId, name: session?.centers.find((c) => c.id === cashSession.centerId)?.name ?? "", address: null, city: null, phone: null },
+        registerName: cashSession.registerName,
+        cashierFirstName: session?.user.firstName ?? "",
+      };
+      setPrintJob({ ticket: snapshotToTicket(sale.snapshot, h), nonce: Date.now() });
     },
-    [lastSale, format]
+    [lastSale, format, header, session, currency, cashSession]
   );
 
   const onSaleRecorded = useCallback(
     (sale: { id: string; offline: boolean; snapshot: SaleSnapshot }) => {
       setLastSale(sale);
       if (autoPrint) printLast(sale);
+      void getNumbering(cashSession.id).then((row) => setNumbersLeft(row ? remainingOf(row) : 0));
     },
-    [autoPrint, printLast]
+    [autoPrint, printLast, cashSession.id]
   );
   const [showReserve, setShowReserve] = useState(false);
   const [showClose, setShowClose] = useState(false);
@@ -343,14 +387,19 @@ function ActiveRegister({
           <input type="checkbox" checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />
           Impression auto
         </label>
+        {numbersLeft !== null && numbersLeft < 30 && (
+          <Badge tone={numbersLeft < 10 ? "red" : "amber"}>
+            {numbersLeft} facture(s) d&apos;avance — {numbersLeft === 0 ? "connectez la caisse" : "reconnectez bientôt"}
+          </Badge>
+        )}
         {lastSale && (
           <span className="flex items-center gap-2 text-sm">
             <Button className="px-3 py-1.5" onClick={() => printLast()}>
-              🖨 {lastSale.offline ? "Reçu provisoire" : "Imprimer la facture"}
+              🖨 Réimprimer {lastSale.snapshot.saleNumber}
             </Button>
             {!lastSale.offline && (
-              <Link href={invoiceUrl(lastSale.id, otherFormat)} target="_blank" className="text-blue-600 hover:underline">
-                {otherFormat === "A4" ? "Format A4" : "Ticket 80 mm"}
+              <Link href={`/facture/${lastSale.id}`} target="_blank" className="text-blue-600 hover:underline">
+                A4
               </Link>
             )}
           </span>
@@ -394,14 +443,7 @@ function ActiveRegister({
         onClosed={onClosed}
       />
     </div>
-    {provisional && (
-      <ProvisionalTicket
-        sale={provisional}
-        companyName={session?.company?.tradeName ?? ""}
-        centerName={centerName}
-        cashierName={session?.user.firstName ?? ""}
-      />
-    )}
+    {printJob && <PrintArea key={printJob.nonce} ticket={printJob.ticket} />}
     </>
   );
 }

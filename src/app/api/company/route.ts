@@ -104,6 +104,10 @@ export async function PATCH(req: NextRequest) {
           "INVOICE_NUMBER_BACKWARDS"
         );
       }
+      // Nouveau préfixe : les numéros rendus sous l'ancien préfixe ne sont plus réattribués
+      if (fields.invoicePrefix && fields.invoicePrefix !== before.invoicePrefix) {
+        await tx.invoiceNumberBlock.deleteMany({ where: { companyId, sessionId: null } });
+      }
       const updated = await tx.company.update({
         where: { id: companyId },
         data: { ...fields, ...(nextInvoiceNumber !== undefined ? { invoiceCounter: nextInvoiceNumber } : {}) },

@@ -60,6 +60,9 @@ export interface OfflineSale {
   discountAmount: number;
   totalAmount: number;
   notes?: string;
+  /** Numéro de facture attribué par la caisse (imprimé sur le ticket). */
+  invoiceSeq?: number;
+  saleNumber?: string;
   createdAt: string; // ISO string
   // conflict = refusée par le serveur pour une raison métier (stock, prix, session clôturée) :
   // ne sera pas retentée automatiquement, un responsable doit la traiter.
@@ -116,6 +119,35 @@ export interface OfflineDraft {
   updatedAt: string;
 }
 
+/** En-tête des tickets, gardé sur l'appareil pour imprimer sans connexion. */
+export interface TicketHeader {
+  company: {
+    tradeName: string;
+    legalName: string | null;
+    phone: string;
+    address: string | null;
+    city: string | null;
+    taxId: string | null;
+    tradeRegNumber: string | null;
+    currency: string;
+    invoiceNotes: string | null;
+    requiresPickup: boolean;
+    invoiceFormat: string;
+  };
+  center: { id: string; name: string; address: string | null; city: string | null; phone: string | null };
+  registerName: string;
+  cashierFirstName: string;
+}
+
+/** Numérotation des factures d'une session : plages confiées et numéros déjà utilisés. */
+export interface OfflineNumbering {
+  sessionId: string;
+  blocks: Array<{ prefix: string; first: number; last: number }>;
+  used: number[];
+  header?: TicketHeader;
+  updatedAt: string;
+}
+
 export interface SyncOperation {
   id: string;
   type: "sale" | "stock_update" | "cash_session";
@@ -140,6 +172,7 @@ export class FishcoreOfflineDB extends Dexie {
   syncQueue!: Table<SyncOperation>;
   reservations!: Table<OfflineReservation>;
   drafts!: Table<OfflineDraft>;
+  numbering!: Table<OfflineNumbering>;
 
   constructor() {
     super("fishcore-offline");
@@ -163,6 +196,9 @@ export class FishcoreOfflineDB extends Dexie {
     this.version(3)
       .stores({ products: "id, barcode, internalCode, categoryName" })
       .upgrade((tx) => tx.table("products").clear());
+
+    // v4 : numérotation des factures par la caisse (impression hors connexion)
+    this.version(4).stores({ numbering: "sessionId" });
   }
 }
 

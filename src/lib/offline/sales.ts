@@ -2,6 +2,7 @@
 
 import { getOfflineDB, getUnconfirmedQuantities, type OfflineSale, type OfflineSaleLine, type OfflinePayment } from "./db";
 import { queueSaleForSync } from "./sync";
+import { commitNumber } from "./numbering";
 import { generateIdempotencyKey } from "@/lib/utils";
 
 interface CreateOfflineSaleParams {
@@ -15,6 +16,8 @@ interface CreateOfflineSaleParams {
   notes?: string;
   /** Clé déjà utilisée pour une tentative en ligne (repli hors ligne sans doublon). */
   idempotencyKey?: string;
+  /** Numéro de facture pris dans la plage de la caisse (imprimé sur le ticket). */
+  invoice?: { seq: number; saleNumber: string };
 }
 
 /**
@@ -60,8 +63,9 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
     requested.set(line.productId, { qty: (cur?.qty ?? 0) + line.baseQuantity, name: line.productName });
   }
 
+  const soldAt = new Date().toISOString();
   try {
-    await db.transaction("rw", [db.reservations, db.stocks, db.sales, db.syncQueue], async () => {
+    await db.transaction("rw", [db.reservations, db.stocks, db.sales, db.syncQueue, db.numbering], async () => {
       // Contrôle dans la transaction : deux validations rapides ne peuvent pas
       // consommer deux fois la même réserve
       const available = await getOfflineAvailability(params.sessionId);
@@ -97,11 +101,15 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
         discountAmount,
         totalAmount,
         notes: params.notes,
-        createdAt: new Date().toISOString(),
+        invoiceSeq: params.invoice?.seq,
+        saleNumber: params.invoice?.saleNumber,
+        createdAt: soldAt,
         syncStatus: "pending",
         retryCount: 0,
       };
       await db.sales.add(sale);
+      // Le numéro n'est consommé qu'avec la vente (même transaction locale)
+      if (params.invoice) await commitNumber(params.sessionId, params.invoice.seq);
 
       await queueSaleForSync(idempotencyKey, {
         idempotencyKey,
@@ -116,6 +124,8 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
         })),
         payments: params.payments,
         notes: params.notes,
+        ...(params.invoice ? { invoiceSeq: params.invoice.seq } : {}),
+        soldAt,
         createdOffline: true,
         deviceId: getDeviceId(),
       });

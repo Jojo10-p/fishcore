@@ -150,6 +150,10 @@ export const createSaleSchema = z.object({
   customerId: z.string().optional(),
   // Vente issue d'un devis : les lignes et les prix sont repris du devis par le serveur
   quoteId: z.string().optional(),
+  // Numéro attribué par la caisse dans sa plage (imprimé avant même l'envoi au serveur)
+  invoiceSeq: z.number().int().positive().optional(),
+  // Heure réelle d'une vente faite hors connexion (celle imprimée sur le ticket)
+  soldAt: z.string().datetime().optional(),
   lines: z.array(saleLineSchema).default([]),
   payments: z.array(
     z.object({

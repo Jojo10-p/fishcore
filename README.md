@@ -15,24 +15,22 @@ npm install                 # génère aussi le client Prisma (postinstall)
 cp .env.example .env.local  # puis remplir les valeurs
 ```
 
-### Base de données — première fois
+### Base de données
+
+Les migrations sont fournies (`prisma/migrations`). Elles s'appliquent avec les
+garde-fous SQL (`prisma/sql/integrity-guards.sql` : journal d'audit non modifiable,
+stock jamais négatif, une session ouverte par caisse, montants positifs…) :
 
 ```bash
-npx prisma migrate dev --name init --create-only
-# Copier le contenu de prisma/sql/integrity-guards.sql à la fin de
-# prisma/migrations/<horodatage>_init/migration.sql, puis :
-npx prisma migrate dev
+npm run db:deploy                      # base neuve ou mise à jour
+npm run db:migrate -- --name <evol>    # après une modification de schema.prisma
 ```
 
-Les garde-fous SQL rendent le journal d'audit non modifiable, interdisent un
-stock négatif, deux sessions ouvertes sur une même caisse, un paiement supérieur
-à la facture ou un montant négatif. Le fichier peut être rejoué sans risque
-après chaque évolution du schéma :
-
-```bash
-npx prisma migrate dev --name <evolution>
-psql "$DIRECT_URL" -f prisma/sql/integrity-guards.sql
-```
+Les garde-fous sont rejoués à chaque déploiement (`npm run db:guards`) : ils remettent
+en place un index ou une règle qu'une migration aurait retiré. Avant de valider une
+nouvelle migration, vérifier qu'elle ne contient pas de `DROP INDEX` sur
+`cash_sessions_one_open_per_register`, `cash_sessions_one_open_per_cashier` ou
+`cancellations_one_pending_per_sale` (index propres aux garde-fous) ; si oui, retirer ces lignes.
 
 ```bash
 npm run dev        # http://localhost:3000
@@ -104,12 +102,20 @@ Les factures normalisées e-MECeF (DGI Bénin) ne sont pas encore produites : vo
 
 ## Imprimante ticket (XP-80C et équivalentes)
 
-- *Paramètres → Facture imprimée à la caisse* : **Ticket 80 mm** (par défaut) ou **A4**.
+- La facture **ticket 80 mm** est le format par défaut (*Paramètres* : A4 possible).
+- **Impression automatique** après chaque vente, activée par défaut (case « Impression auto » de la caisse,
+  réglage propre à chaque poste) ; bouton « Réimprimer » pour la dernière facture.
 - Propriétés de l'imprimante : papier **80(72.1) x 3276 mm** ; dans Chrome, marges **Aucune**.
-- Caisse : bouton « 🖨 Imprimer la facture » après chaque vente, ou case **Impression auto** (réglage du poste).
-- Sans boîte de dialogue (comme Sage) : mettre la XP-80C en imprimante par défaut de Windows et lancer
-  Chrome avec l'option `--kiosk-printing` (raccourci : `chrome.exe --kiosk-printing https://…/caisse`).
-- Hors connexion : un **reçu provisoire** s'imprime ; la facture numérotée est disponible au retour du réseau.
+- Sans boîte de dialogue (comme Sage) : XP-80C en imprimante par défaut de Windows, et Chrome lancé avec
+  `--kiosk-printing` (voir DEPLOIEMENT.md).
+- **Sans connexion, l'impression continue à l'identique** : chaque caisse garde d'avance une plage de
+  numéros de facture (100) et l'en-tête des tickets (IFU, adresse…). Le ticket porte le numéro définitif ;
+  la vente part au serveur au retour du réseau, avec son heure réelle. À la clôture, les numéros non utilisés
+  sont rendus : pas de trou, pas de doublon.
+
+## Mise en production (Vercel + Supabase)
+
+Voir **DEPLOIEMENT.md** : base Supabase, variables, région, premier déploiement, postes de caisse.
 
 ## Fonctionnement hors connexion
 

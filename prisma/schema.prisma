@@ -679,6 +679,24 @@ model SupplierPayment {
 }
 
 /// Règlement d'un client sur ses achats à crédit (cahier §14 : créances).
+/// Plage de numéros de facture confiée à une session de caisse.
+/// La caisse numérote elle-même ses factures, avec ou sans connexion : le
+/// ticket imprimé porte toujours le numéro définitif. À la clôture, les
+/// numéros non utilisés sont rendus (sessionId vide) et réattribués en priorité.
+model InvoiceNumberBlock {
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  companyId   String
+  prefix      String
+  first       Int
+  last        Int
+  sessionId   String?
+  releasedAt  DateTime?
+
+  @@index([companyId, sessionId])
+  @@map("invoice_number_blocks")
+}
+
 /// Devis : proposition de prix, transformée en vente à la caisse
 model Quote {
   id              String      @id @default(cuid())
@@ -956,6 +974,7 @@ model Sale {
   customer        Customer?   @relation(fields: [customerId], references: [id])
 
   saleNumber      String                               // Numéro affiché (unique par entreprise)
+  invoiceSeq      Int?                                 // Partie numérique du numéro (sans trou ni doublon)
   status          SaleStatus  @default(COMPLETED)
 
   subtotal        Decimal     @db.Decimal(12, 2)
@@ -982,6 +1001,7 @@ model Sale {
   quote           Quote?
 
   @@unique([companyId, saleNumber])
+  @@unique([companyId, invoiceSeq])
   @@index([companyId, centerId, createdAt])
   @@map("sales")
 }

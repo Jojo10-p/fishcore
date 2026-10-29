@@ -1,0 +1,70 @@
+# Mise en production : Vercel + Supabase
+
+## 1. Base de données (Supabase)
+
+1. Créer un projet sur supabase.com. **Région : Paris (eu-west-3)** — la plus proche du Bénin,
+   et la même que celle des fonctions Vercel (`cdg1`, réglée dans `vercel.json`).
+   Si le projet est à Francfort (eu-central-1), mettre `"regions": ["fra1"]` dans `vercel.json`.
+2. *Project Settings → Database → Connection string* :
+   - **Transaction pooler** (port 6543) → `DATABASE_URL`
+   - **Session pooler** (port 5432) → `DIRECT_URL`
+3. Facultatif : *SSL Configuration → Download certificate* → `DATABASE_CA_CERT`
+   (vérification complète du certificat ; sans elle, la connexion reste chiffrée).
+
+## 2. Projet Vercel
+
+1. Pousser le code sur GitHub, puis sur vercel.com : *Add New → Project → Import* le dépôt.
+   Le framework (Next.js) et la commande de build (`npm run vercel-build`) sont détectés via `vercel.json`.
+2. *Settings → Environment Variables* (Production **et** Preview) :
+
+| Variable | Valeur |
+|---|---|
+| `DATABASE_URL` | URL du *Transaction pooler* (6543) |
+| `DIRECT_URL` | URL du *Session pooler* (5432) |
+| `JWT_SECRET` | `openssl rand -base64 32` |
+| `INSTALL_LINK_SECRET` | `openssl rand -base64 32` (une autre valeur) |
+| `NEXT_PUBLIC_APP_URL` | `https://votre-domaine` (ou l'adresse `.vercel.app`) |
+| `NEXT_PUBLIC_APP_NAME` | nom affiché, ex. `fishcore` |
+| `DATABASE_CA_CERT` | facultatif, voir plus haut |
+
+   L'application refuse de démarrer en production sans `JWT_SECRET` et `INSTALL_LINK_SECRET`.
+3. *Deploy*. Le build :
+   1. génère le client Prisma ;
+   2. applique les migrations (`prisma migrate deploy`, via `DIRECT_URL`) ;
+   3. rejoue les garde-fous SQL (`scripts/apply-sql-guards.mjs`) ;
+   4. compile l'application.
+4. Vérifier : `https://votre-domaine/api/health` doit répondre `{"ok":true,"database":"ok",…}`.
+   Cette adresse peut être surveillée (UptimeRobot, Better Stack…) : elle ne renvoie aucune donnée.
+5. Créer l'entreprise sur `/register`, puis dans *Paramètres* : IFU, RCCM, adresse, mentions de bas de
+   facture, préfixe et **prochain numéro de facture** (suite de l'ancien logiciel).
+
+Chaque `git push` sur la branche principale redéploie. Les caisses se mettent à jour d'elles-mêmes
+à leur prochaine connexion (le cache hors ligne est renouvelé à chaque version).
+
+## 3. Postes de caisse (Windows + XP-80C)
+
+1. **Imprimante** : pilote XP-80C installé, définie comme **imprimante par défaut** de Windows ;
+   *Propriétés → Options avancées → Format du papier* : **80(72.1) x 3276 mm**.
+2. **Chrome** : ouvrir l'adresse de l'application, se connecter, puis *⋮ → Caster, enregistrer et partager →
+   Installer la page en tant qu'application* (ou l'icône d'installation dans la barre d'adresse).
+3. **Impression sans boîte de dialogue** (comme Sage) : créer un raccourci sur le bureau avec la cible
+   ```
+   "C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk-printing --app=https://votre-domaine/caisse
+   ```
+   Lors de la première impression manuelle, choisir la XP-80C et *Marges : Aucune* : Chrome retient ces réglages.
+4. Ouvrir la caisse **avec connexion** : elle reçoit sa plage de numéros de facture, l'en-tête des tickets
+   et le catalogue. Avant une coupure annoncée, « Réserve hors ligne » pour réserver du stock à cette caisse.
+
+## 4. Pendant une coupure d'Internet
+
+- La caisse continue : ventes, **facture imprimée avec son numéro définitif**, monnaie rendue.
+- Limites : le stock vendable est celui réservé à la caisse ; un devis ne s'encaisse pas hors ligne ;
+  la caisse dispose de 100 numéros d'avance (un avertissement s'affiche sous 30).
+- Au retour du réseau, les ventes partent automatiquement au serveur, avec leur heure réelle.
+- La clôture de caisse se fait avec connexion (toutes les ventes doivent être envoyées).
+
+## 5. Sauvegardes
+
+Les sauvegardes automatiques dépendent de l'offre Supabase (quotidiennes à partir de l'offre Pro ;
+l'offre gratuite n'en garantit pas) : vérifier dans *Database → Backups*. En complément, faire une copie
+régulière : `pg_dump "$DIRECT_URL" > sauvegarde-AAAA-MM-JJ.sql`, conservée hors de Supabase.

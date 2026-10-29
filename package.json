@@ -9,8 +9,10 @@
     "lint": "eslint",
     "postinstall": "prisma generate",
     "typecheck": "next typegen && tsc --noEmit",
-    "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
+    "vercel-build": "prisma generate && prisma migrate deploy && node scripts/apply-sql-guards.mjs && next build",
+    "db:migrate": "prisma migrate dev && node scripts/apply-sql-guards.mjs",
+    "db:deploy": "prisma migrate deploy && node scripts/apply-sql-guards.mjs",
+    "db:guards": "node scripts/apply-sql-guards.mjs",
     "test": "tsx --test --test-concurrency=1 tests/*.test.mts"
   },
   "dependencies": {
@@ -30,6 +32,7 @@
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.61.0",
     "next": "16.4.2",
+    "pg": "^8.23.1",
     "prisma": "7.10.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",

@@ -80,9 +80,10 @@ export default function SyncPage() {
           {sales.length === 0 ? (
             <EmptyState icon="🔄" title="Aucune vente hors connexion sur cet appareil" />
           ) : (
-            <Table head={["Date", "Articles", "Montant", "État", "Détail", ""]}>
+            <Table head={["Facture", "Date", "Articles", "Montant", "État", "Détail", ""]}>
               {sales.map((s) => (
                 <tr key={s.id}>
+                  <Td className="font-medium">{s.saleNumber ?? "—"}</Td>
                   <Td>{new Date(s.createdAt).toLocaleString("fr-FR")}</Td>
                   <Td className="whitespace-normal">{s.lines.map((l) => `${l.productName} × ${l.quantity}`).join(", ")}</Td>
                   <Td>{formatCurrency(s.totalAmount)}</Td>

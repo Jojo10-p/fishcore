@@ -26,6 +26,9 @@ import { getBusinessProfile } from "@/lib/business-profiles";
 // - dryRun : tout est calculé puis annulé, pour montrer le résultat avant d'importer.
 // Tout ou rien : une seule transaction.
 
+// Import d'un gros catalogue : jusqu'à 2 minutes (limite des fonctions Vercel)
+export const maxDuration = 120;
+
 const D = Prisma.Decimal;
 const num = z.number().finite().min(0).max(1e10);
 const schema = z.object({
@@ -279,7 +282,7 @@ export async function POST(req: NextRequest) {
           }
           if (data.dryRun) throw new DryRunRollback();
         },
-        { timeout: 120_000, maxWait: 10_000 }
+        { timeout: 110_000, maxWait: 10_000 }
       );
     } catch (e) {
       if (!(e instanceof DryRunRollback)) throw e;

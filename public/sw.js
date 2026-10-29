@@ -7,21 +7,37 @@
  *  - Pages (navigation)      : réseau d'abord, copie en cache ; sans réseau → copie en cache, sinon /offline.html
  *  - /_next/static, /icons   : cache d'abord (fichiers versionnés, immuables)
  *  - /api/*                  : JAMAIS mis en cache (les données hors ligne sont dans IndexedDB)
+ *
+ * Version : celle du déploiement (/sw.js?v=<commit>). Chaque mise en production
+ * installe un cache neuf et supprime l'ancien. À l'installation, la caisse ET
+ * ses fichiers JavaScript/CSS sont mis en cache : elle s'ouvre hors ligne même
+ * si personne ne l'a rouverte depuis la mise à jour.
  */
-const VERSION = "fishcore-v1";
+const VERSION = `fishcore-${new URL(self.location.href).searchParams.get("v") || "v1"}`;
 const PAGES_CACHE = `${VERSION}-pages`;
 const STATIC_CACHE = `${VERSION}-static`;
 const PRECACHE_PAGES = ["/caisse", "/offline.html"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(PAGES_CACHE)
-      // allSettled : une page protégée (redirection vers /login) ne bloque pas l'installation
-      .then((cache) => Promise.allSettled(PRECACHE_PAGES.map((url) => cache.add(url))))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil(precache().then(() => self.skipWaiting()));
 });
+
+async function precache() {
+  const pages = await caches.open(PAGES_CACHE);
+  const statics = await caches.open(STATIC_CACHE);
+  await Promise.allSettled(
+    PRECACHE_PAGES.map(async (url) => {
+      const response = await fetch(url, { credentials: "include" });
+      // Une page protégée renvoie vers /login : on ne la garde pas
+      if (!response.ok || response.redirected) return;
+      await pages.put(url, response.clone());
+      // Fichiers de la page (JS, CSS) : cachés tout de suite
+      const html = await response.text();
+      const assets = [...new Set(html.match(/\/_next\/static\/[^"'\s)]+/g) || [])];
+      await Promise.allSettled(assets.map((a) => statics.add(a)));
+    })
+  );
+}
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(

@@ -15,9 +15,9 @@ import {
   resolveCenterScope,
 } from "@/lib/auth";
 import { hasPermission } from "@/lib/rbac";
-import { generateSaleNumber } from "@/lib/utils";
 import { priceLines, settlePayments } from "@/lib/sales";
 import { consumeStockForSale, type BatchAllocation } from "@/lib/stock";
+import { nextCompanyNumber, resolveSessionNumber } from "@/lib/invoice-numbers";
 
 
 // Lignes dans l'ordre de saisie (identifiants croissants)
@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
         id: true,
         cashierId: true,
         closedAt: true,
+        openedAt: true,
         cashRegister: { select: { centerId: true, isActive: true, center: { select: { companyId: true } } } },
       },
     });
@@ -125,6 +126,17 @@ export async function POST(req: NextRequest) {
     //    que sous forme de rendu monnaie sur les espèces.
     const payments = settlePayments(data.payments, pricing.totalAmount);
 
+    // Heure d'une vente hors connexion : acceptée si elle tombe pendant la session
+    const soldAt =
+      data.createdOffline && data.soldAt
+        ? (() => {
+            const t = new Date(data.soldAt);
+            const min = cashSession.openedAt.getTime() - 60_000;
+            const max = Date.now() + 5 * 60_000;
+            return t.getTime() >= min && t.getTime() <= max ? t : undefined;
+          })()
+        : undefined;
+
     // 7. Transaction atomique
     const sale = await prisma.$transaction(async (tx) => {
       // 7.0 Verrou sur la session : une clôture concurrente attend la fin de la
@@ -180,13 +192,11 @@ export async function POST(req: NextRequest) {
         };
       });
 
-      // 7b. Numéro de facture : incrément atomique (la ligne entreprise est verrouillée)
-      const company = await tx.company.update({
-        where: { id: companyId },
-        data: { invoiceCounter: { increment: 1 } },
-        select: { invoicePrefix: true, invoiceCounter: true },
-      });
-      const saleNumber = generateSaleNumber(company.invoicePrefix, company.invoiceCounter - 1);
+      // 7b. Numéro de facture : celui que la caisse a déjà imprimé (pris dans sa
+      //     plage), sinon la suite du compteur de l'entreprise (ligne verrouillée)
+      const { seq: invoiceSeq, saleNumber } = data.invoiceSeq
+        ? await resolveSessionNumber(tx, { sessionId: cashSession.id, seq: data.invoiceSeq })
+        : await nextCompanyNumber(tx, companyId);
 
       // 7c. Vente + lignes + paiements
       const newSale = await tx.sale.create({
@@ -198,12 +208,15 @@ export async function POST(req: NextRequest) {
           cashierId: user.id,
           customerId: data.customerId,
           saleNumber,
+          invoiceSeq,
           subtotal: pricing.subtotal,
           discountAmount: pricing.discountAmount,
           totalAmount: pricing.totalAmount,
           taxAmount: pricing.taxAmount,
           notes: data.notes,
           deliveryStatus: requiresPickup ? "PENDING" : "DELIVERED",
+          // Vente hors connexion : la date est celle de la vente, pas celle de l'envoi
+          ...(soldAt ? { createdAt: soldAt } : {}),
           createdOffline: data.createdOffline ?? false,
           deviceId: data.deviceId,
           syncedAt: new Date(),
@@ -282,6 +295,8 @@ export async function POST(req: NextRequest) {
       try {
         const existing = await findExistingSale(idempotencyKey, companyIdForReplay);
         if (existing) return NextResponse.json({ success: true, data: existing, replayed: true });
+        // Même numéro de facture envoyé en même temps par une autre vente
+        return handleApiError(new ApiError(409, "Ce numéro de facture vient d'être utilisé", "INVOICE_NUMBER_USED"), "SALES");
       } catch (replayError) {
         return handleApiError(replayError, "SALES");
       }

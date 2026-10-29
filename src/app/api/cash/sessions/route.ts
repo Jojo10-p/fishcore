@@ -17,6 +17,7 @@ import {
   resolveCenterScope,
 } from "@/lib/auth";
 import { hasPermission } from "@/lib/rbac";
+import { releaseSessionNumbers } from "@/lib/invoice-numbers";
 import { releaseSessionReservations } from "@/lib/stock";
 
 const D = Prisma.Decimal;
@@ -185,6 +186,9 @@ export async function POST(req: NextRequest) {
 
         await tx.cashRegister.update({ where: { id: session.cashRegisterId }, data: { state: "CLOSED" } });
 
+        // Numéros de facture non utilisés : rendus (aucun trou dans la numérotation)
+        const numbers = await releaseSessionNumbers(tx, { companyId, sessionId });
+
         // Les réserves hors ligne non consommées retournent au stock libre
         const released = await releaseSessionReservations(tx, sessionId);
         if (released.length > 0) {
@@ -221,6 +225,8 @@ export async function POST(req: NextRequest) {
               theoreticalBalance: totals.theoreticalBalance.toString(),
               declaredBalance: declared.toString(),
               discrepancy: discrepancy.toString(),
+              invoicesNumbered: numbers.used,
+              invoiceNumbersReturned: numbers.returned.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(", "),
             },
             sessionId,
             ...meta,
