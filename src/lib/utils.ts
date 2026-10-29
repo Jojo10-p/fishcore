@@ -51,3 +51,9 @@ export function truncate(text: string, maxLength: number): string {
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/** Libellé court d'une devise pour les champs de saisie : XOF → « F CFA ». */
+export function currencyLabel(currency: string = "XOF"): string {
+  if (currency === "XOF" || currency === "XAF") return "F CFA";
+  return currency;
+}

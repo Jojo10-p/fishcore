@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { landedUnitCosts, receiveIntoStock } from "@/lib/stock";
 import { writeAuditLog } from "@/lib/audit";
 import {
   ApiError,
@@ -24,6 +26,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       where: { id, center: { companyId } },
       include: {
         lines: { include: { product: { select: { name: true, trackBatches: true, requiresExpiry: true, baseUnitId: true } } } },
+        supplier: { select: { id: true, paymentTermDays: true } },
       },
     });
     if (!receipt) throw new ApiError(404, "Réception introuvable");
@@ -52,11 +55,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
       if (claimed.count === 0) throw new ApiError(409, "Réception déjà validée", "ALREADY_VALIDATED");
 
-      for (const line of receipt.lines) {
-        const stock = await tx.stock.upsert({
-          where: { centerId_productId: { centerId: receipt.centerId, productId: line.productId } },
-          create: { centerId: receipt.centerId, productId: line.productId, quantity: line.quantity },
-          update: { quantity: { increment: line.quantity }, version: { increment: 1 } },
+      // Coût de revient : prix d'achat + part des frais annexes (transport, glace, manutention…)
+      const fees = new Prisma.Decimal(receipt.transportCost).add(receipt.iceCost).add(receipt.handlingCost).add(receipt.otherCosts);
+      const unitCosts = landedUnitCosts(receipt.lines, fees);
+
+      for (const [index, line] of receipt.lines.entries()) {
+        const unitCost = unitCosts[index];
+        await tx.goodsReceiptLine.update({ where: { id: line.id }, data: { landedUnitCost: unitCost } });
+        const stock = await receiveIntoStock(tx, {
+          centerId: receipt.centerId,
+          productId: line.productId,
+          qty: new Prisma.Decimal(line.quantity),
+          unitCost,
         });
 
         const batch = await tx.batch.create({
@@ -70,13 +80,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             grossWeight: line.grossWeight,
             initialQty: line.quantity,
             remainingQty: line.quantity,
+            unitCost,
             receivedAt: receipt.receivedAt,
           },
         });
 
         await tx.stockMovement.create({
           data: {
-            stockId: stock.id,
+            stockId: stock.stockId,
             type: "RECEPTION",
             quantity: line.quantity,
             unitId: line.unitId ?? line.product.baseUnitId,
@@ -87,6 +98,42 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             centerId: receipt.centerId,
           },
         });
+      }
+
+      // Dette fournisseur (cahier §12) : la réception validée devient une facture à régler
+      if (receipt.supplier && !receipt.purchaseId) {
+        const goods = receipt.lines.reduce((sum, l) => sum.add(l.totalPrice), new Prisma.Decimal(0));
+        const total = goods.add(fees);
+        if (total.gt(0)) {
+          const due = new Date(receipt.receivedAt.getTime() + receipt.supplier.paymentTermDays * 24 * 3600 * 1000);
+          const purchase = await tx.purchase.create({
+            data: {
+              companyId,
+              centerId: receipt.centerId,
+              supplierId: receipt.supplier.id,
+              reference: receipt.reference,
+              totalAmount: total,
+              dueDate: due,
+              createdById: user.id,
+            },
+          });
+          await tx.goodsReceipt.update({ where: { id }, data: { purchaseId: purchase.id } });
+          await writeAuditLog(
+            {
+              eventType: "PURCHASE_RECORDED",
+              companyId,
+              centerId: receipt.centerId,
+              userId: user.id,
+              referenceType: "Purchase",
+              referenceId: purchase.id,
+              result: "SUCCESS",
+              newValues: { supplierId: receipt.supplier.id, total: total.toString(), dueDate: due.toISOString(), receiptId: id },
+              ipAddress: user.ipAddress,
+              userAgent: user.userAgent,
+            },
+            tx
+          );
+        }
       }
 
       await writeAuditLog(
@@ -102,6 +149,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             lines: receipt.lines.map((l) => ({
               productId: l.productId,
               quantity: l.quantity.toString(),
+              landedUnitCost: unitCosts[receipt.lines.indexOf(l)].toString(),
               lotNumber: l.lotNumber,
               expiresAt: l.expiresAt?.toISOString() ?? null,
             })),

@@ -157,6 +157,12 @@ enum AuditEventType {
   PRICE_CHANGED
   // Documents
   DOCUMENT_EXPORTED
+  // Finances
+  EXPENSE_RECORDED
+  EXPENSE_CANCELLED
+  CUSTOMER_PAYMENT_RECEIVED
+  SUPPLIER_PAYMENT_MADE
+  PURCHASE_RECORDED
   // Entreprise
   COMPANY_SETTINGS_CHANGED
   // Agences
@@ -490,6 +496,7 @@ model Stock {
 
   quantity      Decimal   @db.Decimal(12, 3) @default(0)   // Stock disponible total
   reservedQty   Decimal   @db.Decimal(12, 3) @default(0)   // Réservé aux caisses offline
+  avgCost       Decimal   @db.Decimal(14, 4) @default(0)   // Coût moyen pondéré (CMP) par unité de base
   version       Int       @default(0)                        // Verrou optimiste
 
   movements     StockMovement[]
@@ -555,6 +562,7 @@ model Batch {
   // à chaque vente (premier périmé, premier sorti).
   initialQty      Decimal?  @db.Decimal(12, 3)
   remainingQty    Decimal   @db.Decimal(12, 3) @default(0)
+  unitCost        Decimal?  @db.Decimal(14, 4)   // Coût de revient unitaire (achat + frais annexes)
   lotNumber       String?
   packageCount    Int?
   grossWeight     Decimal?  @db.Decimal(12, 3)
@@ -586,14 +594,18 @@ model Supplier {
   address     String?
   taxId       String?
   isActive    Boolean   @default(true)
+  paymentTermDays Int   @default(0)          // Délai de paiement accordé (échéance des factures)
 
   purchases   Purchase[]
   receipts    GoodsReceipt[]
+  payments    SupplierPayment[]
 
   @@map("suppliers")
 }
 
 /// Achat fournisseur
+/// Achat fournisseur = dette (cahier §12). Créé à la validation d'une réception
+/// rattachée à un fournisseur ; réglé par un ou plusieurs paiements.
 model Purchase {
   id            String    @id @default(cuid())
   createdAt     DateTime  @default(now())
@@ -605,7 +617,7 @@ model Purchase {
   supplierId    String
   supplier      Supplier  @relation(fields: [supplierId], references: [id])
 
-  reference     String?
+  reference     String?                     // N° de facture fournisseur
   totalAmount   Decimal   @db.Decimal(12, 2)
   paidAmount    Decimal   @db.Decimal(12, 2) @default(0)
   dueDate       DateTime?
@@ -613,8 +625,52 @@ model Purchase {
   createdById   String
 
   receipts      GoodsReceipt[]
+  payments      SupplierPayment[]
 
+  @@index([companyId, supplierId])
   @@map("purchases")
+}
+
+/// Paiement à un fournisseur, imputé à ses factures les plus anciennes.
+model SupplierPayment {
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  companyId   String
+  supplierId  String
+  supplier    Supplier  @relation(fields: [supplierId], references: [id])
+  purchaseId  String?                         // Facture visée (sinon : la plus ancienne d'abord)
+  purchase    Purchase? @relation(fields: [purchaseId], references: [id])
+  amount      Decimal   @db.Decimal(12, 2)
+  method      PaymentMethod
+  reference   String?
+  sessionId   String?                         // Payé en espèces depuis une caisse
+  cashMovementId String? @unique
+  allocations Json?                           // [{ purchaseId, amount }] : imputation réelle
+  paidById    String
+  notes       String?
+
+  @@index([companyId, supplierId])
+  @@map("supplier_payments")
+}
+
+/// Règlement d'un client sur ses achats à crédit (cahier §14 : créances).
+model CustomerPayment {
+  id              String    @id @default(cuid())
+  createdAt       DateTime  @default(now())
+  idempotencyKey  String    @unique
+  companyId       String
+  customerId      String
+  customer        Customer  @relation(fields: [customerId], references: [id])
+  amount          Decimal   @db.Decimal(12, 2)
+  method          PaymentMethod
+  reference       String?
+  sessionId       String?                     // Encaissé dans une caisse ouverte
+  cashMovementId  String?   @unique
+  receivedById    String
+  notes           String?
+
+  @@index([companyId, customerId])
+  @@map("customer_payments")
 }
 
 /// Réception de marchandises
@@ -668,6 +724,7 @@ model GoodsReceiptLine {
   unitId          String?
   unitPrice       Decimal   @db.Decimal(12, 2) // Coût par unité de base
   totalPrice      Decimal   @db.Decimal(12, 2)
+  landedUnitCost  Decimal?  @db.Decimal(14, 4) // Coût de revient : prix + part des frais (calculé à la validation)
   lotNumber       String?
   expiresAt       DateTime?
 
@@ -688,8 +745,12 @@ model Customer {
   email       String?
   address     String?
   isActive    Boolean   @default(true)
+  // Plafond de crédit (null = pas de plafond). Une vente à crédit qui le dépasse est refusée.
+  creditLimit Decimal?  @db.Decimal(12, 2)
   sales       Sale[]
+  payments    CustomerPayment[]
 
+  @@index([companyId, name])
   @@map("customers")
 }
 
@@ -857,6 +918,7 @@ model SaleLine {
   baseQuantity  Decimal   @db.Decimal(12, 3) @default(0) // Quantité sortie du stock (unité de base)
   taxRate       Decimal   @db.Decimal(5, 2) @default(0)
   taxAmount     Decimal   @db.Decimal(12, 2) @default(0)
+  costAmount    Decimal   @db.Decimal(12, 2) @default(0)   // Coût de revient des marchandises vendues (figé à la vente)
 
   @@map("sale_lines")
 }
@@ -1001,17 +1063,32 @@ model StockTransferLine {
 // DÉPENSES
 // ─────────────────────────────────────────────
 
+/// Dépense de l'entreprise (cahier §14). Jamais supprimée : une erreur se corrige
+/// par annulation historisée. Payée en espèces depuis une caisse ouverte, elle
+/// crée une sortie de caisse (prise en compte à la clôture).
 model Expense {
   id          String    @id @default(cuid())
   createdAt   DateTime  @default(now())
+  companyId   String
   centerId    String
   center      Center    @relation(fields: [centerId], references: [id])
-  category    String
+  category    String                          // Loyer, Électricité, Salaires, Transport…
   amount      Decimal   @db.Decimal(12, 2)
   description String?
-  date        DateTime  @default(now())
+  date        DateTime  @default(now())        // Date de la dépense (peut différer de la saisie)
+  method      PaymentMethod @default(CASH)
+  reference   String?                         // N° de facture, référence mobile money…
+  payee       String?                         // Bénéficiaire
+  sessionId   String?                         // Caisse d'où l'argent est sorti
+  cashMovementId String? @unique
   createdById String
 
+  isCancelled     Boolean   @default(false)
+  cancelledAt     DateTime?
+  cancelledById   String?
+  cancelReason    String?
+
+  @@index([companyId, date])
   @@map("expenses")
 }
 

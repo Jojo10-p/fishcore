@@ -18,6 +18,7 @@ import { hasPermission } from "@/lib/rbac";
 import { generateSaleNumber } from "@/lib/utils";
 import { priceLines, settlePayments } from "@/lib/sales";
 import { consumeStockForSale, type BatchAllocation } from "@/lib/stock";
+import { assertCreditAllowed } from "@/lib/finance";
 
 
 const saleInclude = { lines: true, payments: true } satisfies Prisma.SaleInclude;
@@ -110,22 +111,40 @@ export async function POST(req: NextRequest) {
         throw new ApiError(409, "La session de caisse est clôturée", "SESSION_CLOSED");
       }
 
+      // 7.1 Vente à crédit : plafond du client (fiche client verrouillée)
+      const credit = payments.filter((p) => p.method === "CREDIT").reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+      if (credit.gt(0) && data.customerId) await assertCreditAllowed(tx, companyId, data.customerId, credit);
+
       // 7a. Sortie de stock : réserve de la session d'abord, puis stock libre.
       //     Produits traités dans un ordre fixe pour éviter les interblocages.
       //     Produits suivis par lot : lots non périmés, premier périmé premier sorti.
-      const outputs = new Map<string, { stockId: string; allocations: BatchAllocation[] }>();
+      const outputs = new Map<string, { stockId: string; allocations: BatchAllocation[]; cost: Prisma.Decimal }>();
       const productOrder = [...pricing.baseQtyByProduct.keys()].sort();
       for (const productId of productOrder) {
-        const { stockId, allocations } = await consumeStockForSale(tx, {
+        const qty = pricing.baseQtyByProduct.get(productId)!;
+        const { stockId, allocations, avgCost } = await consumeStockForSale(tx, {
           centerId,
           productId,
-          qty: pricing.baseQtyByProduct.get(productId)!,
+          qty,
           sessionId: cashSession.id,
           productName: pricing.productNames.get(productId) ?? productId,
           trackBatches: pricing.productInfo.get(productId)?.trackBatches ?? false,
         });
-        outputs.set(productId, { stockId, allocations });
+        // Coût des marchandises vendues : coût du lot si suivi par lot, sinon CMP du stock
+        // (à défaut, prix d'achat de la fiche produit)
+        const fallback = avgCost.gt(0) ? avgCost : pricing.productInfo.get(productId)!.purchasePrice;
+        const cost = allocations.length
+          ? allocations.reduce((s, a) => s.add(a.quantity.mul(a.unitCost ?? fallback)), new Prisma.Decimal(0))
+          : qty.mul(fallback);
+        outputs.set(productId, { stockId, allocations, cost });
       }
+
+      // Coût réparti sur les lignes du même produit au prorata des quantités
+      const linesWithCost = pricing.lines.map((l) => {
+        const out = outputs.get(l.productId)!;
+        const totalQty = pricing.baseQtyByProduct.get(l.productId)!;
+        return { ...l, costAmount: out.cost.mul(l.baseQuantity).div(totalQty).toDecimalPlaces(2) };
+      });
 
       // 7b. Numéro de facture : incrément atomique (la ligne entreprise est verrouillée)
       const company = await tx.company.update({
@@ -153,7 +172,7 @@ export async function POST(req: NextRequest) {
           createdOffline: data.createdOffline ?? false,
           deviceId: data.deviceId,
           syncedAt: new Date(),
-          lines: { create: pricing.lines },
+          lines: { create: linesWithCost },
           payments: {
             create: payments.map((p, i) => ({
               idempotencyKey: `${data.idempotencyKey}_p${i}`,

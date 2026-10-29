@@ -19,6 +19,7 @@ type SaleLineInput = {
 
 export interface ProductSaleInfo {
   name: string;
+  purchasePrice: Prisma.Decimal;
   trackBatches: boolean;
   requiresPrescription: boolean;
 }
@@ -45,6 +46,7 @@ export async function priceLines(companyId: string, lines: SaleLineInput[], crea
       id: true,
       name: true,
       sellingPrice: true,
+      purchasePrice: true,
       taxRate: true,
       trackBatches: true,
       requiresPrescription: true,
@@ -72,6 +74,7 @@ export async function priceLines(companyId: string, lines: SaleLineInput[], crea
     baseUnitByProduct.set(product.id, product.baseUnitId);
     productInfo.set(product.id, {
       name: product.name,
+      purchasePrice: new D(product.purchasePrice),
       trackBatches: product.trackBatches,
       requiresPrescription: product.requiresPrescription,
     });

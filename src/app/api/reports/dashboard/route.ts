@@ -8,37 +8,7 @@ import {
   requirePermission,
   resolveCenterScope,
 } from "@/lib/auth";
-
-/** Décalage (ms) d'un fuseau horaire à un instant donné. */
-function tzOffsetMs(instant: number, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(new Date(instant));
-  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
-  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
-  return asUtc - instant;
-}
-
-/** Début et fin d'une journée calendaire dans le fuseau de l'entreprise. */
-function dayBounds(dateStr: string, timeZone: string) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const startGuess = Date.UTC(y, m - 1, d);
-  const start = startGuess - tzOffsetMs(startGuess, timeZone);
-  const endGuess = Date.UTC(y, m - 1, d + 1);
-  const end = endGuess - tzOffsetMs(endGuess, timeZone);
-  return { start: new Date(start), end: new Date(end - 1) };
-}
-
-function todayIn(timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date()); // AAAA-MM-JJ
-}
+import { dayBounds, todayIn } from "@/lib/time";
 
 // GET /api/reports/dashboard — Indicateurs du jour (centres visibles uniquement)
 export async function GET(req: NextRequest) {

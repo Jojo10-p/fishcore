@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, Money, PageHeader, Spinner, Table, Td, Textarea } from "@/components/ui";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
+import { formatCurrency } from "@/lib/utils";
 
 interface SaleRow {
   id: string;
@@ -58,7 +59,7 @@ export default function SalesPage() {
     <>
       <PageHeader
         title="Ventes"
-        description={sales ? `${sales.length} vente(s) · ${new Intl.NumberFormat("fr-FR").format(total)} ${currency} hors annulations` : undefined}
+        description={sales ? `${sales.length} vente(s) · ${formatCurrency(total, currency)} hors annulations` : undefined}
         actions={<Input type="date" aria-label="Jour" value={day} onChange={(e) => setDay(e.target.value)} className="w-auto" />}
       />
       {error && <Alert>{error}</Alert>}

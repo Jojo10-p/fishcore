@@ -23,12 +23,12 @@ type Decimal = Prisma.Decimal;
 export async function consumeStockForSale(
   tx: Tx,
   params: { centerId: string; productId: string; qty: Decimal; sessionId: string; productName: string; trackBatches?: boolean }
-): Promise<{ stockId: string; fromReservation: Decimal; allocations: BatchAllocation[] }> {
+): Promise<{ stockId: string; fromReservation: Decimal; allocations: BatchAllocation[]; avgCost: Decimal }> {
   const { centerId, productId, qty, sessionId, productName, trackBatches = false } = params;
 
   // Verrouille la ligne de stock (sérialise les ventes concurrentes du produit)
-  const stocks = await tx.$queryRaw<{ id: string }[]>`
-    SELECT "id" FROM "stocks" WHERE "centerId" = ${centerId} AND "productId" = ${productId} FOR UPDATE`;
+  const stocks = await tx.$queryRaw<{ id: string; avgCost: Prisma.Decimal }[]>`
+    SELECT "id", "avgCost" FROM "stocks" WHERE "centerId" = ${centerId} AND "productId" = ${productId} FOR UPDATE`;
   if (stocks.length === 0) {
     throw new ApiError(409, `Stock insuffisant pour « ${productName} »`, "INSUFFICIENT_STOCK");
   }
@@ -67,12 +67,13 @@ export async function consumeStockForSale(
   // 3. Produits suivis par lot : sortie des lots non périmés, le plus proche de la péremption d'abord
   const allocations = trackBatches ? await allocateBatchesFefo(tx, { centerId, productId, qty, productName }) : [];
 
-  return { stockId, fromReservation, allocations };
+  return { stockId, fromReservation, allocations, avgCost: new D(stocks[0].avgCost) };
 }
 
 export interface BatchAllocation {
   batchId: string;
   quantity: Decimal;
+  unitCost: Decimal | null;
   lotNumber: string | null;
   expiresAt: Date | null;
 }
@@ -96,8 +97,10 @@ export async function allocateBatchesFefo(
   const { centerId, productId, qty, productName } = params;
   const today = startOfToday();
 
-  const batches = await tx.$queryRaw<Array<{ id: string; remainingQty: Prisma.Decimal; lotNumber: string | null; expiresAt: Date | null }>>`
-    SELECT "id", "remainingQty", "lotNumber", "expiresAt"
+  const batches = await tx.$queryRaw<
+    Array<{ id: string; remainingQty: Prisma.Decimal; lotNumber: string | null; expiresAt: Date | null; unitCost: Prisma.Decimal | null }>
+  >`
+    SELECT "id", "remainingQty", "lotNumber", "expiresAt", "unitCost"
       FROM "batches"
      WHERE "productId" = ${productId} AND "centerId" = ${centerId}
        AND "remainingQty" > 0
@@ -112,7 +115,13 @@ export async function allocateBatchesFefo(
     const take = D.min(left, new D(b.remainingQty));
     await tx.$executeRaw`
       UPDATE "batches" SET "remainingQty" = "remainingQty" - ${take.toString()}::numeric WHERE "id" = ${b.id}`;
-    allocations.push({ batchId: b.id, quantity: take, lotNumber: b.lotNumber, expiresAt: b.expiresAt });
+    allocations.push({
+      batchId: b.id,
+      quantity: take,
+      unitCost: b.unitCost !== null ? new D(b.unitCost) : null,
+      lotNumber: b.lotNumber,
+      expiresAt: b.expiresAt,
+    });
     left = left.sub(take);
   }
 
@@ -195,3 +204,58 @@ export async function releaseSessionReservations(tx: Tx, sessionId: string): Pro
   }
   return released;
 }
+
+/**
+ * Entrée en stock valorisée (réception) : met à jour la quantité et le coût
+ * moyen pondéré (CMP) du stock.
+ *   nouveau CMP = (stock × CMP + entrée × coût d'entrée) / (stock + entrée)
+ */
+export async function receiveIntoStock(
+  tx: Tx,
+  params: { centerId: string; productId: string; qty: Decimal; unitCost: Decimal }
+): Promise<{ stockId: string; avgCost: Decimal }> {
+  const { centerId, productId, qty, unitCost } = params;
+  await tx.stock.upsert({
+    where: { centerId_productId: { centerId, productId } },
+    create: { centerId, productId, quantity: 0 },
+    update: {},
+  });
+  const [row] = await tx.$queryRaw<{ id: string; quantity: Prisma.Decimal; avgCost: Prisma.Decimal }[]>`
+    SELECT "id", "quantity", "avgCost" FROM "stocks"
+     WHERE "centerId" = ${centerId} AND "productId" = ${productId} FOR UPDATE`;
+  const oldQty = Prisma.Decimal.max(new D(row.quantity), 0);
+  const newQty = oldQty.add(qty);
+  const avgCost = oldQty.lte(0) || new D(row.avgCost).lte(0)
+    ? unitCost
+    : oldQty.mul(row.avgCost).add(qty.mul(unitCost)).div(newQty);
+  await tx.$executeRaw`
+    UPDATE "stocks"
+       SET "quantity" = "quantity" + ${qty.toString()}::numeric,
+           "avgCost" = ${avgCost.toDecimalPlaces(4).toString()}::numeric,
+           "version" = "version" + 1,
+           "updatedAt" = NOW()
+     WHERE "id" = ${row.id}`;
+  return { stockId: row.id, avgCost };
+}
+
+/**
+ * Répartit les frais annexes (transport, glace, manutention…) sur les lignes
+ * d'une réception au prorata de leur valeur (ou de leur quantité si la
+ * marchandise est gratuite) → coût de revient unitaire de chaque ligne.
+ */
+export function landedUnitCosts(
+  lines: Array<{ quantity: Prisma.Decimal; totalPrice: Prisma.Decimal }>,
+  fees: Prisma.Decimal
+): Decimal[] {
+  const totalValue = lines.reduce((s, l) => s.add(l.totalPrice), new D(0));
+  const totalQty = lines.reduce((s, l) => s.add(l.quantity), new D(0));
+  return lines.map((l) => {
+    const share = fees.isZero()
+      ? new D(0)
+      : totalValue.gt(0)
+        ? fees.mul(l.totalPrice).div(totalValue)
+        : fees.mul(l.quantity).div(totalQty);
+    return new D(l.totalPrice).add(share).div(l.quantity).toDecimalPlaces(4);
+  });
+}
+

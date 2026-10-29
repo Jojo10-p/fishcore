@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, Money, PageHeader, Select, Spinner, Table, Td } from "@/components/ui";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
+import { currencyLabel } from "@/lib/utils";
 
 interface Unit {
   id: string;
@@ -381,7 +382,7 @@ function ProductModal({
                 ))}
             </Select>
             <Input aria-label={`Contenance en ${baseUnit?.symbol}`} placeholder={`= ? ${baseUnit?.symbol ?? ""}`} inputMode="decimal" value={p.factor} onChange={(e) => setPackagings((rows) => rows.map((r, j) => (j === i ? { ...r, factor: e.target.value } : r)))} />
-            <Input aria-label="Prix du conditionnement" placeholder={`Prix (${currency})`} inputMode="decimal" value={p.sellingPrice} onChange={(e) => setPackagings((rows) => rows.map((r, j) => (j === i ? { ...r, sellingPrice: e.target.value } : r)))} />
+            <Input aria-label="Prix du conditionnement" placeholder={`Prix (${currencyLabel(currency)})`} inputMode="decimal" value={p.sellingPrice} onChange={(e) => setPackagings((rows) => rows.map((r, j) => (j === i ? { ...r, sellingPrice: e.target.value } : r)))} />
             <Input aria-label="Code-barres du conditionnement" placeholder="Code-barres" value={p.barcode} onChange={(e) => setPackagings((rows) => rows.map((r, j) => (j === i ? { ...r, barcode: e.target.value } : r)))} />
             <button className="text-gray-400 hover:text-red-600" onClick={() => setPackagings((rows) => rows.filter((_, j) => j !== i))} aria-label="Retirer">
               ✕

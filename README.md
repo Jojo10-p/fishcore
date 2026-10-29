@@ -25,7 +25,14 @@ npx prisma migrate dev
 ```
 
 Les garde-fous SQL rendent le journal d'audit non modifiable, interdisent un
-stock négatif et deux sessions ouvertes sur une même caisse.
+stock négatif, deux sessions ouvertes sur une même caisse, un paiement supérieur
+à la facture ou un montant négatif. Le fichier peut être rejoué sans risque
+après chaque évolution du schéma :
+
+```bash
+npx prisma migrate dev --name <evolution>
+psql "$DIRECT_URL" -f prisma/sql/integrity-guards.sql
+```
 
 ```bash
 npm run dev        # http://localhost:3000
@@ -49,7 +56,26 @@ les unités, catégories et options ; tout reste réglable article par article
 | Supermarché | Caisse au code-barres (douchette), TVA incluse dans le prix, extraite sur le reçu |
 | Pharmacie / alimentaire | Suivi par lot, péremption obligatoire à la réception, vente « premier périmé, premier sorti », lots périmés jamais vendus, lot imprimé sur le reçu |
 | Caractéristiques libres | DCI, dosage, dimension, matière, espèce, contenance… |
-| Vente à crédit | Client obligatoire (créances) |
+| Vente à crédit | Client obligatoire, plafond de crédit facultatif par client |
+
+## Finances
+
+| Écran | Contenu |
+|---|---|
+| *Finances* | Chiffre d'affaires TTC/HT, TVA, coût des marchandises vendues, marge brute, dépenses, résultat estimé ; encaissements par moyen ; créances et dettes à date ; par centre, par caissier, meilleurs articles ; comparaison à la période précédente ; export CSV (Excel) |
+| *Dépenses* | Par catégorie et par centre ; payées en espèces depuis une caisse ouverte (elles entrent dans sa clôture) ou hors caisse ; annulées avec motif, jamais supprimées |
+| *Clients & créances* | Qui doit combien, relevé ligne à ligne, plafond de crédit, règlements (espèces dans la caisse, mobile money, virement) |
+| *Fournisseurs & dettes* | Une facture est créée à la validation de chaque réception (marchandise + frais d'approche), échéance selon le délai du fournisseur ; paiements imputés sur la plus ancienne échéance |
+
+Règles de calcul :
+
+- **Coût de revient** = prix d'achat + frais d'approche (transport, glace, manutention…)
+  répartis au prorata de la valeur ; **coût moyen pondéré** recalculé à chaque réception ;
+  le coût est **figé sur chaque ligne de vente** : la marge d'hier ne change pas
+  quand le prix d'achat change aujourd'hui.
+- **Clôture de caisse** : fond + ventes espèces − remboursements espèces + entrées
+  (règlements clients, apports) − sorties (dépenses, paiements fournisseurs, avances).
+- **Dates** : les journées sont découpées dans le fuseau de l'entreprise (Africa/Porto-Novo par défaut).
 
 ## Fonctionnement hors connexion
 

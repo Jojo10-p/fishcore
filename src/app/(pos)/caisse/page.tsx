@@ -6,6 +6,7 @@ import POSInterface from "@/components/pos/pos-interface";
 import { SessionProvider, useSession } from "@/components/app/session-provider";
 import { ConnectionBadge, useOnline } from "@/components/app/connection-badge";
 import { Alert, Badge, Button, Field, Input, Modal, Money, Qty, Select, Spinner } from "@/components/ui";
+import { currencyLabel } from "@/lib/utils";
 import { useOfflineSync } from "@/hooks/use-offline-sync";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
 import { getOfflineDB } from "@/lib/offline/db";
@@ -243,7 +244,7 @@ function OpenSessionScreen({
           )}
         </Field>
 
-        <Field label={`Fond de caisse (${currency})`} hint="Montant en espèces présent dans le tiroir au début du service.">
+        <Field label={`Fond de caisse (${currencyLabel(currency)})`} hint="Montant en espèces présent dans le tiroir au début du service.">
           <Input inputMode="numeric" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" />
         </Field>
 
@@ -554,7 +555,7 @@ function CloseModal({
     >
       {!online && <Alert tone="amber">La clôture nécessite une connexion au serveur.</Alert>}
       {error && <Alert>{error}</Alert>}
-      <Field label={`Montant réellement compté en espèces (${currency})`} hint="Comptez le tiroir : le système calcule l'écart avec le solde théorique.">
+      <Field label={`Montant réellement compté en espèces (${currencyLabel(currency)})`} hint="Comptez le tiroir : le système calcule l'écart avec le solde théorique.">
         <Input inputMode="numeric" value={declared} onChange={(e) => setDeclared(e.target.value.replace(/[^\d]/g, ""))} autoFocus />
       </Field>
       <Field label="Remarque (facultatif)">

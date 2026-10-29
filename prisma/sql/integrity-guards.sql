@@ -50,3 +50,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS "cancellations_one_pending_per_sale"
 ALTER TABLE "stock_reservations" DROP CONSTRAINT IF EXISTS "stock_reservations_quantity_non_negative";
 ALTER TABLE "stock_reservations" ADD CONSTRAINT "stock_reservations_quantity_non_negative"
   CHECK ("quantity" >= 0);
+
+-- 6. Finances : montants positifs, une facture fournisseur jamais « surpayée »
+ALTER TABLE "purchases" DROP CONSTRAINT IF EXISTS "purchases_paid_within_total";
+ALTER TABLE "purchases" ADD CONSTRAINT "purchases_paid_within_total"
+  CHECK ("paidAmount" >= 0 AND "paidAmount" <= "totalAmount");
+ALTER TABLE "expenses" DROP CONSTRAINT IF EXISTS "expenses_amount_positive";
+ALTER TABLE "expenses" ADD CONSTRAINT "expenses_amount_positive" CHECK ("amount" > 0);
+ALTER TABLE "customer_payments" DROP CONSTRAINT IF EXISTS "customer_payments_amount_positive";
+ALTER TABLE "customer_payments" ADD CONSTRAINT "customer_payments_amount_positive" CHECK ("amount" > 0);
+ALTER TABLE "supplier_payments" DROP CONSTRAINT IF EXISTS "supplier_payments_amount_positive";
+ALTER TABLE "supplier_payments" ADD CONSTRAINT "supplier_payments_amount_positive" CHECK ("amount" > 0);

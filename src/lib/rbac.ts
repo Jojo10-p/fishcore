@@ -47,6 +47,11 @@ export type Permission =
   | "purchase:create"
   | "expense:view"
   | "expense:create"
+  | "expense:cancel"
+  | "customer:view"
+  | "customer:edit"
+  | "customer:payment"
+  | "supplier:payment"
   | "document:create"
   | "document:export"
   | "report:view"
@@ -74,7 +79,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "cash:view_session", "cash:view_all_sessions", "cash:movement", "cash:register_manage",
     "supplier:view", "supplier:create", "supplier:edit",
     "purchase:view", "purchase:create",
-    "expense:view", "expense:create",
+    "expense:view", "expense:create", "expense:cancel",
+    "customer:view", "customer:edit", "customer:payment", "supplier:payment",
     "document:create", "document:export",
     "report:view", "report:export",
     "audit:view",
@@ -94,7 +100,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "cash:view_session", "cash:view_all_sessions", "cash:movement", "cash:register_manage",
     "supplier:view", "supplier:create",
     "purchase:view", "purchase:create",
-    "expense:view", "expense:create",
+    "expense:view", "expense:create", "expense:cancel",
+    "customer:view", "customer:edit", "customer:payment", "supplier:payment",
     "document:create", "document:export",
     "report:view", "report:export",
     "notification:view",
@@ -107,6 +114,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "sale:create", "sale:view",
     "sale:cancel_request",
     "cash:open_session", "cash:close_session", "cash:view_session",
+    "customer:view", "customer:payment",
     "document:create",
     "notification:view",
   ],
@@ -119,6 +127,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "supplier:view",
     "purchase:view",
     "expense:view",
+    "customer:view",
     "document:export",
     "report:view", "report:export",
     "notification:view",
