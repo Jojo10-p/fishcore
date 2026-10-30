@@ -12,7 +12,6 @@ import { getPendingSyncCount } from "@/lib/offline/sync";
 import { APP_NAME } from "@/lib/app-config";
 import { InstallAppButton } from "@/components/app/install-app";
 import { ChangePasswordButton } from "@/components/app/change-password";
-import { SubscriptionBanner } from "@/components/app/subscription-card";
 
 interface NavItem {
   href: string;
@@ -91,7 +90,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (session?.user.role === "PLATFORM_ADMIN") {
     return (
       <div className="p-8 text-center text-sm text-gray-600">
-        Compte administrateur de la plateforme. <Link className="text-blue-600 underline" href="/plateforme">Ouvrir l&apos;espace plateforme</Link>
+        Compte du créateur de la plateforme. <Link className="text-blue-600 underline" href="/plateforme">Ouvrir la console</Link>
       </div>
     );
   }
@@ -214,7 +213,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="hidden lg:flex justify-end px-8 pt-4">
           <ConnectionBadge />
         </div>
-        <SubscriptionBanner sub={session.subscription} canManage={can("company:edit")} />
         {fromCache && (
           <div className="mx-4 lg:mx-8 mt-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm text-amber-900">
             Hors connexion : les informations affichées peuvent ne pas être à jour.

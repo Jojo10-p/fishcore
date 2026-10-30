@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { companySchema } from "@/lib/validations";
-import { ensureDefaultPlans, TRIAL_DAYS } from "@/lib/subscription";
 import bcrypt from "bcryptjs";
 import { writeAuditLog } from "@/lib/audit";
 import { seedCompanyCatalog } from "@/lib/catalog";
@@ -37,8 +36,7 @@ export async function POST(req: NextRequest) {
     const passwordHash = await bcrypt.hash(data.password, 12);
 
     const result = await prisma.$transaction(async (tx) => {
-      await ensureDefaultPlans(tx);
-      // 1. Créer l'entreprise (essai gratuit)
+      // 1. Créer l'entreprise
       const company = await tx.company.create({
         data: {
           tradeName: data.tradeName,
@@ -60,8 +58,6 @@ export async function POST(req: NextRequest) {
           vatEnabled: getBusinessProfile(data.businessType).tax.vatEnabled,
           defaultTaxRate: getBusinessProfile(data.businessType).tax.defaultTaxRate,
           requiresPickup: getBusinessProfile(data.businessType).pickupByDefault ?? false,
-          planCode: "TRIAL",
-          trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 86_400_000),
         },
       });
 

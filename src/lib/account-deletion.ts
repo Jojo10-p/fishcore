@@ -67,10 +67,50 @@ const STATEMENTS: Array<[string, string]> = [
   ["entreprise", `DELETE FROM "companies" WHERE "id" = ${C}`],
 ];
 
-/** Supprime l'entreprise et toutes ses données. Renvoie le nombre de lignes supprimées par table. */
-export async function purgeCompany(companyId: string): Promise<Record<string, number>> {
+export interface DeletionFeedback {
+  reasons: string[];
+  otherReason?: string | null;
+}
+
+/**
+ * Supprime l'entreprise et toutes ses données. Avant l'effacement, la raison du
+ * départ et un résumé de l'activité sont gardés pour le créateur de la
+ * plateforme (registre account_deletions). Renvoie les lignes supprimées par table.
+ */
+export async function purgeCompany(companyId: string, feedback: DeletionFeedback = { reasons: [] }): Promise<Record<string, number>> {
   return prisma.$transaction(
     async (tx) => {
+      const company = await tx.company.findUnique({
+        where: { id: companyId },
+        select: { tradeName: true, ownerName: true, email: true, phone: true, city: true, businessType: true, createdAt: true },
+      });
+      if (!company) throw new Error("Entreprise introuvable");
+      const [centersCount, usersCount, productsCount, sales] = await Promise.all([
+        tx.center.count({ where: { companyId } }),
+        tx.user.count({ where: { companyId } }),
+        tx.product.count({ where: { companyId } }),
+        tx.sale.aggregate({ where: { companyId, status: { not: "CANCELLED" } }, _count: true, _sum: { totalAmount: true }, _max: { createdAt: true } }),
+      ]);
+      await tx.accountDeletion.create({
+        data: {
+          companyId,
+          tradeName: company.tradeName,
+          ownerName: company.ownerName,
+          email: company.email,
+          phone: company.phone,
+          city: company.city,
+          businessType: company.businessType,
+          companyCreatedAt: company.createdAt,
+          reasons: feedback.reasons,
+          otherReason: feedback.otherReason || null,
+          centersCount,
+          usersCount,
+          productsCount,
+          salesCount: sales._count,
+          salesTotal: sales._sum.totalAmount ?? 0,
+          lastSaleAt: sales._max.createdAt,
+        },
+      });
       // Autorise, pour CETTE transaction et CETTE entreprise seulement, la
       // suppression de son journal d'audit (voir prisma/sql/integrity-guards.sql)
       await tx.$executeRaw`SELECT set_config('fishcore.purge_company', ${companyId}, true)`;

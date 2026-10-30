@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { createUserSchema } from "@/lib/validations";
-import { assertCanAddUser } from "@/lib/subscription";
 import { writeAuditLog } from "@/lib/audit";
 import {
   ApiError,
@@ -88,7 +87,6 @@ export async function POST(req: NextRequest) {
     const passwordHash = await bcrypt.hash(password, 12);
 
     const created = await prisma.$transaction(async (tx) => {
-      await assertCanAddUser(companyId, tx);
       const newUser = await tx.user.create({
         data: {
           companyId,

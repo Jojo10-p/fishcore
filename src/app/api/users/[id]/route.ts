@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 import { updateUserSchema } from "@/lib/validations";
-import { assertCanAddUser } from "@/lib/subscription";
 import { ApiError, getCurrentUser, handleApiError, parseBody, readJson, requireCompany, requirePermission } from "@/lib/auth";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -44,8 +43,6 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      // Réactivation : dans la limite d'utilisateurs de l'offre
-      if (data.isActive === true && !target.isActive) await assertCanAddUser(companyId, tx);
       // Toujours au moins un propriétaire actif
       if (target.role === "COMPANY_OWNER" && ((data.role && data.role !== "COMPANY_OWNER") || deactivating)) {
         const owners = await tx.user.count({ where: { companyId, role: "COMPANY_OWNER", isActive: true, NOT: { id: target.id } } });

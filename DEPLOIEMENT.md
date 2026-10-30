@@ -26,8 +26,6 @@
 | `NEXT_PUBLIC_APP_URL` | `https://votre-domaine` (ou l'adresse `.vercel.app`) |
 | `NEXT_PUBLIC_APP_NAME` | nom affiché, ex. `fishcore` |
 | `DATABASE_CA_CERT` | facultatif, voir plus haut |
-| `PLATFORM_PAYMENT_INSTRUCTIONS` | facultatif : comment payer l'abonnement, affiché aux clients (ex. `MTN MoMo : 01 97 … (John DOSSAVI-MESSY)`) |
-| `PLATFORM_TRIAL_DAYS` / `PLATFORM_GRACE_DAYS` | facultatifs : durée de l'essai gratuit (14 j) et du délai de grâce (7 j) |
 | `NEXT_PUBLIC_SUPPORT_CONTACT` | facultatif : contact de l'assistance affiché aux propriétaires (« Mot de passe oublié »), ex. `WhatsApp +229 01 00 00 00 00` |
 
    L'application refuse de démarrer en production sans `JWT_SECRET` et `INSTALL_LINK_SECRET`.
@@ -72,21 +70,26 @@ Chaque `git push` sur la branche principale redéploie. Les caisses se mettent �
 - Au retour du réseau, les ventes partent aussitôt au serveur, avec leur heure réelle.
 - La clôture de caisse se fait avec connexion (toutes les ventes doivent être envoyées).
 
-## 5. Espace plateforme (abonnements)
+## 5. Console du créateur
 
-1. Créer le compte administrateur (une fois), depuis un poste qui a les variables de production :
+Le logiciel est vendu au comptant : pas d'abonnement, pas d'essai, pas de limite. La console sert seulement à **voir ce
+qui se passe** sur la plateforme ; seul le compte créateur y a accès (les clients reçoivent un refus).
+
+1. Créer le compte créateur (une fois), depuis un poste qui a les variables de production :
    ```
    npm run create-admin -- votre@email.bj "Prénom" "Nom"
    ```
    Le script affiche un lien pour choisir le mot de passe (24 h). L'adresse ne doit pas déjà servir à une entreprise.
-2. Se connecter normalement : l'administrateur arrive sur **/plateforme** (vue d'ensemble, clients, offres & prix).
-3. Chaque inscription démarre un **essai gratuit de 14 jours** (sans limite). À l'échéance : **7 jours de grâce**, puis
-   **consultation seule** (plus de ventes ni de saisies ; consultation, exports, clôture de caisse et envoi des ventes faites
-   hors connexion avant l'échéance restent possibles).
-4. Paiement reçu (Mobile Money…) : fiche du client → **Enregistrer un paiement** (offre, nombre de mois, référence). La
-   période s'ajoute à la fin de la période déjà payée ; un compte suspendu est réactivé.
-5. Offres : prix mensuels et limites (centres, utilisateurs) modifiables dans *Offres & prix* ; limites particulières par client
-   possibles. Suspension immédiate (avec motif visible par le client) et réactivation depuis la fiche.
+2. Se connecter normalement : le créateur arrive sur **/plateforme**.
+   - **Vue d'ensemble** : entreprises inscrites, filiales (centres), utilisateurs, ventes des 30 derniers jours,
+     entreprises actives / inactives (14 jours sans vente ni connexion) / suspendues, inscriptions par mois, répartition
+     par métier, dernières inscriptions et derniers départs.
+   - **Entreprises** : recherche, filtres (actives, inactives, suspendues, *plusieurs centres*, métier) et export Excel.
+     La fiche d'une entreprise montre chaque centre avec ses ventes, son stock, ses caisses et son équipe, le chiffre
+     d'affaires jour par jour, les utilisateurs, des **notes internes** (jamais visibles du client), le **lien de mot de
+     passe du propriétaire** et la **suspension** (motif visible du client, tous déconnectés) / réactivation.
+   - **Départs** : chaque compte supprimé, avec les raisons cochées par le propriétaire, son texte libre (« Autre ») et un
+     résumé de son activité. Les données de l'entreprise, elles, sont effacées.
 
 ## 6. Assistance
 

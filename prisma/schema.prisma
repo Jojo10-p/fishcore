@@ -150,8 +150,6 @@ enum AuditEventType {
   LOGIN_FAILED
   PASSWORD_CHANGED
   PASSWORD_RESET_LINK_CREATED
-  SUBSCRIPTION_PAYMENT_RECORDED
-  SUBSCRIPTION_CHANGED
   COMPANY_SUSPENDED
   COMPANY_REACTIVATED
   USER_UPDATED
@@ -268,17 +266,7 @@ model Company {
   isActive        Boolean   @default(true)
   suspendedAt     DateTime?
   suspendedReason String?
-
-  // Abonnement à la plateforme : essai gratuit, puis payé jusqu'à paidUntil.
-  // Après l'échéance + délai de grâce, l'accès passe en lecture seule.
-  planCode             String                @default("TRIAL")
-  plan                 Plan                  @relation(fields: [planCode], references: [code])
-  trialEndsAt          DateTime?
-  paidUntil            DateTime?
-  customMaxCenters     Int? // Limites particulières (sinon celles de l'offre)
-  customMaxUsers       Int?
-  platformNotes        String? // Notes internes de la plateforme (jamais montrées au client)
-  subscriptionPayments SubscriptionPayment[]
+  platformNotes   String? // Notes internes du créateur (jamais montrées au client)
 
   // Relations
   centers       Center[]
@@ -406,40 +394,31 @@ model CompanyBrandAsset {
   @@map("company_brand_assets")
 }
 
-/// Offre d'abonnement (prix et limites modifiables par la plateforme).
-model Plan {
-  code         String    @id // TRIAL, ESSENTIEL, PRO, ENTREPRISE…
-  name         String
-  monthlyPrice Int       @default(0) // Prix mensuel en francs CFA
-  maxCenters   Int? // null = illimité
-  maxUsers     Int?
-  description  String?
-  isActive     Boolean   @default(true) // Proposée aux nouveaux abonnements
-  sortOrder    Int       @default(0)
-  companies    Company[]
+/// Compte entreprise supprimé par son propriétaire : la raison du départ et un
+/// résumé de l'activité, conservés pour le créateur de la plateforme (toutes les
+/// données de l'entreprise, elles, sont effacées).
+model AccountDeletion {
+  id               String    @id @default(cuid())
+  deletedAt        DateTime  @default(now())
+  companyId        String // Identifiant de l'entreprise supprimée (pour mémoire)
+  tradeName        String
+  ownerName        String
+  email            String
+  phone            String
+  city             String?
+  businessType     String
+  companyCreatedAt DateTime
+  reasons          String[] // Raisons cochées (codes)
+  otherReason      String? // Raison écrite par le client
+  centersCount     Int       @default(0)
+  usersCount       Int       @default(0)
+  productsCount    Int       @default(0)
+  salesCount       Int       @default(0)
+  salesTotal       Decimal   @default(0) @db.Decimal(14, 2)
+  lastSaleAt       DateTime?
 
-  @@map("plans")
-}
-
-/// Paiement d'abonnement enregistré par la plateforme (Mobile Money, virement…) :
-/// prolonge l'abonnement de l'entreprise de `months` mois.
-model SubscriptionPayment {
-  id           String   @id @default(cuid())
-  createdAt    DateTime @default(now())
-  companyId    String
-  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  planCode     String
-  amount       Int
-  months       Int
-  method       String // MOBILE_MONEY, VIREMENT, ESPECES, AUTRE
-  reference    String? // N° de transaction Mobile Money…
-  periodStart  DateTime
-  periodEnd    DateTime
-  notes        String?
-  recordedById String
-
-  @@index([companyId, createdAt])
-  @@map("subscription_payments")
+  @@index([deletedAt])
+  @@map("account_deletions")
 }
 
 /// Lien de réinitialisation du mot de passe (sans e-mail : le responsable le

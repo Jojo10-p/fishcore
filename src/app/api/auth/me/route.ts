@@ -42,10 +42,6 @@ export async function GET(req: NextRequest) {
           avatarUrl: user.avatarUrl,
         },
         company: user.company,
-        // Échéance de l'abonnement (bandeau d'alerte, consultation seule)
-        subscription: auth.subscription
-          ? { status: auth.subscription.status, daysLeft: auth.subscription.daysLeft, accessEndsAt: auth.subscription.accessEndsAt, readOnlyFrom: auth.subscription.readOnlyFrom }
-          : null,
         centers,
         // Pour adapter l'interface au rôle (le serveur reste seul juge)
         permissions: getPermissions(auth.role),

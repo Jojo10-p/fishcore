@@ -18,7 +18,6 @@ import { hasPermission } from "@/lib/rbac";
 import { priceLines, settlePayments } from "@/lib/sales";
 import { consumeStockForSale, type BatchAllocation } from "@/lib/stock";
 import { nextCompanyNumber, resolveSessionNumber } from "@/lib/invoice-numbers";
-import { EXPIRED_MESSAGE } from "@/lib/subscription";
 
 
 // Lignes dans l'ordre de saisie (identifiants croissants)
@@ -137,13 +136,6 @@ export async function POST(req: NextRequest) {
             return t.getTime() >= min && t.getTime() <= max ? t : undefined;
           })()
         : undefined;
-
-    // Abonnement échu : seules passent les ventes faites hors connexion avant la
-    // mise en consultation seule (elles ont déjà eu lieu, le client est servi)
-    const sub = user.subscription;
-    if (sub?.status === "EXPIRED" && !(soldAt && sub.readOnlyFrom && soldAt <= sub.readOnlyFrom)) {
-      throw new ApiError(402, EXPIRED_MESSAGE, "SUBSCRIPTION_EXPIRED");
-    }
 
     // 7. Transaction atomique
     const sale = await prisma.$transaction(async (tx) => {

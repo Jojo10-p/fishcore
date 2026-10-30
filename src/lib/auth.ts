@@ -4,7 +4,6 @@ import crypto from "crypto";
 import { Prisma, UserRole } from "@prisma/client";
 import { ZodError, type ZodType } from "zod";
 import { prisma } from "@/lib/prisma";
-import { computeAccess, EXPIRED_MESSAGE, isAllowedWhenExpired, type AccessInfo } from "@/lib/subscription";
 import { hasPermission, type Permission } from "@/lib/rbac";
 import { writeAuditLog } from "@/lib/audit";
 import { getJwtSecret, SESSION_COOKIE } from "@/lib/secrets";
@@ -28,8 +27,6 @@ export interface AuthUser {
   sessionId: string;
   ipAddress?: string;
   userAgent?: string;
-  /** Abonnement de l'entreprise (null pour l'administrateur de la plateforme). */
-  subscription: AccessInfo | null;
 }
 
 export class ApiError extends Error {
@@ -84,7 +81,7 @@ export async function getCurrentUser(req: NextRequest): Promise<AuthUser> {
           role: true,
           isActive: true,
           companyId: true,
-          company: { select: { isActive: true, trialEndsAt: true, paidUntil: true } },
+          company: { select: { isActive: true } },
           centers: {
             where: { isActive: true, center: { status: "ACTIVE" } },
             select: { centerId: true },
@@ -100,12 +97,7 @@ export async function getCurrentUser(req: NextRequest): Promise<AuthUser> {
   const { user } = session;
   if (!user.isActive) throw new ApiError(401, "Compte désactivé");
   if (user.company && !user.company.isActive) {
-    throw new ApiError(403, "L'abonnement de cette entreprise est suspendu.", "COMPANY_SUSPENDED");
-  }
-  const subscription = user.company ? computeAccess(user.company) : null;
-  // Abonnement échu (au-delà du délai de grâce) : consultation seule
-  if (subscription?.status === "EXPIRED" && !isAllowedWhenExpired(req.nextUrl.pathname, req.method)) {
-    throw new ApiError(402, EXPIRED_MESSAGE, "SUBSCRIPTION_EXPIRED");
+    throw new ApiError(403, "L'abonnement de cette entreprise est suspendu.");
   }
 
   return {
@@ -117,7 +109,6 @@ export async function getCurrentUser(req: NextRequest): Promise<AuthUser> {
     companyId: user.companyId,
     centerIds: user.centers.map((c) => c.centerId),
     sessionId: session.id,
-    subscription,
     ...requestMeta(req),
   };
 }

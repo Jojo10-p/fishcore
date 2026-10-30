@@ -107,15 +107,3 @@ ALTER TABLE "stock_transfer_lines" ADD CONSTRAINT "stock_transfer_lines_quantiti
   CHECK ("quantity" > 0 AND ("receivedQty" IS NULL OR ("receivedQty" >= 0 AND "receivedQty" <= "quantity")));
 ALTER TABLE "stock_transfers" DROP CONSTRAINT IF EXISTS "stock_transfers_distinct_centers";
 ALTER TABLE "stock_transfers" ADD CONSTRAINT "stock_transfers_distinct_centers" CHECK ("fromCenterId" <> "toCenterId");
-
--- Abonnements : offres par défaut présentes (sans écraser les prix modifiés), montants cohérents
-INSERT INTO "plans" ("code", "name", "monthlyPrice", "maxCenters", "maxUsers", "description", "isActive", "sortOrder") VALUES
-  ('TRIAL', 'Essai gratuit', 0, NULL, NULL, 'Toutes les fonctions pendant 14 jours', false, 0),
-  ('ESSENTIEL', 'Essentiel', 10000, 1, 3, 'Une boutique, jusqu''à 3 utilisateurs', true, 1),
-  ('PRO', 'Pro', 25000, 3, 10, 'Jusqu''à 3 magasins ou dépôts, 10 utilisateurs', true, 2),
-  ('ENTREPRISE', 'Entreprise', 50000, NULL, NULL, 'Magasins et utilisateurs illimités', true, 3)
-ON CONFLICT ("code") DO NOTHING;
-ALTER TABLE "plans" DROP CONSTRAINT IF EXISTS "plans_values";
-ALTER TABLE "plans" ADD CONSTRAINT "plans_values" CHECK ("monthlyPrice" >= 0 AND ("maxCenters" IS NULL OR "maxCenters" >= 1) AND ("maxUsers" IS NULL OR "maxUsers" >= 1));
-ALTER TABLE "subscription_payments" DROP CONSTRAINT IF EXISTS "subscription_payments_values";
-ALTER TABLE "subscription_payments" ADD CONSTRAINT "subscription_payments_values" CHECK ("amount" >= 0 AND "months" >= 1 AND "periodEnd" > "periodStart");

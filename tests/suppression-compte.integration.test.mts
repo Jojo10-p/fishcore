@@ -148,26 +148,42 @@ test("marque blanche : l'application porte le nom et le logo de l'entreprise", a
 });
 
 test("suppression : refusée sans le bon mot de passe, le bon nom ou le bon rôle", async () => {
-  const cashier = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.cashier, body: { password: "Motdepasse1", confirmName: "Roger Doks" } });
+  const cashier = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.cashier, body: { password: "Motdepasse1", confirmName: "Roger Doks", reasons: ["test_account"] } });
   assert.equal(cashier.status, 403);
-  const badPwd = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.owner, body: { password: "mauvais", confirmName: "Roger Doks" } });
+  const badPwd = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.owner, body: { password: "mauvais", confirmName: "Roger Doks", reasons: ["test_account"] } });
   assert.equal(badPwd.status, 400);
   assert.equal(badPwd.json.code, "BAD_PASSWORD");
-  const badName = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.owner, body: { password: "Motdepasse1", confirmName: "Roger" } });
+  const badName = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.owner, body: { password: "Motdepasse1", confirmName: "Roger", reasons: ["test_account"] } });
   assert.equal(badName.status, 400);
   assert.equal(badName.json.code, "CONFIRM_MISMATCH");
+  // Une raison est obligatoire ; « Autre » demande un texte
+  const noReason = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.owner, body: { password: "Motdepasse1", confirmName: "Roger Doks", reasons: [] } });
+  assert.equal(noReason.status, 400);
+  const otherEmpty = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.owner, body: { password: "Motdepasse1", confirmName: "Roger Doks", reasons: ["other"], otherReason: " " } });
+  assert.equal(otherEmpty.status, 400);
+  const unknown = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.owner, body: { password: "Motdepasse1", confirmName: "Roger Doks", reasons: ["n_importe_quoi"] } });
+  assert.equal(unknown.status, 400);
+  assert.equal(await prisma.accountDeletion.count(), 0);
   assert.ok(await prisma.company.findUnique({ where: { id: ctx.roger.companyId } }));
 });
 
 test("suppression : toutes les données de l'entreprise disparaissent, l'autre est intacte", async () => {
   const before = await prisma.auditLog.count({ where: { companyId: ctx.other.companyId } });
-  const r = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.owner, body: { password: "Motdepasse1", confirmName: "  roger   DOKS " } });
+  const r = await call(deleteRoute.POST, { path: "/api/company/delete", cookie: ctx.roger.owner, body: { password: "Motdepasse1", confirmName: "  roger   DOKS ", reasons: ["too_complex", "other", "too_complex"], otherReason: "Je préfère mon cahier" } });
   assert.equal(r.status, 200, JSON.stringify(r.json));
+
+  // Le départ est consigné pour le créateur de la plateforme (raisons + résumé d'activité)
+  const dep = await prisma.accountDeletion.findFirstOrThrow({ where: { companyId: ctx.roger.companyId } });
+  assert.deepEqual(dep.reasons, ["too_complex", "other"]);
+  assert.equal(dep.otherReason, "Je préfère mon cahier");
+  assert.equal(dep.tradeName, "Roger Doks");
+  assert.equal(dep.email, "roger@doks.bj");
+  assert.ok(dep.centersCount >= 1 && dep.usersCount >= 2);
 
   // Plus aucune ligne liée à l'entreprise, dans aucune table
   const id = ctx.roger.companyId;
   const tables = await prisma.$queryRaw<Array<{ table_name: string }>>`
-    SELECT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'companyId'`;
+    SELECT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'companyId' AND table_name <> 'account_deletions'`;
   for (const { table_name } of tables) {
     const [{ n }] = await prisma.$queryRawUnsafe<Array<{ n: bigint }>>(`SELECT COUNT(*) AS n FROM "${table_name}" WHERE "companyId" = $1`, id);
     assert.equal(Number(n), 0, `${table_name} contient encore des données`);

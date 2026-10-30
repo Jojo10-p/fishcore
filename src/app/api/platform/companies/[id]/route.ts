@@ -3,8 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 import { ApiError, handleApiError, parseBody, readJson } from "@/lib/auth";
-import { companyActivity, requirePlatformAdmin, withAccess } from "@/lib/platform";
-import { companyLimits } from "@/lib/subscription";
+import { companyActivity, isInactive, requirePlatformAdmin } from "@/lib/platform";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -21,29 +20,65 @@ async function detail(id: string) {
       address: true,
       city: true,
       taxId: true,
+      tradeRegNumber: true,
       businessType: true,
+      currency: true,
+      logoUrl: true,
       createdAt: true,
       isActive: true,
       suspendedAt: true,
       suspendedReason: true,
-      trialEndsAt: true,
-      paidUntil: true,
-      planCode: true,
-      customMaxCenters: true,
-      customMaxUsers: true,
       platformNotes: true,
-      plan: { select: { code: true, name: true, monthlyPrice: true, maxCenters: true, maxUsers: true } },
-      centers: { select: { id: true, name: true, code: true, status: true }, orderBy: { createdAt: "asc" } },
-      users: { select: { id: true, firstName: true, lastName: true, email: true, phone: true, role: true, isActive: true, lastLoginAt: true }, orderBy: { createdAt: "asc" } },
-      subscriptionPayments: { orderBy: { createdAt: "desc" }, take: 50 },
+      centers: { select: { id: true, name: true, code: true, status: true, city: true, createdAt: true }, orderBy: { createdAt: "asc" } },
+      users: {
+        select: { id: true, firstName: true, lastName: true, email: true, phone: true, role: true, isActive: true, lastLoginAt: true, centers: { where: { isActive: true }, select: { centerId: true } } },
+        orderBy: { createdAt: "asc" },
+      },
+      _count: { select: { products: true, customers: true, suppliers: true } },
     },
   });
   if (!c) throw new ApiError(404, "Entreprise introuvable");
-  const [activity, limits, products] = await Promise.all([companyActivity([id]), companyLimits(id), prisma.product.count({ where: { companyId: id } })]);
-  return { ...withAccess(c), activity: activity.get(id)!, limits, products };
+  const since30 = new Date(Date.now() - 30 * 86_400_000);
+  const centerIds = c.centers.map((x) => x.id);
+  const [activity, byCenter, openSessions, stockByCenter, daily] = await Promise.all([
+    companyActivity([id]),
+    prisma.sale.groupBy({ by: ["centerId"], where: { companyId: id, createdAt: { gte: since30 }, status: { not: "CANCELLED" } }, _count: true, _sum: { totalAmount: true }, _max: { createdAt: true } }),
+    prisma.cashSession.groupBy({ by: ["cashRegisterId"], where: { closedAt: null, cashRegister: { centerId: { in: centerIds } } }, _count: true }),
+    prisma.$queryRaw<Array<{ centerId: string; articles: bigint; value: number | null }>>`
+      SELECT "centerId", COUNT(*) FILTER (WHERE "quantity" > 0) AS articles, SUM("quantity" * "avgCost")::float AS value
+        FROM "stocks" WHERE "centerId" = ANY(${centerIds}) GROUP BY "centerId"`,
+    prisma.$queryRaw<Array<{ day: string; n: bigint; amount: number }>>`
+      SELECT to_char("createdAt", 'YYYY-MM-DD') AS day, COUNT(*) AS n, SUM("totalAmount")::float AS amount
+        FROM "sales" WHERE "companyId" = ${id} AND "createdAt" >= ${since30} AND "status" <> 'CANCELLED' GROUP BY 1 ORDER BY 1`,
+  ]);
+  const registers = await prisma.cashRegister.findMany({ where: { centerId: { in: centerIds } }, select: { id: true, centerId: true } });
+  const centers = c.centers.map((center) => {
+    const s = byCenter.find((x) => x.centerId === center.id);
+    const st = stockByCenter.find((x) => x.centerId === center.id);
+    const regs = registers.filter((r) => r.centerId === center.id).map((r) => r.id);
+    return {
+      ...center,
+      sales30d: s?._count ?? 0,
+      revenue30d: Number(s?._sum.totalAmount ?? 0),
+      lastSaleAt: s?._max.createdAt ?? null,
+      registers: regs.length,
+      openSessions: openSessions.filter((o) => regs.includes(o.cashRegisterId)).reduce((n, o) => n + o._count, 0),
+      users: c.users.filter((u) => u.isActive && (u.role === "COMPANY_OWNER" || u.centers.some((x) => x.centerId === center.id))).length,
+      stockArticles: Number(st?.articles ?? 0),
+      stockValue: Math.round(st?.value ?? 0),
+    };
+  });
+  // 30 derniers jours, jours sans vente compris
+  const days = Array.from({ length: 30 }, (_, i) => {
+    const d = new Date(Date.now() - (29 - i) * 86_400_000).toISOString().slice(0, 10);
+    const row = daily.find((x) => x.day === d);
+    return { day: d, count: Number(row?.n ?? 0), amount: Math.round(row?.amount ?? 0) };
+  });
+  const act = activity.get(id)!;
+  return { ...c, centers, activity: act, inactive: c.isActive && isInactive(act), daily: days };
 }
 
-// GET /api/platform/companies/[id] — Fiche client
+// GET /api/platform/companies/[id] — Fiche d'une entreprise
 export async function GET(req: NextRequest, { params }: Ctx) {
   try {
     await requirePlatformAdmin(req);
@@ -55,64 +90,44 @@ export async function GET(req: NextRequest, { params }: Ctx) {
 }
 
 const patchSchema = z.object({
-  planCode: z.string().min(1).optional(),
-  /** Prolonger (ou raccourcir) l'essai de N jours à partir de sa fin actuelle (ou d'aujourd'hui). */
-  extendTrialDays: z.coerce.number().int().min(-365).max(365).optional(),
-  customMaxCenters: z.coerce.number().int().min(1).nullable().optional(),
-  customMaxUsers: z.coerce.number().int().min(1).nullable().optional(),
   platformNotes: z.string().max(2000).nullable().optional(),
-  /** Suspendre (motif obligatoire) ou réactiver. */
+  /** Suspendre (motif obligatoire, visible par le client) ou réactiver. */
   suspend: z.object({ reason: z.string().trim().min(3, "Motif obligatoire") }).optional(),
   reactivate: z.literal(true).optional(),
 });
 
-// PATCH /api/platform/companies/[id] — Offre, essai, limites, notes, suspension
+// PATCH /api/platform/companies/[id] — Notes internes, suspension / réactivation
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   try {
     const admin = await requirePlatformAdmin(req);
     const { id } = await params;
     const data = parseBody(patchSchema, await readJson(req));
-    const before = await prisma.company.findUnique({ where: { id }, select: { planCode: true, trialEndsAt: true, isActive: true, customMaxCenters: true, customMaxUsers: true } });
+    const before = await prisma.company.findUnique({ where: { id }, select: { isActive: true } });
     if (!before) throw new ApiError(404, "Entreprise introuvable");
-    if (data.planCode) {
-      const plan = await prisma.plan.findUnique({ where: { code: data.planCode } });
-      if (!plan) throw new ApiError(400, "Offre inconnue");
-    }
 
     await prisma.$transaction(async (tx) => {
-      const trialEndsAt =
-        data.extendTrialDays !== undefined
-          ? new Date(Math.max(before.trialEndsAt?.getTime() ?? 0, Date.now()) + data.extendTrialDays * 86_400_000)
-          : undefined;
       await tx.company.update({
         where: { id },
         data: {
-          ...(data.planCode ? { planCode: data.planCode } : {}),
-          ...(trialEndsAt ? { trialEndsAt } : {}),
-          ...(data.customMaxCenters !== undefined ? { customMaxCenters: data.customMaxCenters } : {}),
-          ...(data.customMaxUsers !== undefined ? { customMaxUsers: data.customMaxUsers } : {}),
           ...(data.platformNotes !== undefined ? { platformNotes: data.platformNotes } : {}),
           ...(data.suspend ? { isActive: false, suspendedAt: new Date(), suspendedReason: data.suspend.reason } : {}),
           ...(data.reactivate ? { isActive: true, suspendedAt: null, suspendedReason: null } : {}),
         },
       });
-      // Suspension : tous les utilisateurs sont déconnectés aussitôt
-      if (data.suspend) await tx.authSession.deleteMany({ where: { user: { companyId: id } } });
-      const event = data.suspend ? "COMPANY_SUSPENDED" : data.reactivate ? "COMPANY_REACTIVATED" : "SUBSCRIPTION_CHANGED";
-      const { platformNotes: _notes, ...visible } = data;
-      void _notes;
-      if (Object.keys(visible).length > 0) {
+      if (data.suspend || data.reactivate) {
+        // Suspension : tous les utilisateurs sont déconnectés aussitôt
+        if (data.suspend) await tx.authSession.deleteMany({ where: { user: { companyId: id } } });
         await writeAuditLog(
           {
-            eventType: event,
+            eventType: data.suspend ? "COMPANY_SUSPENDED" : "COMPANY_REACTIVATED",
             companyId: id,
             userId: admin.id,
             referenceType: "Company",
             referenceId: id,
             result: "SUCCESS",
             reason: data.suspend?.reason,
-            oldValues: { planCode: before.planCode, trialEndsAt: before.trialEndsAt?.toISOString() ?? null, isActive: before.isActive, customMaxCenters: before.customMaxCenters, customMaxUsers: before.customMaxUsers },
-            newValues: { ...visible, ...(trialEndsAt ? { trialEndsAt: trialEndsAt.toISOString() } : {}), by: "plateforme" },
+            oldValues: { isActive: before.isActive },
+            newValues: { isActive: !data.suspend, by: "créateur de la plateforme" },
             ipAddress: admin.ipAddress,
             userAgent: admin.userAgent,
           },
