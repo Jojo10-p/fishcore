@@ -21,6 +21,8 @@ const PUBLIC_PATHS = [
   "/reinitialiser",
   "/api/install",
   "/api/health",
+  // Tâches planifiées (protégées par CRON_SECRET dans la route)
+  "/api/cron",
   // Identité de l'entreprise pour l'application installée (nom, icônes)
   "/api/brand",
   // Fichiers de l'application installable (doivent rester accessibles hors session)

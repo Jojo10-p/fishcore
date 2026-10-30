@@ -8,6 +8,7 @@ import { BUSINESS_PROFILES, BUSINESS_TYPE_ORDER } from "@/lib/business-profiles"
 import { cn } from "@/lib/utils";
 import { BrandCard } from "@/components/app/brand-settings";
 import { DeleteAccountCard } from "@/components/app/delete-account";
+import { EmecfCard } from "@/components/app/emecf-settings";
 
 interface CompanySettings {
   tradeName: string;
@@ -292,6 +293,8 @@ export default function SettingsPage() {
             </Button>
           </div>
         )}
+
+        <EmecfCard editable={editable} />
 
         <DeleteAccountCard />
       </div>

@@ -1,3 +1,4 @@
+import { emecfDocumentSelect } from "@/lib/emecf/normalize";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           select: { id: true, number: true, createdAt: true, deliveredById: true, notes: true, lines: { select: { saleLineId: true, quantity: true } } },
         },
         session: { select: { cashRegister: { select: { name: true, center: { select: { name: true, address: true, city: true, phone: true } } } } } },
+        emecfDocuments: { select: emecfDocumentSelect, orderBy: { createdAt: "asc" } },
       },
     });
     if (!sale) throw new ApiError(404, "Vente introuvable");
@@ -59,6 +61,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         vatEnabled: true,
         invoiceNotes: true,
         requiresPickup: true,
+        emecfEnabled: true,
       },
     });
     // Noms des personnes ayant servi la marchandise
@@ -86,7 +89,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         .map((m) => ({ lotNumber: m.batch!.lotNumber, expiresAt: m.batch!.expiresAt, quantity: m.quantity.negated().toString() })),
     }));
 
-    return NextResponse.json({ success: true, data: { ...sale, lines, deliveries, company } });
+    const { emecfDocuments, ...rest } = sale;
+    const emecf = emecfDocuments.find((d) => d.type === "FV") ?? null;
+    const emecfCredit = emecfDocuments.find((d) => d.type === "FA") ?? null;
+    return NextResponse.json({ success: true, data: { ...rest, lines, deliveries, company, emecf, emecfCredit } });
   } catch (error) {
     return handleApiError(error, "SALES");
   }

@@ -25,13 +25,14 @@ export type Json = Record<string, any>;
 
 export async function call(
   handler: (req: NextRequest, ctx?: any) => Promise<Response>,
-  opts: { path: string; method?: string; cookie?: string; body?: unknown; params?: Record<string, string> }
+  opts: { path: string; method?: string; cookie?: string; body?: unknown; params?: Record<string, string>; headers?: Record<string, string> }
 ): Promise<{ status: number; json: Json }> {
   const req = new NextRequest(`${BASE}${opts.path}`, {
     method: opts.method ?? (opts.body ? "POST" : "GET"),
     headers: {
       "content-type": "application/json",
       ...(opts.cookie ? { cookie: `fishcore-session=${opts.cookie}` } : {}),
+      ...(opts.headers ?? {}),
     },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });

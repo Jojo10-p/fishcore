@@ -134,6 +134,8 @@ export interface TicketHeader {
     invoiceNotes: string | null;
     requiresPickup: boolean;
     invoiceFormat: string;
+    /** Facture normalisée e-MECeF active (le ticket porte le code DGI ou la mention d'attente). */
+    emecfEnabled?: boolean;
   };
   center: { id: string; name: string; address: string | null; city: string | null; phone: string | null };
   registerName: string;

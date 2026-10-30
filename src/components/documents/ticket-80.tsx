@@ -1,6 +1,7 @@
 "use client";
 
 import { Barcode } from "@/components/documents/a4-document";
+import { EmecfTicketBlock, type EmecfView } from "@/components/documents/emecf-block";
 
 // ─────────────────────────────────────────────
 // Facture au format ticket 80 mm (XP-80C et équivalentes)
@@ -46,6 +47,11 @@ export interface TicketData {
   cancelled?: boolean;
   /** Mention « à présenter au magasin » (retrait sur présentation de la facture). */
   pickupPending?: boolean;
+  /** Facture normalisée e-MECeF (entreprises abonnées) : null = en attente. */
+  emecf?: EmecfView | null;
+  emecfEnabled?: boolean;
+  /** Avoir normalisé (vente annulée). */
+  emecfCredit?: EmecfView | null;
 }
 
 const METHODS: Record<string, string> = { CASH: "Espèces", MOBILE_MONEY: "Mobile money", CARD: "Carte", TRANSFER: "Virement", MIXED: "Mixte" };
@@ -171,6 +177,13 @@ export function Ticket80({ t }: { t: TicketData }) {
           </div>
         )}
       </div>
+
+      {t.emecfEnabled && (
+        <EmecfTicketBlock
+          e={t.emecf ?? { status: "PENDING", codeMecefDgi: null, qrCode: null, counters: null, nim: null, dgiDateTime: null }}
+        />
+      )}
+      {t.emecfCredit?.status === "NORMALIZED" && <EmecfTicketBlock e={{ ...t.emecfCredit, type: "FA" }} />}
 
       {t.pickupPending && !t.cancelled && (
         <p className="mt-2 border border-black py-1 text-center text-[11.5px] font-black">À PRÉSENTER AU MAGASIN POUR ÊTRE SERVI</p>

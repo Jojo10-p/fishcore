@@ -24,7 +24,7 @@ export async function apiGet<T = unknown>(url: string): Promise<T> {
   return handle<T>(await fetch(url, { cache: "no-store" }));
 }
 
-export async function apiSend<T = unknown>(url: string, body: unknown, method: "POST" | "PATCH" | "DELETE" = "POST"): Promise<T> {
+export async function apiSend<T = unknown>(url: string, body: unknown, method: "POST" | "PATCH" | "PUT" | "DELETE" = "POST"): Promise<T> {
   return handle<T>(
     await fetch(url, {
       method,

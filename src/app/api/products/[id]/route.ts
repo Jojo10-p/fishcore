@@ -29,6 +29,7 @@ const updateSchema = z
     sellingPrice: z.coerce.number().min(0).optional(),
     stockAlertQty: z.coerce.number().min(0).optional(),
     taxRate: z.coerce.number().min(0).max(100).optional(),
+    emecfTaxGroup: z.enum(["A", "B", "C", "D", "E", "F"]).nullable().optional(),
     trackBatches: z.boolean().optional(),
     requiresExpiry: z.boolean().optional(),
     requiresPrescription: z.boolean().optional(),

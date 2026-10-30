@@ -1,3 +1,4 @@
+import { onSaleCancelled } from "@/lib/emecf/normalize";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
@@ -254,7 +255,17 @@ export async function POST(req: NextRequest, { params }: Params) {
         );
       });
 
-      return NextResponse.json({ success: true, message: "Annulation approuvée. Stock restauré et remboursement enregistré." });
+      // Facture normalisée : avoir (FA) auprès de la DGI, sans bloquer l'annulation
+      const credit = await onSaleCancelled(saleId).catch((e) => {
+        console.error("[EMECF]", e);
+        return null;
+      });
+
+      return NextResponse.json({
+        success: true,
+        message: "Annulation approuvée. Stock restauré et remboursement enregistré.",
+        ...(credit ? { emecfCredit: credit } : {}),
+      });
     }
 
     throw new ApiError(400, "Action invalide");

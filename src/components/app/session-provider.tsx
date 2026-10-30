@@ -20,6 +20,8 @@ export interface SessionData {
     requiresPickup?: boolean;
     /** Facture imprimée à la caisse : ticket thermique 80 mm ou A4. */
     invoiceFormat?: "TICKET_80" | "A4";
+    /** Facture normalisée e-MECeF active. */
+    emecfEnabled?: boolean;
   } | null;
   centers: Array<{ id: string; name: string; code: string; status: string }>;
   permissions: Permission[];

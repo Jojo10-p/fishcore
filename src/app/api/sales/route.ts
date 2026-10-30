@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { runAfter } from "@/lib/background";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { createSaleSchema } from "@/lib/validations";
@@ -18,10 +19,21 @@ import { hasPermission } from "@/lib/rbac";
 import { priceLines, settlePayments } from "@/lib/sales";
 import { consumeStockForSale, type BatchAllocation } from "@/lib/stock";
 import { nextCompanyNumber, resolveSessionNumber } from "@/lib/invoice-numbers";
+import { emecfDocumentSelect, normalizeSale, processPending } from "@/lib/emecf/normalize";
 
 
 // Lignes dans l'ordre de saisie (identifiants croissants)
-const saleInclude = { lines: { orderBy: { id: "asc" } }, payments: true } satisfies Prisma.SaleInclude;
+const saleInclude = {
+  lines: { orderBy: { id: "asc" } },
+  payments: true,
+  emecfDocuments: { where: { type: "FV" }, select: emecfDocumentSelect },
+} satisfies Prisma.SaleInclude;
+
+/** Vente renvoyée à la caisse, avec sa facture normalisée (e-MECeF) si l'entreprise y est abonnée. */
+function withEmecf<T extends { emecfDocuments?: unknown[] }>(sale: T) {
+  const { emecfDocuments, ...rest } = sale;
+  return { ...rest, emecf: emecfDocuments?.[0] ?? null };
+}
 
 // ─────────────────────────────────────────────
 // POST /api/sales — Créer une vente (cahier §9)
@@ -47,7 +59,7 @@ export async function POST(req: NextRequest) {
 
     // 1. Idempotence : opération déjà enregistrée → renvoyer son résultat
     const existing = await findExistingSale(data.idempotencyKey, companyId);
-    if (existing) return NextResponse.json({ success: true, data: existing, replayed: true });
+    if (existing) return NextResponse.json({ success: true, data: withEmecf(existing), replayed: true });
 
     // 2. Session de caisse : ouverte, appartenant à ce caissier, dans un centre accessible
     const cashSession = await prisma.cashSession.findUnique({
@@ -326,14 +338,22 @@ export async function POST(req: NextRequest) {
       return newSale;
     });
 
-    return NextResponse.json({ success: true, data: sale }, { status: 201 });
+    // 8. Facture normalisée (e-MECeF) : demandée aussitôt, sans jamais bloquer la
+    //    vente (DGI injoignable → la facture reste à normaliser et sera reprise)
+    const emecf = await normalizeSale(sale.id).catch((e) => {
+      console.error("[EMECF]", e);
+      return null;
+    });
+    if (emecf) runAfter(() => processPending(companyId, 3));
+
+    return NextResponse.json({ success: true, data: { ...withEmecf(sale), emecf } }, { status: 201 });
   } catch (error) {
     // Deux envois simultanés de la même vente : la seconde échoue sur la clé
     // d'idempotence → on renvoie la vente créée par la première.
     if (isUniqueViolation(error) && idempotencyKey && companyIdForReplay) {
       try {
         const existing = await findExistingSale(idempotencyKey, companyIdForReplay);
-        if (existing) return NextResponse.json({ success: true, data: existing, replayed: true });
+        if (existing) return NextResponse.json({ success: true, data: withEmecf(existing), replayed: true });
         // Même numéro de facture envoyé en même temps par une autre vente
         return handleApiError(new ApiError(409, "Ce numéro de facture vient d'être utilisé", "INVOICE_NUMBER_USED"), "SALES");
       } catch (replayError) {
@@ -409,6 +429,7 @@ export async function GET(req: NextRequest) {
           payments: true,
           cashier: { select: { firstName: true, lastName: true } },
           customer: { select: { name: true, phone: true } },
+          emecfDocuments: { select: { type: true, status: true, codeMecefDgi: true, lastError: true } },
         },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
