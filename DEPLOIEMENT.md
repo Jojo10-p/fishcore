@@ -26,6 +26,8 @@
 | `NEXT_PUBLIC_APP_URL` | `https://votre-domaine` (ou l'adresse `.vercel.app`) |
 | `NEXT_PUBLIC_APP_NAME` | nom affiché, ex. `fishcore` |
 | `DATABASE_CA_CERT` | facultatif, voir plus haut |
+| `PLATFORM_PAYMENT_INSTRUCTIONS` | facultatif : comment payer l'abonnement, affiché aux clients (ex. `MTN MoMo : 01 97 … (John DOSSAVI-MESSY)`) |
+| `PLATFORM_TRIAL_DAYS` / `PLATFORM_GRACE_DAYS` | facultatifs : durée de l'essai gratuit (14 j) et du délai de grâce (7 j) |
 | `NEXT_PUBLIC_SUPPORT_CONTACT` | facultatif : contact de l'assistance affiché aux propriétaires (« Mot de passe oublié »), ex. `WhatsApp +229 01 00 00 00 00` |
 
    L'application refuse de démarrer en production sans `JWT_SECRET` et `INSTALL_LINK_SECRET`.
@@ -70,7 +72,23 @@ Chaque `git push` sur la branche principale redéploie. Les caisses se mettent �
 - Au retour du réseau, les ventes partent aussitôt au serveur, avec leur heure réelle.
 - La clôture de caisse se fait avec connexion (toutes les ventes doivent être envoyées).
 
-## 5. Assistance
+## 5. Espace plateforme (abonnements)
+
+1. Créer le compte administrateur (une fois), depuis un poste qui a les variables de production :
+   ```
+   npm run create-admin -- votre@email.bj "Prénom" "Nom"
+   ```
+   Le script affiche un lien pour choisir le mot de passe (24 h). L'adresse ne doit pas déjà servir à une entreprise.
+2. Se connecter normalement : l'administrateur arrive sur **/plateforme** (vue d'ensemble, clients, offres & prix).
+3. Chaque inscription démarre un **essai gratuit de 14 jours** (sans limite). À l'échéance : **7 jours de grâce**, puis
+   **consultation seule** (plus de ventes ni de saisies ; consultation, exports, clôture de caisse et envoi des ventes faites
+   hors connexion avant l'échéance restent possibles).
+4. Paiement reçu (Mobile Money…) : fiche du client → **Enregistrer un paiement** (offre, nombre de mois, référence). La
+   période s'ajoute à la fin de la période déjà payée ; un compte suspendu est réactivé.
+5. Offres : prix mensuels et limites (centres, utilisateurs) modifiables dans *Offres & prix* ; limites particulières par client
+   possibles. Suspension immédiate (avec motif visible par le client) et réactivation depuis la fiche.
+
+## 6. Assistance
 
 - **Employé qui a oublié son mot de passe** : son responsable ouvre *Utilisateurs* → **🔑 Mot de passe** et lui envoie le
   lien par WhatsApp/SMS (valable 24 h, une seule fois). Aucun e-mail n'est nécessaire.
@@ -83,7 +101,7 @@ Chaque `git push` sur la branche principale redéploie. Les caisses se mettent �
   l'entreprise recopié). Tout est effacé en une transaction ; l'e-mail peut resservir aussitôt.
 - **Journal d'audit** : *Administration → Journal d'audit* (propriétaire), avec vérification de l'intégrité.
 
-## 6. Sauvegardes
+## 7. Sauvegardes
 
 Les sauvegardes automatiques dépendent de l'offre Supabase (quotidiennes à partir de l'offre Pro ;
 l'offre gratuite n'en garantit pas) : vérifier dans *Database → Backups*. En complément, faire une copie

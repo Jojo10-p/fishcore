@@ -20,13 +20,13 @@ datasource db {
 // ─────────────────────────────────────────────
 
 enum UserRole {
-  PLATFORM_ADMIN    // Super admin de la plateforme
-  COMPANY_OWNER     // Propriétaire de l'entreprise
-  CENTER_MANAGER    // Gérant de centre/agence
-  CASHIER           // Caissier
-  ACCOUNTANT        // Comptable
-  STOCK_MANAGER     // Gestionnaire de stock
-  SALES_EMPLOYEE    // Employé vendeur
+  PLATFORM_ADMIN // Super admin de la plateforme
+  COMPANY_OWNER // Propriétaire de l'entreprise
+  CENTER_MANAGER // Gérant de centre/agence
+  CASHIER // Caissier
+  ACCOUNTANT // Comptable
+  STOCK_MANAGER // Gestionnaire de stock
+  SALES_EMPLOYEE // Employé vendeur
 }
 
 enum CenterStatus {
@@ -45,102 +45,102 @@ enum CashRegisterState {
 /// Métier de l'entreprise : fixe les unités, catégories et options proposées
 /// par défaut (voir src/lib/business-profiles.ts). Ne restreint rien.
 enum BusinessType {
-  GENERAL             // Commerce général
-  FISHMONGER          // Poissonnerie
-  HARDWARE            // Quincaillerie
-  BUILDING_MATERIALS  // Matériaux de construction (maçonnerie)
-  OIL_DISTRIBUTION    // Vente d'huile / produits liquides
-  SUPERMARKET         // Supermarché / alimentation générale
-  PHARMACY            // Pharmacie
-  WHOLESALE           // Grossiste / dépôt
+  GENERAL // Commerce général
+  FISHMONGER // Poissonnerie
+  HARDWARE // Quincaillerie
+  BUILDING_MATERIALS // Matériaux de construction (maçonnerie)
+  OIL_DISTRIBUTION // Vente d'huile / produits liquides
+  SUPERMARKET // Supermarché / alimentation générale
+  PHARMACY // Pharmacie
+  WHOLESALE // Grossiste / dépôt
 }
 
 /// Nature d'une unité : décide notamment si les quantités décimales ont un sens.
 enum UnitKind {
-  COUNT       // pièce, unité, boîte…
-  WEIGHT      // kg, g, tonne
-  VOLUME      // L, mL
-  LENGTH      // m, cm
-  AREA        // m²
-  PACKAGING   // carton, sac, bidon, palette…
+  COUNT // pièce, unité, boîte…
+  WEIGHT // kg, g, tonne
+  VOLUME // L, mL
+  LENGTH // m, cm
+  AREA // m²
+  PACKAGING // carton, sac, bidon, palette…
 }
 
 enum StockMovementType {
-  RECEPTION         // Réception fournisseur
-  SALE              // Vente
-  CUSTOMER_RETURN   // Retour client
-  TRANSFER_IN       // Transfert entrant
-  TRANSFER_OUT      // Transfert sortant
-  LOSS              // Perte
-  DETERIORATION     // Détérioration
-  INVENTORY_ADJUST  // Ajustement inventaire
-  CORRECTION        // Correction autorisée
+  RECEPTION // Réception fournisseur
+  SALE // Vente
+  CUSTOMER_RETURN // Retour client
+  TRANSFER_IN // Transfert entrant
+  TRANSFER_OUT // Transfert sortant
+  LOSS // Perte
+  DETERIORATION // Détérioration
+  INVENTORY_ADJUST // Ajustement inventaire
+  CORRECTION // Correction autorisée
 }
 
 enum PaymentMethod {
-  CASH              // Espèces
-  MOBILE_MONEY      // Mobile money (MTN, Moov...)
-  CARD              // Carte bancaire
-  TRANSFER          // Virement
-  MIXED             // Paiement mixte
-  CREDIT            // Historique uniquement : la vente à crédit n'est plus acceptée
+  CASH // Espèces
+  MOBILE_MONEY // Mobile money (MTN, Moov...)
+  CARD // Carte bancaire
+  TRANSFER // Virement
+  MIXED // Paiement mixte
+  CREDIT // Historique uniquement : la vente à crédit n'est plus acceptée
 }
 
 enum InventoryStatus {
-  IN_PROGRESS       // Comptage en cours
-  VALIDATED         // Écarts appliqués au stock
-  CANCELLED         // Abandonné (aucun effet sur le stock)
+  IN_PROGRESS // Comptage en cours
+  VALIDATED // Écarts appliqués au stock
+  CANCELLED // Abandonné (aucun effet sur le stock)
 }
 
 enum TransferStatus {
-  IN_TRANSIT        // Parti du centre d'origine, pas encore réceptionné
-  RECEIVED          // Réceptionné à destination
-  CANCELLED         // Annulé avant réception : marchandise remise à l'origine
+  IN_TRANSIT // Parti du centre d'origine, pas encore réceptionné
+  RECEIVED // Réceptionné à destination
+  CANCELLED // Annulé avant réception : marchandise remise à l'origine
 }
 
 enum DeliveryStatus {
-  PENDING           // À servir
-  PARTIAL           // Servie en partie
-  DELIVERED         // Entièrement servie
+  PENDING // À servir
+  PARTIAL // Servie en partie
+  DELIVERED // Entièrement servie
 }
 
 enum QuoteStatus {
-  OPEN              // Valable (sauf si la date de validité est passée)
-  CONVERTED         // Transformé en vente
-  CANCELLED         // Annulé
+  OPEN // Valable (sauf si la date de validité est passée)
+  CONVERTED // Transformé en vente
+  CANCELLED // Annulé
 }
 
 enum SaleStatus {
-  DRAFT             // Brouillon
-  COMPLETED         // Finalisée
-  CANCELLED         // Annulée
+  DRAFT // Brouillon
+  COMPLETED // Finalisée
+  CANCELLED // Annulée
   PARTIALLY_REFUNDED
   FULLY_REFUNDED
 }
 
 enum CancellationStatus {
-  PENDING           // En attente d'approbation
-  APPROVED          // Approuvée
-  REJECTED          // Rejetée
+  PENDING // En attente d'approbation
+  APPROVED // Approuvée
+  REJECTED // Rejetée
 }
 
 enum DocumentType {
-  QUOTE             // Devis
-  PURCHASE_ORDER    // Bon de commande
-  DELIVERY_NOTE     // Bon de livraison
-  RECEIPT_NOTE      // Bon de réception
-  INVOICE           // Facture
-  RECEIPT           // Reçu de caisse
-  CREDIT_NOTE       // Avoir
-  REFUND_RECEIPT    // Justificatif de remboursement
+  QUOTE // Devis
+  PURCHASE_ORDER // Bon de commande
+  DELIVERY_NOTE // Bon de livraison
+  RECEIPT_NOTE // Bon de réception
+  INVOICE // Facture
+  RECEIPT // Reçu de caisse
+  CREDIT_NOTE // Avoir
+  REFUND_RECEIPT // Justificatif de remboursement
 }
 
 enum SyncStatus {
-  PENDING           // En attente
-  SYNCING           // En cours
-  SYNCED            // Synchronisé
-  FAILED            // Échec
-  CONFLICT          // Conflit détecté
+  PENDING // En attente
+  SYNCING // En cours
+  SYNCED // Synchronisé
+  FAILED // Échec
+  CONFLICT // Conflit détecté
 }
 
 enum AuditEventType {
@@ -150,6 +150,10 @@ enum AuditEventType {
   LOGIN_FAILED
   PASSWORD_CHANGED
   PASSWORD_RESET_LINK_CREATED
+  SUBSCRIPTION_PAYMENT_RECORDED
+  SUBSCRIPTION_CHANGED
+  COMPANY_SUSPENDED
+  COMPANY_REACTIVATED
   USER_UPDATED
   USER_REACTIVATED
   // Caisse
@@ -216,65 +220,76 @@ enum AuditEventType {
 
 /// Entreprise cliente (locataire SaaS)
 model Company {
-  id              String    @id @default(cuid())
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Identité
-  tradeName       String                   // Nom commercial (affiché partout — white label)
-  legalName       String?                  // Dénomination sociale
-  logoUrl         String?                  // Adresse du logo (servi par /api/brand/…), versionnée
-  brandAsset      CompanyBrandAsset?
-  ownerName       String
-  phone           String
-  email           String    @unique
-  address         String?
-  city            String?
-  commune         String?
-  country         String    @default("BJ")
-  poBox           String?
+  tradeName  String // Nom commercial (affiché partout — white label)
+  legalName  String? // Dénomination sociale
+  logoUrl    String? // Adresse du logo (servi par /api/brand/…), versionnée
+  brandAsset CompanyBrandAsset?
+  ownerName  String
+  phone      String
+  email      String             @unique
+  address    String?
+  city       String?
+  commune    String?
+  country    String             @default("BJ")
+  poBox      String?
 
   // Légal & fiscal
-  taxId           String?                  // IFU
-  tradeRegNumber  String?                  // RCCM
-  fiscalInfo      Json?                    // Infos fiscales complémentaires
+  taxId          String? // IFU
+  tradeRegNumber String? // RCCM
+  fiscalInfo     Json? // Infos fiscales complémentaires
 
   // Paramètres
-  currency        String    @default("XOF")
-  timezone        String    @default("Africa/Porto-Novo")
-  businessType    BusinessType @default(GENERAL)
+  currency     String       @default("XOF")
+  timezone     String       @default("Africa/Porto-Novo")
+  businessType BusinessType @default(GENERAL)
 
   // Fiscalité : prix de vente affichés TTC ; la TVA est extraite du prix.
-  vatEnabled      Boolean   @default(false)
-  defaultTaxRate  Decimal   @db.Decimal(5, 2) @default(0)   // ex. 18.00 (TVA Bénin)
-  invoicePrefix   String    @default("FACT")
-  invoiceCounter  Int       @default(1)
-  quotePrefix     String    @default("DEV")
-  quoteCounter    Int       @default(1)
-  inventoryCounter Int      @default(1)
-  transferCounter Int       @default(1)
+  vatEnabled        Boolean @default(false)
+  defaultTaxRate    Decimal @default(0) @db.Decimal(5, 2) // ex. 18.00 (TVA Bénin)
+  invoicePrefix     String  @default("FACT")
+  invoiceCounter    Int     @default(1)
+  quotePrefix       String  @default("DEV")
+  quoteCounter      Int     @default(1)
+  inventoryCounter  Int     @default(1)
+  transferCounter   Int     @default(1)
   quoteValidityDays Int     @default(15)
-  invoiceNotes    String?                  // Mentions en bas de facture (banque, conditions…)
-  invoiceFormat   String    @default("TICKET_80")  // Facture imprimée à la caisse : TICKET_80 (thermique) ou A4
+  invoiceNotes      String? // Mentions en bas de facture (banque, conditions…)
+  invoiceFormat     String  @default("TICKET_80") // Facture imprimée à la caisse : TICKET_80 (thermique) ou A4
   // Retrait au magasin : le client paie à la caisse puis se fait servir
   // sur présentation de sa facture (dépôts de matériaux, quincailleries…).
-  requiresPickup  Boolean   @default(false)
+  requiresPickup    Boolean @default(false)
 
   // Statut
   isActive        Boolean   @default(true)
   suspendedAt     DateTime?
   suspendedReason String?
 
+  // Abonnement à la plateforme : essai gratuit, puis payé jusqu'à paidUntil.
+  // Après l'échéance + délai de grâce, l'accès passe en lecture seule.
+  planCode             String                @default("TRIAL")
+  plan                 Plan                  @relation(fields: [planCode], references: [code])
+  trialEndsAt          DateTime?
+  paidUntil            DateTime?
+  customMaxCenters     Int? // Limites particulières (sinon celles de l'offre)
+  customMaxUsers       Int?
+  platformNotes        String? // Notes internes de la plateforme (jamais montrées au client)
+  subscriptionPayments SubscriptionPayment[]
+
   // Relations
-  centers         Center[]
-  users           User[]
-  products        Product[]
-  categories      Category[]
-  suppliers       Supplier[]
-  customers       Customer[]
-  auditLogs       AuditLog[]
-  installLinks    AgencyInstallLink[]
-  notifications   Notification[]
+  centers       Center[]
+  users         User[]
+  products      Product[]
+  categories    Category[]
+  suppliers     Supplier[]
+  customers     Customer[]
+  auditLogs     AuditLog[]
+  installLinks  AgencyInstallLink[]
+  notifications Notification[]
 
   @@map("companies")
 }
@@ -285,34 +300,34 @@ model Company {
 
 /// Centre de vente / agence
 model Center {
-  id          String        @id @default(cuid())
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  companyId   String
-  company     Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
-  name        String
-  code        String                        // Code unique interne
-  address     String?
-  city        String?
-  phone       String?
-  managerId   String?                       // FK vers User (gérant)
+  name      String
+  code      String // Code unique interne
+  address   String?
+  city      String?
+  phone     String?
+  managerId String? // FK vers User (gérant)
 
-  status      CenterStatus  @default(ACTIVE)
+  status CenterStatus @default(ACTIVE)
 
   // Relations
-  users       UserCenter[]                  // Utilisateurs affectés à ce centre
-  cashRegisters CashRegister[]
-  stocks      Stock[]
-  receipts    GoodsReceipt[]
-  purchases   Purchase[]
-  transfers   StockTransfer[]
-  incomingTransfers StockTransfer[] @relation("TransferDestination")
-  expenses    Expense[]
-  inventories Inventory[]
-  auditLogs   AuditLog[]
-  installLinks AgencyInstallLink[]
+  users             UserCenter[] // Utilisateurs affectés à ce centre
+  cashRegisters     CashRegister[]
+  stocks            Stock[]
+  receipts          GoodsReceipt[]
+  purchases         Purchase[]
+  transfers         StockTransfer[]
+  incomingTransfers StockTransfer[]     @relation("TransferDestination")
+  expenses          Expense[]
+  inventories       Inventory[]
+  auditLogs         AuditLog[]
+  installLinks      AgencyInstallLink[]
 
   @@unique([companyId, code])
   @@map("centers")
@@ -320,19 +335,19 @@ model Center {
 
 /// Lien d'installation pour une nouvelle agence
 model AgencyInstallLink {
-  id            String    @id @default(cuid())
-  createdAt     DateTime  @default(now())
-  expiresAt     DateTime
-  usedAt        DateTime?
+  id        String    @id @default(cuid())
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
 
-  companyId     String
-  company       Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  centerId      String
-  center        Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  centerId  String
+  center    Center  @relation(fields: [centerId], references: [id], onDelete: Cascade)
 
-  token         String    @unique                // Token signé (JWT)
-  isUsed        Boolean   @default(false)
-  createdById   String                           // Qui a généré le lien
+  token       String  @unique // Token signé (JWT)
+  isUsed      Boolean @default(false)
+  createdById String // Qui a généré le lien
 
   @@map("agency_install_links")
 }
@@ -343,36 +358,36 @@ model AgencyInstallLink {
 
 /// Compte utilisateur
 model User {
-  id              String      @id @default(cuid())
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  companyId       String?                        // null = plateforme admin
-  company         Company?    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId String? // null = plateforme admin
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
-  email           String      @unique
-  passwordHash    String
-  firstName       String
-  lastName        String
-  phone           String?
-  avatarUrl       String?
-  role            UserRole
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  phone        String?
+  avatarUrl    String?
+  role         UserRole
 
-  isActive        Boolean     @default(true)
-  deactivatedAt   DateTime?
-  lastLoginAt     DateTime?
-  loginAttempts   Int         @default(0)
-  lockedUntil     DateTime?
+  isActive      Boolean   @default(true)
+  deactivatedAt DateTime?
+  lastLoginAt   DateTime?
+  loginAttempts Int       @default(0)
+  lockedUntil   DateTime?
 
   // Relations
-  centers         UserCenter[]                   // Centres autorisés
-  cashSessions    CashSession[]
-  sales           Sale[]
-  auditLogs       AuditLog[]
-  cancellationRequests  Cancellation[]  @relation("CancellationRequester")
-  cancellationApprovals Cancellation[]  @relation("CancellationApprover")
-  sessions        AuthSession[]
-  passwordResets  PasswordResetToken[]
+  centers               UserCenter[] // Centres autorisés
+  cashSessions          CashSession[]
+  sales                 Sale[]
+  auditLogs             AuditLog[]
+  cancellationRequests  Cancellation[]       @relation("CancellationRequester")
+  cancellationApprovals Cancellation[]       @relation("CancellationApprover")
+  sessions              AuthSession[]
+  passwordResets        PasswordResetToken[]
 
   @@map("users")
 }
@@ -381,14 +396,50 @@ model User {
 /// aux documents. Préparé dans le navigateur (carré, PNG) ; table à part pour ne
 /// jamais charger les images avec la fiche entreprise.
 model CompanyBrandAsset {
-  companyId   String    @id
-  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  updatedAt   DateTime  @updatedAt
-  logo512     Bytes                            // PNG 512×512 (icône, documents)
-  logo192     Bytes                            // PNG 192×192 (icône)
-  maskable512 Bytes                            // PNG 512×512 avec marge (icône adaptative Android)
+  companyId   String   @id
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  updatedAt   DateTime @updatedAt
+  logo512     Bytes // PNG 512×512 (icône, documents)
+  logo192     Bytes // PNG 192×192 (icône)
+  maskable512 Bytes // PNG 512×512 avec marge (icône adaptative Android)
 
   @@map("company_brand_assets")
+}
+
+/// Offre d'abonnement (prix et limites modifiables par la plateforme).
+model Plan {
+  code         String    @id // TRIAL, ESSENTIEL, PRO, ENTREPRISE…
+  name         String
+  monthlyPrice Int       @default(0) // Prix mensuel en francs CFA
+  maxCenters   Int? // null = illimité
+  maxUsers     Int?
+  description  String?
+  isActive     Boolean   @default(true) // Proposée aux nouveaux abonnements
+  sortOrder    Int       @default(0)
+  companies    Company[]
+
+  @@map("plans")
+}
+
+/// Paiement d'abonnement enregistré par la plateforme (Mobile Money, virement…) :
+/// prolonge l'abonnement de l'entreprise de `months` mois.
+model SubscriptionPayment {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  planCode     String
+  amount       Int
+  months       Int
+  method       String // MOBILE_MONEY, VIREMENT, ESPECES, AUTRE
+  reference    String? // N° de transaction Mobile Money…
+  periodStart  DateTime
+  periodEnd    DateTime
+  notes        String?
+  recordedById String
+
+  @@index([companyId, createdAt])
+  @@map("subscription_payments")
 }
 
 /// Lien de réinitialisation du mot de passe (sans e-mail : le responsable le
@@ -401,7 +452,7 @@ model PasswordResetToken {
   tokenHash   String    @unique
   expiresAt   DateTime
   usedAt      DateTime?
-  createdById String?                          // null = généré par la plateforme (script)
+  createdById String? // null = généré par la plateforme (script)
 
   @@index([userId])
   @@map("password_reset_tokens")
@@ -409,13 +460,13 @@ model PasswordResetToken {
 
 /// Table de jointure Utilisateur ↔ Centre
 model UserCenter {
-  id          String    @id @default(cuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  centerId    String
-  center      Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
-  assignedAt  DateTime  @default(now())
-  isActive    Boolean   @default(true)
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  centerId   String
+  center     Center   @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  assignedAt DateTime @default(now())
+  isActive   Boolean  @default(true)
 
   @@unique([userId, centerId])
   @@map("user_centers")
@@ -423,14 +474,14 @@ model UserCenter {
 
 /// Sessions d'authentification
 model AuthSession {
-  id          String    @id @default(cuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   sessionToken String   @unique
-  expires     DateTime
-  createdAt   DateTime  @default(now())
-  ipAddress   String?
-  userAgent   String?
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  ipAddress    String?
+  userAgent    String?
 
   @@map("auth_sessions")
 }
@@ -441,44 +492,44 @@ model AuthSession {
 
 /// Produit (espèce de poisson, type de produit)
 model Product {
-  id              String      @id @default(cuid())
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  companyId       String
-  company         Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
-  name            String
-  internalCode    String?                        // Référence interne / SKU
-  barcode         String?                        // Code-barres de l'unité de base
-  brand           String?                        // Marque / fabricant / laboratoire
-  categoryId      String?
-  category        Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  description     String?
+  name         String
+  internalCode String? // Référence interne / SKU
+  barcode      String? // Code-barres de l'unité de base
+  brand        String? // Marque / fabricant / laboratoire
+  categoryId   String?
+  category     Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  description  String?
   // Caractéristiques libres selon le métier : {"Espèce":"Tilapia"},
   // {"Dosage":"500 mg","Forme":"Comprimé"}, {"Section":"12 mm"}…
-  attributes      Json?
+  attributes   Json?
 
   // Options de suivi (préremplies par le profil métier, modifiables)
-  trackBatches         Boolean @default(false)  // Stock suivi par lot (FEFO à la vente)
-  requiresExpiry       Boolean @default(false)  // Date de péremption obligatoire à la réception
-  requiresPrescription Boolean @default(false)  // Rappel « sur ordonnance » à la caisse
+  trackBatches         Boolean @default(false) // Stock suivi par lot (FEFO à la vente)
+  requiresExpiry       Boolean @default(false) // Date de péremption obligatoire à la réception
+  requiresPrescription Boolean @default(false) // Rappel « sur ordonnance » à la caisse
 
   // TVA applicable (en %, incluse dans le prix de vente)
-  taxRate         Decimal     @db.Decimal(5, 2) @default(0)
+  taxRate Decimal @default(0) @db.Decimal(5, 2)
 
   // Unité principale
-  baseUnitId      String
-  baseUnit        Unit        @relation("ProductBaseUnit", fields: [baseUnitId], references: [id])
+  baseUnitId String
+  baseUnit   Unit   @relation("ProductBaseUnit", fields: [baseUnitId], references: [id])
 
   // Prix
-  purchasePrice   Decimal     @db.Decimal(12, 2) @default(0)
-  sellingPrice    Decimal     @db.Decimal(12, 2) @default(0)
+  purchasePrice Decimal @default(0) @db.Decimal(12, 2)
+  sellingPrice  Decimal @default(0) @db.Decimal(12, 2)
 
   // Alertes
-  stockAlertQty   Decimal     @db.Decimal(12, 3) @default(0)
+  stockAlertQty Decimal @default(0) @db.Decimal(12, 3)
 
-  isActive        Boolean     @default(true)
+  isActive Boolean @default(true)
 
   // Relations
   stocks          Stock[]
@@ -498,13 +549,13 @@ model Product {
 
 /// Catégorie de produits propre à chaque entreprise (rayon, famille…)
 model Category {
-  id          String    @id @default(cuid())
-  createdAt   DateTime  @default(now())
-  companyId   String
-  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  name        String
-  sortOrder   Int       @default(0)
-  products    Product[]
+  id        String    @id @default(cuid())
+  createdAt DateTime  @default(now())
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  sortOrder Int       @default(0)
+  products  Product[]
 
   @@unique([companyId, name])
   @@map("categories")
@@ -512,15 +563,15 @@ model Category {
 
 /// Unité de mesure
 model Unit {
-  id          String    @id @default(cuid())
-  companyId   String?                            // null = unité globale plateforme
-  name        String                             // "Kilogramme"
-  symbol      String                             // "kg"
-  isBaseUnit  Boolean   @default(false)
-  kind        UnitKind  @default(COUNT)
-  allowsDecimal Boolean @default(false)          // 1,25 kg oui ; 1,25 pièce non
+  id            String   @id @default(cuid())
+  companyId     String? // null = unité globale plateforme
+  name          String // "Kilogramme"
+  symbol        String // "kg"
+  isBaseUnit    Boolean  @default(false)
+  kind          UnitKind @default(COUNT)
+  allowsDecimal Boolean  @default(false) // 1,25 kg oui ; 1,25 pièce non
 
-  products        Product[]       @relation("ProductBaseUnit")
+  products        Product[]        @relation("ProductBaseUnit")
   conversionsFrom UnitConversion[] @relation("ConversionFrom")
   conversionsTo   UnitConversion[] @relation("ConversionTo")
 
@@ -530,18 +581,18 @@ model Unit {
 
 /// Conversion entre unités (ex: 1 carton = 12.5 kg)
 model UnitConversion {
-  id          String    @id @default(cuid())
-  productId   String
-  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  fromUnitId  String
-  fromUnit    Unit      @relation("ConversionFrom", fields: [fromUnitId], references: [id])
-  toUnitId    String
-  toUnit      Unit      @relation("ConversionTo", fields: [toUnitId], references: [id])
-  factor      Decimal   @db.Decimal(12, 6)       // 1 fromUnit = factor toUnit (unité de base du produit)
+  id           String   @id @default(cuid())
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  fromUnitId   String
+  fromUnit     Unit     @relation("ConversionFrom", fields: [fromUnitId], references: [id])
+  toUnitId     String
+  toUnit       Unit     @relation("ConversionTo", fields: [toUnitId], references: [id])
+  factor       Decimal  @db.Decimal(12, 6) // 1 fromUnit = factor toUnit (unité de base du produit)
   // Conditionnement vendable : prix propre (ex. carton de 12 moins cher que 12 pièces)
   // et code-barres propre (ex. code du carton en supermarché).
   sellingPrice Decimal? @db.Decimal(12, 2)
-  barcode     String?
+  barcode      String?
 
   @@unique([productId, fromUnitId])
   @@map("unit_conversions")
@@ -549,12 +600,12 @@ model UnitConversion {
 
 /// Historique des prix
 model ProductPriceHistory {
-  id            String    @id @default(cuid())
-  createdAt     DateTime  @default(now())
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
   productId     String
-  product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  purchasePrice Decimal   @db.Decimal(12, 2)
-  sellingPrice  Decimal   @db.Decimal(12, 2)
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  purchasePrice Decimal  @db.Decimal(12, 2)
+  sellingPrice  Decimal  @db.Decimal(12, 2)
   changedById   String
 
   @@map("product_price_history")
@@ -566,21 +617,21 @@ model ProductPriceHistory {
 
 /// Stock par produit et par centre
 model Stock {
-  id            String    @id @default(cuid())
-  updatedAt     DateTime  @updatedAt
+  id        String   @id @default(cuid())
+  updatedAt DateTime @updatedAt
 
-  centerId      String
-  center        Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
-  productId     String
-  product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  centerId  String
+  center    Center  @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  quantity      Decimal   @db.Decimal(12, 3) @default(0)   // Stock disponible total
-  reservedQty   Decimal   @db.Decimal(12, 3) @default(0)   // Réservé aux caisses offline
-  avgCost       Decimal   @db.Decimal(14, 4) @default(0)   // Coût moyen pondéré (CMP) par unité de base
-  version       Int       @default(0)                        // Verrou optimiste
+  quantity    Decimal @default(0) @db.Decimal(12, 3) // Stock disponible total
+  reservedQty Decimal @default(0) @db.Decimal(12, 3) // Réservé aux caisses offline
+  avgCost     Decimal @default(0) @db.Decimal(14, 4) // Coût moyen pondéré (CMP) par unité de base
+  version     Int     @default(0) // Verrou optimiste
 
-  movements     StockMovement[]
-  reservations  StockReservation[]
+  movements    StockMovement[]
+  reservations StockReservation[]
 
   @@unique([centerId, productId])
   @@map("stocks")
@@ -590,16 +641,16 @@ model Stock {
 // connexion (cahier §9.4). La somme des réserves d'un stock = Stock.reservedQty,
 // et ne peut jamais dépasser Stock.quantity.
 model StockReservation {
-  id          String      @id @default(cuid())
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  sessionId   String
-  session     CashSession @relation(fields: [sessionId], references: [id])
-  stockId     String
-  stock       Stock       @relation(fields: [stockId], references: [id])
+  sessionId String
+  session   CashSession @relation(fields: [sessionId], references: [id])
+  stockId   String
+  stock     Stock       @relation(fields: [stockId], references: [id])
 
-  quantity    Decimal     @db.Decimal(12, 3)   // Quantité encore réservée (unité de base)
+  quantity Decimal @db.Decimal(12, 3) // Quantité encore réservée (unité de base)
 
   @@unique([sessionId, stockId])
   @@map("stock_reservations")
@@ -607,20 +658,20 @@ model StockReservation {
 
 /// Mouvement de stock (toute modification passe ici)
 model StockMovement {
-  id            String            @id @default(cuid())
-  createdAt     DateTime          @default(now())
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
 
-  stockId       String
-  stock         Stock             @relation(fields: [stockId], references: [id])
+  stockId String
+  stock   Stock  @relation(fields: [stockId], references: [id])
 
-  type          StockMovementType
-  quantity      Decimal           @db.Decimal(12, 3)   // + entrant / - sortant
-  unitId        String?
-  batchId       String?
-  batch         Batch?            @relation(fields: [batchId], references: [id])
+  type     StockMovementType
+  quantity Decimal           @db.Decimal(12, 3) // + entrant / - sortant
+  unitId   String?
+  batchId  String?
+  batch    Batch?            @relation(fields: [batchId], references: [id])
 
-  referenceType String?           // "Sale", "GoodsReceipt", etc.
-  referenceId   String?           // ID de la vente / réception
+  referenceType String? // "Sale", "GoodsReceipt", etc.
+  referenceId   String? // ID de la vente / réception
 
   notes         String?
   performedById String
@@ -631,25 +682,25 @@ model StockMovement {
 
 /// Lot de marchandise
 model Batch {
-  id              String    @id @default(cuid())
-  createdAt       DateTime  @default(now())
-  receiptId       String?
-  receipt         GoodsReceipt? @relation(fields: [receiptId], references: [id])
-  productId       String?
-  product         Product?  @relation(fields: [productId], references: [id])
-  centerId        String?
+  id           String          @id @default(cuid())
+  createdAt    DateTime        @default(now())
+  receiptId    String?
+  receipt      GoodsReceipt?   @relation(fields: [receiptId], references: [id])
+  productId    String?
+  product      Product?        @relation(fields: [productId], references: [id])
+  centerId     String?
   // Quantités dans l'unité de base du produit. remainingQty est décrémenté
   // à chaque vente (premier périmé, premier sorti).
-  initialQty      Decimal?  @db.Decimal(12, 3)
-  remainingQty    Decimal   @db.Decimal(12, 3) @default(0)
-  unitCost        Decimal?  @db.Decimal(14, 4)   // Coût de revient unitaire (achat + frais annexes)
-  lotNumber       String?
-  packageCount    Int?
-  grossWeight     Decimal?  @db.Decimal(12, 3)
-  receivedAt      DateTime  @default(now())
-  expiresAt       DateTime?
-  notes           String?
-  movements       StockMovement[]
+  initialQty   Decimal?        @db.Decimal(12, 3)
+  remainingQty Decimal         @default(0) @db.Decimal(12, 3)
+  unitCost     Decimal?        @db.Decimal(14, 4) // Coût de revient unitaire (achat + frais annexes)
+  lotNumber    String?
+  packageCount Int?
+  grossWeight  Decimal?        @db.Decimal(12, 3)
+  receivedAt   DateTime        @default(now())
+  expiresAt    DateTime?
+  notes        String?
+  movements    StockMovement[]
 
   @@index([productId, centerId, expiresAt])
   @@map("batches")
@@ -661,24 +712,24 @@ model Batch {
 
 /// Fournisseur
 model Supplier {
-  id          String    @id @default(cuid())
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  companyId   String
-  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
-  name        String
-  phone       String?
-  email       String?
-  address     String?
-  taxId       String?
-  isActive    Boolean   @default(true)
-  paymentTermDays Int   @default(0)          // Délai de paiement accordé (échéance des factures)
+  name            String
+  phone           String?
+  email           String?
+  address         String?
+  taxId           String?
+  isActive        Boolean @default(true)
+  paymentTermDays Int     @default(0) // Délai de paiement accordé (échéance des factures)
 
-  purchases   Purchase[]
-  receipts    GoodsReceipt[]
-  payments    SupplierPayment[]
+  purchases Purchase[]
+  receipts  GoodsReceipt[]
+  payments  SupplierPayment[]
 
   @@map("suppliers")
 }
@@ -687,25 +738,25 @@ model Supplier {
 /// Achat fournisseur = dette (cahier §12). Créé à la validation d'une réception
 /// rattachée à un fournisseur ; réglé par un ou plusieurs paiements.
 model Purchase {
-  id            String    @id @default(cuid())
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  companyId     String
-  centerId      String
-  center        Center    @relation(fields: [centerId], references: [id])
-  supplierId    String
-  supplier      Supplier  @relation(fields: [supplierId], references: [id])
+  companyId  String
+  centerId   String
+  center     Center   @relation(fields: [centerId], references: [id])
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
 
-  reference     String?                     // N° de facture fournisseur
-  totalAmount   Decimal   @db.Decimal(12, 2)
-  paidAmount    Decimal   @db.Decimal(12, 2) @default(0)
-  dueDate       DateTime?
-  notes         String?
-  createdById   String
+  reference   String? // N° de facture fournisseur
+  totalAmount Decimal   @db.Decimal(12, 2)
+  paidAmount  Decimal   @default(0) @db.Decimal(12, 2)
+  dueDate     DateTime?
+  notes       String?
+  createdById String
 
-  receipts      GoodsReceipt[]
-  payments      SupplierPayment[]
+  receipts GoodsReceipt[]
+  payments SupplierPayment[]
 
   @@index([companyId, supplierId])
   @@map("purchases")
@@ -713,21 +764,21 @@ model Purchase {
 
 /// Paiement à un fournisseur, imputé à ses factures les plus anciennes.
 model SupplierPayment {
-  id          String    @id @default(cuid())
-  createdAt   DateTime  @default(now())
-  companyId   String
-  supplierId  String
-  supplier    Supplier  @relation(fields: [supplierId], references: [id])
-  purchaseId  String?                         // Facture visée (sinon : la plus ancienne d'abord)
-  purchase    Purchase? @relation(fields: [purchaseId], references: [id])
-  amount      Decimal   @db.Decimal(12, 2)
-  method      PaymentMethod
-  reference   String?
-  sessionId   String?                         // Payé en espèces depuis une caisse
-  cashMovementId String? @unique
-  allocations Json?                           // [{ purchaseId, amount }] : imputation réelle
-  paidById    String
-  notes       String?
+  id             String        @id @default(cuid())
+  createdAt      DateTime      @default(now())
+  companyId      String
+  supplierId     String
+  supplier       Supplier      @relation(fields: [supplierId], references: [id])
+  purchaseId     String? // Facture visée (sinon : la plus ancienne d'abord)
+  purchase       Purchase?     @relation(fields: [purchaseId], references: [id])
+  amount         Decimal       @db.Decimal(12, 2)
+  method         PaymentMethod
+  reference      String?
+  sessionId      String? // Payé en espèces depuis une caisse
+  cashMovementId String?       @unique
+  allocations    Json? // [{ purchaseId, amount }] : imputation réelle
+  paidById       String
+  notes          String?
 
   @@index([companyId, supplierId])
   @@map("supplier_payments")
@@ -739,14 +790,14 @@ model SupplierPayment {
 /// ticket imprimé porte toujours le numéro définitif. À la clôture, les
 /// numéros non utilisés sont rendus (sessionId vide) et réattribués en priorité.
 model InvoiceNumberBlock {
-  id          String    @id @default(cuid())
-  createdAt   DateTime  @default(now())
-  companyId   String
-  prefix      String
-  first       Int
-  last        Int
-  sessionId   String?
-  releasedAt  DateTime?
+  id         String    @id @default(cuid())
+  createdAt  DateTime  @default(now())
+  companyId  String
+  prefix     String
+  first      Int
+  last       Int
+  sessionId  String?
+  releasedAt DateTime?
 
   @@index([companyId, sessionId])
   @@map("invoice_number_blocks")
@@ -754,27 +805,27 @@ model InvoiceNumberBlock {
 
 /// Devis : proposition de prix, transformée en vente à la caisse
 model Quote {
-  id              String      @id @default(cuid())
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  companyId       String
-  centerId        String
-  number          String
-  customerId      String
-  customer        Customer    @relation(fields: [customerId], references: [id])
-  createdById     String
-  status          QuoteStatus @default(OPEN)
-  validUntil      DateTime
-  subtotal        Decimal     @db.Decimal(12, 2)
-  discountAmount  Decimal     @db.Decimal(12, 2) @default(0)
-  totalAmount     Decimal     @db.Decimal(12, 2)
-  taxAmount       Decimal     @db.Decimal(12, 2) @default(0)
-  notes           String?
-  saleId          String?     @unique
-  sale            Sale?       @relation(fields: [saleId], references: [id])
-  cancelledAt     DateTime?
-  cancelReason    String?
-  lines           QuoteLine[]
+  id             String      @id @default(cuid())
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  companyId      String
+  centerId       String
+  number         String
+  customerId     String
+  customer       Customer    @relation(fields: [customerId], references: [id])
+  createdById    String
+  status         QuoteStatus @default(OPEN)
+  validUntil     DateTime
+  subtotal       Decimal     @db.Decimal(12, 2)
+  discountAmount Decimal     @default(0) @db.Decimal(12, 2)
+  totalAmount    Decimal     @db.Decimal(12, 2)
+  taxAmount      Decimal     @default(0) @db.Decimal(12, 2)
+  notes          String?
+  saleId         String?     @unique
+  sale           Sale?       @relation(fields: [saleId], references: [id])
+  cancelledAt    DateTime?
+  cancelReason   String?
+  lines          QuoteLine[]
 
   @@unique([companyId, number])
   @@index([companyId, createdAt])
@@ -782,32 +833,32 @@ model Quote {
 }
 
 model QuoteLine {
-  id          String   @id @default(cuid())
-  quoteId     String
-  quote       Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  position    Int
-  productId   String
-  product     Product  @relation(fields: [productId], references: [id])
-  unitId      String
-  quantity    Decimal  @db.Decimal(12, 3)
-  unitPrice   Decimal  @db.Decimal(12, 2)
-  discount    Decimal  @db.Decimal(12, 2) @default(0)   // Remise par unité
-  lineTotal   Decimal  @db.Decimal(12, 2)
-  taxRate     Decimal  @db.Decimal(5, 2) @default(0)
-  taxAmount   Decimal  @db.Decimal(12, 2) @default(0)
+  id        String  @id @default(cuid())
+  quoteId   String
+  quote     Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  position  Int
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  unitId    String
+  quantity  Decimal @db.Decimal(12, 3)
+  unitPrice Decimal @db.Decimal(12, 2)
+  discount  Decimal @default(0) @db.Decimal(12, 2) // Remise par unité
+  lineTotal Decimal @db.Decimal(12, 2)
+  taxRate   Decimal @default(0) @db.Decimal(5, 2)
+  taxAmount Decimal @default(0) @db.Decimal(12, 2)
 
   @@map("quote_lines")
 }
 
 /// Retrait de marchandise au magasin (bon de sortie), total ou partiel
 model Delivery {
-  id            String          @id @default(cuid())
-  createdAt     DateTime        @default(now())
+  id            String         @id @default(cuid())
+  createdAt     DateTime       @default(now())
   companyId     String
   saleId        String
-  sale          Sale            @relation(fields: [saleId], references: [id])
+  sale          Sale           @relation(fields: [saleId], references: [id])
   deliveredById String
-  number        Int                              // N° de bon pour cette vente (1, 2…)
+  number        Int // N° de bon pour cette vente (1, 2…)
   notes         String?
   lines         DeliveryLine[]
 
@@ -817,69 +868,69 @@ model Delivery {
 }
 
 model DeliveryLine {
-  id          String   @id @default(cuid())
-  deliveryId  String
-  delivery    Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
-  saleLineId  String
-  quantity    Decimal  @db.Decimal(12, 3)
+  id         String   @id @default(cuid())
+  deliveryId String
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  saleLineId String
+  quantity   Decimal  @db.Decimal(12, 3)
 
   @@map("delivery_lines")
 }
 
 /// Réception de marchandises
 model GoodsReceipt {
-  id              String    @id @default(cuid())
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  centerId        String
-  center          Center    @relation(fields: [centerId], references: [id])
-  supplierId      String?
-  supplier        Supplier? @relation(fields: [supplierId], references: [id])
-  purchaseId      String?
-  purchase        Purchase? @relation(fields: [purchaseId], references: [id])
+  centerId   String
+  center     Center    @relation(fields: [centerId], references: [id])
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+  purchaseId String?
+  purchase   Purchase? @relation(fields: [purchaseId], references: [id])
 
-  reference       String?
-  receivedAt      DateTime  @default(now())
-  isValidated     Boolean   @default(false)   // Validation = augmentation du stock
-  validatedAt     DateTime?
-  validatedById   String?
+  reference     String?
+  receivedAt    DateTime  @default(now())
+  isValidated   Boolean   @default(false) // Validation = augmentation du stock
+  validatedAt   DateTime?
+  validatedById String?
 
-  transportCost   Decimal   @db.Decimal(12, 2) @default(0)
-  iceCost         Decimal   @db.Decimal(12, 2) @default(0)
-  handlingCost    Decimal   @db.Decimal(12, 2) @default(0)
-  otherCosts      Decimal   @db.Decimal(12, 2) @default(0)
+  transportCost Decimal @default(0) @db.Decimal(12, 2)
+  iceCost       Decimal @default(0) @db.Decimal(12, 2)
+  handlingCost  Decimal @default(0) @db.Decimal(12, 2)
+  otherCosts    Decimal @default(0) @db.Decimal(12, 2)
 
-  notes           String?
-  createdById     String
+  notes       String?
+  createdById String
 
   // Brouillon (sauvegarde progressive)
-  isDraft         Boolean   @default(true)
-  draftData       Json?
+  isDraft   Boolean @default(true)
+  draftData Json?
 
-  lines           GoodsReceiptLine[]
-  batches         Batch[]
+  lines   GoodsReceiptLine[]
+  batches Batch[]
 
   @@map("goods_receipts")
 }
 
 /// Ligne de réception
 model GoodsReceiptLine {
-  id              String    @id @default(cuid())
-  receiptId       String
-  receipt         GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
-  productId       String
-  product         Product   @relation(fields: [productId], references: [id])
+  id        String       @id @default(cuid())
+  receiptId String
+  receipt   GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product      @relation(fields: [productId], references: [id])
 
-  packageCount    Int?                         // Nombre de colis (cartons, sacs, bidons…)
-  grossWeight     Decimal?  @db.Decimal(12, 3) // Poids brut, si pertinent
-  quantity        Decimal   @db.Decimal(12, 3) // Quantité reçue dans l'unité de base
-  unitId          String?
-  unitPrice       Decimal   @db.Decimal(12, 2) // Coût par unité de base
-  totalPrice      Decimal   @db.Decimal(12, 2)
-  landedUnitCost  Decimal?  @db.Decimal(14, 4) // Coût de revient : prix + part des frais (calculé à la validation)
-  lotNumber       String?
-  expiresAt       DateTime?
+  packageCount   Int? // Nombre de colis (cartons, sacs, bidons…)
+  grossWeight    Decimal?  @db.Decimal(12, 3) // Poids brut, si pertinent
+  quantity       Decimal   @db.Decimal(12, 3) // Quantité reçue dans l'unité de base
+  unitId         String?
+  unitPrice      Decimal   @db.Decimal(12, 2) // Coût par unité de base
+  totalPrice     Decimal   @db.Decimal(12, 2)
+  landedUnitCost Decimal?  @db.Decimal(14, 4) // Coût de revient : prix + part des frais (calculé à la validation)
+  lotNumber      String?
+  expiresAt      DateTime?
 
   @@map("goods_receipt_lines")
 }
@@ -889,18 +940,18 @@ model GoodsReceiptLine {
 // ─────────────────────────────────────────────
 
 model Customer {
-  id          String    @id @default(cuid())
-  createdAt   DateTime  @default(now())
-  companyId   String
-  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  name        String
-  phone       String?
-  email       String?
-  address     String?
-  isActive    Boolean   @default(true)
-  taxId       String?                     // IFU du client (facture à une entreprise)
-  sales       Sale[]
-  quotes      Quote[]
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  isActive  Boolean  @default(true)
+  taxId     String? // IFU du client (facture à une entreprise)
+  sales     Sale[]
+  quotes    Quote[]
 
   @@index([companyId, name])
   @@map("customers")
@@ -912,66 +963,66 @@ model Customer {
 
 /// Caisse enregistreuse
 model CashRegister {
-  id          String              @id @default(cuid())
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  centerId    String
-  center      Center              @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  centerId String
+  center   Center @relation(fields: [centerId], references: [id], onDelete: Cascade)
 
-  name        String
-  state       CashRegisterState   @default(ACTIVE)
-  isActive    Boolean             @default(true)
+  name     String
+  state    CashRegisterState @default(ACTIVE)
+  isActive Boolean           @default(true)
 
-  sessions    CashSession[]
+  sessions CashSession[]
 
   @@map("cash_registers")
 }
 
 /// Session de caisse (shift d'un caissier)
 model CashSession {
-  id              String    @id @default(cuid())
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  cashRegisterId  String
-  cashRegister    CashRegister @relation(fields: [cashRegisterId], references: [id])
-  cashierId       String
-  cashier         User      @relation(fields: [cashierId], references: [id])
+  cashRegisterId String
+  cashRegister   CashRegister @relation(fields: [cashRegisterId], references: [id])
+  cashierId      String
+  cashier        User         @relation(fields: [cashierId], references: [id])
 
-  openedAt        DateTime  @default(now())
-  closedAt        DateTime?
+  openedAt DateTime  @default(now())
+  closedAt DateTime?
 
-  openingBalance  Decimal   @db.Decimal(12, 2)   // Fond de caisse déclaré
-  closingBalance  Decimal?  @db.Decimal(12, 2)   // Montant réellement compté
+  openingBalance     Decimal  @db.Decimal(12, 2) // Fond de caisse déclaré
+  closingBalance     Decimal? @db.Decimal(12, 2) // Montant réellement compté
   theoreticalBalance Decimal? @db.Decimal(12, 2) // Calculé par le système
-  discrepancy     Decimal?  @db.Decimal(12, 2)   // Écart
+  discrepancy        Decimal? @db.Decimal(12, 2) // Écart
 
-  isValidated     Boolean   @default(false)
-  validatedById   String?
-  notes           String?
+  isValidated   Boolean @default(false)
+  validatedById String?
+  notes         String?
 
   // Connexion au moment de l'ouverture
   deviceId        String?
   connectionState String?
 
-  sales           Sale[]
-  cashMovements   CashMovement[]
-  closure         CashClosure?
-  reservations    StockReservation[]
-  refunds         Refund[]
+  sales         Sale[]
+  cashMovements CashMovement[]
+  closure       CashClosure?
+  reservations  StockReservation[]
+  refunds       Refund[]
 
   @@map("cash_sessions")
 }
 
 /// Mouvement de caisse (sortie autorisée, fond d'appoint, etc.)
 model CashMovement {
-  id            String    @id @default(cuid())
-  createdAt     DateTime  @default(now())
+  id            String      @id @default(cuid())
+  createdAt     DateTime    @default(now())
   sessionId     String
   session       CashSession @relation(fields: [sessionId], references: [id])
-  type          String    // "CASH_OUT", "CASH_IN", "ADVANCE"
-  amount        Decimal   @db.Decimal(12, 2)
+  type          String // "CASH_OUT", "CASH_IN", "ADVANCE"
+  amount        Decimal     @db.Decimal(12, 2)
   reason        String
   approvedById  String?
   performedById String
@@ -981,27 +1032,27 @@ model CashMovement {
 
 /// Clôture de caisse (historique immuable)
 model CashClosure {
-  id                  String    @id @default(cuid())
-  createdAt           DateTime  @default(now())
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
 
-  sessionId           String    @unique
-  session             CashSession @relation(fields: [sessionId], references: [id])
+  sessionId String      @unique
+  session   CashSession @relation(fields: [sessionId], references: [id])
 
-  openingBalance      Decimal   @db.Decimal(12, 2)
-  totalSales          Decimal   @db.Decimal(12, 2)
-  totalCash           Decimal   @db.Decimal(12, 2)
-  totalMobileMoney    Decimal   @db.Decimal(12, 2)
-  totalCard           Decimal   @db.Decimal(12, 2)
-  totalOther          Decimal   @db.Decimal(12, 2)
-  totalRefunds        Decimal   @db.Decimal(12, 2)
-  totalCashOut        Decimal   @db.Decimal(12, 2)
-  theoreticalBalance  Decimal   @db.Decimal(12, 2)
-  declaredBalance     Decimal   @db.Decimal(12, 2)
-  discrepancy         Decimal   @db.Decimal(12, 2)
+  openingBalance     Decimal @db.Decimal(12, 2)
+  totalSales         Decimal @db.Decimal(12, 2)
+  totalCash          Decimal @db.Decimal(12, 2)
+  totalMobileMoney   Decimal @db.Decimal(12, 2)
+  totalCard          Decimal @db.Decimal(12, 2)
+  totalOther         Decimal @db.Decimal(12, 2)
+  totalRefunds       Decimal @db.Decimal(12, 2)
+  totalCashOut       Decimal @db.Decimal(12, 2)
+  theoreticalBalance Decimal @db.Decimal(12, 2)
+  declaredBalance    Decimal @db.Decimal(12, 2)
+  discrepancy        Decimal @db.Decimal(12, 2)
 
-  cashierId           String
-  validatedById       String?
-  notes               String?
+  cashierId     String
+  validatedById String?
+  notes         String?
 
   @@map("cash_closures")
 }
@@ -1012,48 +1063,48 @@ model CashClosure {
 
 /// Vente
 model Sale {
-  id              String      @id @default(cuid())
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Clé d'idempotence (anti-doublon sync offline)
-  idempotencyKey  String      @unique
+  idempotencyKey String @unique
 
-  companyId       String
-  centerId        String
-  sessionId       String
-  session         CashSession @relation(fields: [sessionId], references: [id])
-  cashierId       String
-  cashier         User        @relation(fields: [cashierId], references: [id])
-  customerId      String?
-  customer        Customer?   @relation(fields: [customerId], references: [id])
+  companyId  String
+  centerId   String
+  sessionId  String
+  session    CashSession @relation(fields: [sessionId], references: [id])
+  cashierId  String
+  cashier    User        @relation(fields: [cashierId], references: [id])
+  customerId String?
+  customer   Customer?   @relation(fields: [customerId], references: [id])
 
-  saleNumber      String                               // Numéro affiché (unique par entreprise)
-  invoiceSeq      Int?                                 // Partie numérique du numéro (sans trou ni doublon)
-  status          SaleStatus  @default(COMPLETED)
+  saleNumber String // Numéro affiché (unique par entreprise)
+  invoiceSeq Int? // Partie numérique du numéro (sans trou ni doublon)
+  status     SaleStatus @default(COMPLETED)
 
-  subtotal        Decimal     @db.Decimal(12, 2)
-  discountAmount  Decimal     @db.Decimal(12, 2) @default(0)
-  totalAmount     Decimal     @db.Decimal(12, 2)              // TTC
-  taxAmount       Decimal     @db.Decimal(12, 2) @default(0)  // TVA incluse dans le total
+  subtotal       Decimal @db.Decimal(12, 2)
+  discountAmount Decimal @default(0) @db.Decimal(12, 2)
+  totalAmount    Decimal @db.Decimal(12, 2) // TTC
+  taxAmount      Decimal @default(0) @db.Decimal(12, 2) // TVA incluse dans le total
 
-  notes           String?
+  notes String?
 
   // Retrait de la marchandise (si l'entreprise sert sur présentation de la facture)
-  deliveryStatus  DeliveryStatus @default(DELIVERED)
+  deliveryStatus DeliveryStatus @default(DELIVERED)
 
   // Offline
-  createdOffline  Boolean     @default(false)
-  deviceId        String?
-  syncedAt        DateTime?
+  createdOffline Boolean   @default(false)
+  deviceId       String?
+  syncedAt       DateTime?
 
-  lines           SaleLine[]
-  payments        Payment[]
-  cancellations   Cancellation[]
-  refunds         Refund[]
-  documents       Document[]
-  deliveries      Delivery[]
-  quote           Quote?
+  lines         SaleLine[]
+  payments      Payment[]
+  cancellations Cancellation[]
+  refunds       Refund[]
+  documents     Document[]
+  deliveries    Delivery[]
+  quote         Quote?
 
   @@unique([companyId, saleNumber])
   @@unique([companyId, invoiceSeq])
@@ -1063,41 +1114,41 @@ model Sale {
 
 /// Ligne de vente
 model SaleLine {
-  id            String    @id @default(cuid())
-  saleId        String
-  sale          Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  productId     String
-  product       Product   @relation(fields: [productId], references: [id])
+  id        String  @id @default(cuid())
+  saleId    String
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
 
-  quantity      Decimal   @db.Decimal(12, 3)
-  unitId        String?
-  unitPrice     Decimal   @db.Decimal(12, 2)
-  discount      Decimal   @db.Decimal(12, 2) @default(0)
-  lineTotal     Decimal   @db.Decimal(12, 2)           // TTC
-  baseQuantity  Decimal   @db.Decimal(12, 3) @default(0) // Quantité sortie du stock (unité de base)
-  taxRate       Decimal   @db.Decimal(5, 2) @default(0)
-  taxAmount     Decimal   @db.Decimal(12, 2) @default(0)
-  costAmount    Decimal   @db.Decimal(12, 2) @default(0)   // Coût de revient des marchandises vendues (figé à la vente)
-  deliveredQuantity Decimal @db.Decimal(12, 3) @default(0)   // Quantité remise au client (unité vendue)
+  quantity          Decimal @db.Decimal(12, 3)
+  unitId            String?
+  unitPrice         Decimal @db.Decimal(12, 2)
+  discount          Decimal @default(0) @db.Decimal(12, 2)
+  lineTotal         Decimal @db.Decimal(12, 2) // TTC
+  baseQuantity      Decimal @default(0) @db.Decimal(12, 3) // Quantité sortie du stock (unité de base)
+  taxRate           Decimal @default(0) @db.Decimal(5, 2)
+  taxAmount         Decimal @default(0) @db.Decimal(12, 2)
+  costAmount        Decimal @default(0) @db.Decimal(12, 2) // Coût de revient des marchandises vendues (figé à la vente)
+  deliveredQuantity Decimal @default(0) @db.Decimal(12, 3) // Quantité remise au client (unité vendue)
 
   @@map("sale_lines")
 }
 
 /// Paiement
 model Payment {
-  id              String        @id @default(cuid())
-  createdAt       DateTime      @default(now())
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
 
   // Idempotence
-  idempotencyKey  String        @unique
+  idempotencyKey String @unique
 
-  saleId          String
-  sale            Sale          @relation(fields: [saleId], references: [id])
+  saleId String
+  sale   Sale   @relation(fields: [saleId], references: [id])
 
-  method          PaymentMethod
-  amount          Decimal       @db.Decimal(12, 2)
-  reference       String?       // Référence mobile money, etc.
-  notes           String?
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(12, 2)
+  reference String? // Référence mobile money, etc.
+  notes     String?
 
   @@map("payments")
 }
@@ -1108,40 +1159,40 @@ model Payment {
 
 /// Demande d'annulation d'une vente
 model Cancellation {
-  id              String              @id @default(cuid())
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  saleId          String
-  sale            Sale                @relation(fields: [saleId], references: [id])
+  saleId String
+  sale   Sale   @relation(fields: [saleId], references: [id])
 
-  requesterId     String                          // Qui demande
-  requester       User                @relation("CancellationRequester", fields: [requesterId], references: [id])
-  approverId      String?                         // Qui approuve (≠ demandeur obligatoire)
-  approver        User?               @relation("CancellationApprover", fields: [approverId], references: [id])
+  requesterId String // Qui demande
+  requester   User    @relation("CancellationRequester", fields: [requesterId], references: [id])
+  approverId  String? // Qui approuve (≠ demandeur obligatoire)
+  approver    User?   @relation("CancellationApprover", fields: [approverId], references: [id])
 
-  status          CancellationStatus  @default(PENDING)
+  status          CancellationStatus @default(PENDING)
   requestReason   String
   rejectionReason String?
 
-  decidedAt       DateTime?
-  stockImpact     Json?               // Détail des mouvements de stock liés
-  cashImpact      Decimal?   @db.Decimal(12, 2)
+  decidedAt   DateTime?
+  stockImpact Json? // Détail des mouvements de stock liés
+  cashImpact  Decimal?  @db.Decimal(12, 2)
 
   @@map("cancellations")
 }
 
 /// Remboursement
 model Refund {
-  id            String    @id @default(cuid())
-  createdAt     DateTime  @default(now())
+  id            String        @id @default(cuid())
+  createdAt     DateTime      @default(now())
   saleId        String
-  sale          Sale      @relation(fields: [saleId], references: [id])
+  sale          Sale          @relation(fields: [saleId], references: [id])
   // Session de caisse d'où l'argent est sorti (null = remboursement hors caisse,
   // ex. mobile money rendu à distance). Sert au calcul de la clôture.
   sessionId     String?
-  session       CashSession? @relation(fields: [sessionId], references: [id])
-  amount        Decimal   @db.Decimal(12, 2)
+  session       CashSession?  @relation(fields: [sessionId], references: [id])
+  amount        Decimal       @db.Decimal(12, 2)
   method        PaymentMethod
   reason        String
   approvedById  String
@@ -1155,16 +1206,16 @@ model Refund {
 // ─────────────────────────────────────────────
 
 model Inventory {
-  id            String    @id @default(cuid())
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   companyId     String
-  number        String                         // INV-000001
+  number        String // INV-000001
   centerId      String
-  center        Center    @relation(fields: [centerId], references: [id])
+  center        Center          @relation(fields: [centerId], references: [id])
   status        InventoryStatus @default(IN_PROGRESS)
-  label         String?                        // « Inventaire annuel », « Rayon congelés »…
+  label         String? // « Inventaire annuel », « Rayon congelés »…
   startedById   String
   validatedById String?
   validatedAt   DateTime?
@@ -1172,7 +1223,7 @@ model Inventory {
   cancelledAt   DateTime?
   notes         String?
 
-  lines         InventoryLine[]
+  lines InventoryLine[]
 
   @@unique([companyId, number])
   @@index([centerId, status])
@@ -1183,18 +1234,18 @@ model Inventory {
 /// (compté − théorique) est appliqué à la validation, sans compter deux fois les
 /// ventes faites entre-temps.
 model InventoryLine {
-  id              String    @id @default(cuid())
-  inventoryId     String
-  inventory       Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
-  productId       String
-  product         Product   @relation(fields: [productId], references: [id])
-  theoreticalQty  Decimal   @db.Decimal(12, 3)
-  countedQty      Decimal?  @db.Decimal(12, 3)  // null = pas encore compté
-  discrepancy     Decimal?  @db.Decimal(12, 3)
-  unitCost        Decimal   @db.Decimal(14, 4) @default(0)   // CMP au moment du comptage (valorisation de l'écart)
+  id                String    @id @default(cuid())
+  inventoryId       String
+  inventory         Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product   @relation(fields: [productId], references: [id])
+  theoreticalQty    Decimal   @db.Decimal(12, 3)
+  countedQty        Decimal?  @db.Decimal(12, 3) // null = pas encore compté
+  discrepancy       Decimal?  @db.Decimal(12, 3)
+  unitCost          Decimal   @default(0) @db.Decimal(14, 4) // CMP au moment du comptage (valorisation de l'écart)
   discrepancyReason String?
-  countedAt       DateTime?
-  countedById     String?
+  countedAt         DateTime?
+  countedById       String?
 
   @@unique([inventoryId, productId])
   @@map("inventory_lines")
@@ -1205,26 +1256,26 @@ model InventoryLine {
 // ─────────────────────────────────────────────
 
 model StockTransfer {
-  id            String    @id @default(cuid())
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  companyId     String
-  number        String                         // TR-000001
-  fromCenterId  String
-  fromCenter    Center    @relation(fields: [fromCenterId], references: [id])
-  toCenterId    String
-  toCenter      Center    @relation("TransferDestination", fields: [toCenterId], references: [id])
-  status        TransferStatus @default(IN_TRANSIT)
-  notes         String?
-  createdById   String                          // Expédié par (le stock part à la création)
-  receivedById  String?
-  receivedAt    DateTime?
+  companyId      String
+  number         String // TR-000001
+  fromCenterId   String
+  fromCenter     Center         @relation(fields: [fromCenterId], references: [id])
+  toCenterId     String
+  toCenter       Center         @relation("TransferDestination", fields: [toCenterId], references: [id])
+  status         TransferStatus @default(IN_TRANSIT)
+  notes          String?
+  createdById    String // Expédié par (le stock part à la création)
+  receivedById   String?
+  receivedAt     DateTime?
   receptionNotes String?
-  cancelledById String?
-  cancelledAt   DateTime?
+  cancelledById  String?
+  cancelledAt    DateTime?
 
-  lines         StockTransferLine[]
+  lines StockTransferLine[]
 
   @@unique([companyId, number])
   @@index([fromCenterId, status])
@@ -1238,10 +1289,10 @@ model StockTransferLine {
   transfer    StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
   productId   String
   product     Product       @relation(fields: [productId], references: [id])
-  quantity    Decimal       @db.Decimal(12, 3)          // Expédié (unité de base)
-  receivedQty Decimal?      @db.Decimal(12, 3)          // Reçu (null tant que non réceptionné)
+  quantity    Decimal       @db.Decimal(12, 3) // Expédié (unité de base)
+  receivedQty Decimal?      @db.Decimal(12, 3) // Reçu (null tant que non réceptionné)
   unitId      String?
-  unitCost    Decimal       @db.Decimal(14, 4) @default(0)   // CMP du centre d'origine
+  unitCost    Decimal       @default(0) @db.Decimal(14, 4) // CMP du centre d'origine
   /// Lots expédiés (produits suivis par lot) : [{ lotNumber, expiresAt, quantity, unitCost }]
   batches     Json?
 
@@ -1256,26 +1307,26 @@ model StockTransferLine {
 /// par annulation historisée. Payée en espèces depuis une caisse ouverte, elle
 /// crée une sortie de caisse (prise en compte à la clôture).
 model Expense {
-  id          String    @id @default(cuid())
-  createdAt   DateTime  @default(now())
-  companyId   String
-  centerId    String
-  center      Center    @relation(fields: [centerId], references: [id])
-  category    String                          // Loyer, Électricité, Salaires, Transport…
-  amount      Decimal   @db.Decimal(12, 2)
-  description String?
-  date        DateTime  @default(now())        // Date de la dépense (peut différer de la saisie)
-  method      PaymentMethod @default(CASH)
-  reference   String?                         // N° de facture, référence mobile money…
-  payee       String?                         // Bénéficiaire
-  sessionId   String?                         // Caisse d'où l'argent est sorti
-  cashMovementId String? @unique
-  createdById String
+  id             String        @id @default(cuid())
+  createdAt      DateTime      @default(now())
+  companyId      String
+  centerId       String
+  center         Center        @relation(fields: [centerId], references: [id])
+  category       String // Loyer, Électricité, Salaires, Transport…
+  amount         Decimal       @db.Decimal(12, 2)
+  description    String?
+  date           DateTime      @default(now()) // Date de la dépense (peut différer de la saisie)
+  method         PaymentMethod @default(CASH)
+  reference      String? // N° de facture, référence mobile money…
+  payee          String? // Bénéficiaire
+  sessionId      String? // Caisse d'où l'argent est sorti
+  cashMovementId String?       @unique
+  createdById    String
 
-  isCancelled     Boolean   @default(false)
-  cancelledAt     DateTime?
-  cancelledById   String?
-  cancelReason    String?
+  isCancelled   Boolean   @default(false)
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelReason  String?
 
   @@index([companyId, date])
   @@map("expenses")
@@ -1286,19 +1337,19 @@ model Expense {
 // ─────────────────────────────────────────────
 
 model Document {
-  id          String        @id @default(cuid())
-  createdAt   DateTime      @default(now())
-  companyId   String
-  centerId    String?
-  saleId      String?
-  sale        Sale?         @relation(fields: [saleId], references: [id])
-  type        DocumentType
-  number      String        @unique
-  pdfUrl      String?
-  data        Json                              // Snapshot des données au moment de la création
-  isVoided    Boolean       @default(false)
-  voidedAt    DateTime?
-  voidedById  String?
+  id         String       @id @default(cuid())
+  createdAt  DateTime     @default(now())
+  companyId  String
+  centerId   String?
+  saleId     String?
+  sale       Sale?        @relation(fields: [saleId], references: [id])
+  type       DocumentType
+  number     String       @unique
+  pdfUrl     String?
+  data       Json // Snapshot des données au moment de la création
+  isVoided   Boolean      @default(false)
+  voidedAt   DateTime?
+  voidedById String?
 
   @@map("documents")
 }
@@ -1308,18 +1359,18 @@ model Document {
 // ─────────────────────────────────────────────
 
 model Notification {
-  id          String    @id @default(cuid())
-  createdAt   DateTime  @default(now())
-  companyId   String
-  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  userId      String?
-  centerId    String?
-  type        String
-  title       String
-  message     String
-  data        Json?
-  isRead      Boolean   @default(false)
-  readAt      DateTime?
+  id        String    @id @default(cuid())
+  createdAt DateTime  @default(now())
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId    String?
+  centerId  String?
+  type      String
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean   @default(false)
+  readAt    DateTime?
 
   @@map("notifications")
 }
@@ -1330,22 +1381,22 @@ model Notification {
 
 /// File d'opérations à synchroniser
 model SyncOperation {
-  id              String      @id @default(cuid())
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  companyId       String
-  centerId        String?
-  deviceId        String
+  companyId String
+  centerId  String?
+  deviceId  String
 
-  idempotencyKey  String      @unique              // Clé anti-doublon
-  operationType   String                           // "SALE", "RECEIPT", etc.
-  payload         Json                             // Données de l'opération
-  status          SyncStatus  @default(PENDING)
-  attempts        Int         @default(0)
-  lastError       String?
-  resolvedAt      DateTime?
-  dependsOn       String?                          // ID d'une autre SyncOperation
+  idempotencyKey String     @unique // Clé anti-doublon
+  operationType  String // "SALE", "RECEIPT", etc.
+  payload        Json // Données de l'opération
+  status         SyncStatus @default(PENDING)
+  attempts       Int        @default(0)
+  lastError      String?
+  resolvedAt     DateTime?
+  dependsOn      String? // ID d'une autre SyncOperation
 
   @@map("sync_operations")
 }
@@ -1355,38 +1406,38 @@ model SyncOperation {
 // ─────────────────────────────────────────────
 
 model AuditLog {
-  id              String          @id @default(cuid())
-  createdAt       DateTime        @default(now())
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
 
-  companyId       String?
-  company         Company?        @relation(fields: [companyId], references: [id])
-  centerId        String?
-  center          Center?         @relation(fields: [centerId], references: [id])
-  userId          String?
-  user            User?           @relation(fields: [userId], references: [id])
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+  centerId  String?
+  center    Center?  @relation(fields: [centerId], references: [id])
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
 
-  eventType       AuditEventType
-  referenceType   String?         // "Sale", "CashSession", etc.
-  referenceId     String?
+  eventType     AuditEventType
+  referenceType String? // "Sale", "CashSession", etc.
+  referenceId   String?
 
   // Timestamps double (appareil + serveur)
   deviceTimestamp DateTime?
-  serverTimestamp DateTime        @default(now())
+  serverTimestamp DateTime  @default(now())
 
-  result          String?         // "SUCCESS", "FAILED", "DENIED"
-  reason          String?
-  oldValues       Json?
-  newValues       Json?
-  metadata        Json?
+  result    String? // "SUCCESS", "FAILED", "DENIED"
+  reason    String?
+  oldValues Json?
+  newValues Json?
+  metadata  Json?
 
   // Intégrité : hash du log précédent (chaîne de hachage)
-  previousHash    String?
-  hash            String?
+  previousHash String?
+  hash         String?
 
-  ipAddress       String?
-  userAgent       String?
-  deviceId        String?
-  sessionId       String?
+  ipAddress String?
+  userAgent String?
+  deviceId  String?
+  sessionId String?
 
   @@index([companyId, serverTimestamp])
   @@map("audit_logs")

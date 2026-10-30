@@ -8,6 +8,7 @@ import { BUSINESS_PROFILES, BUSINESS_TYPE_ORDER } from "@/lib/business-profiles"
 import { cn } from "@/lib/utils";
 import { BrandCard } from "@/components/app/brand-settings";
 import { DeleteAccountCard } from "@/components/app/delete-account";
+import { SubscriptionCard } from "@/components/app/subscription-card";
 
 interface CompanySettings {
   tradeName: string;
@@ -101,6 +102,8 @@ export default function SettingsPage() {
       <div className="space-y-6 max-w-3xl">
         {error && <Alert>{error}</Alert>}
         {saved && <Alert tone="green">Paramètres enregistrés.</Alert>}
+
+        <SubscriptionCard />
 
         <BrandCard editable={editable} />
 

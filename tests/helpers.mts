@@ -63,6 +63,9 @@ export async function resetDb() {
     `TRUNCATE ${tables.map((t) => `"${t.tablename}"`).join(", ")} RESTART IDENTITY CASCADE`
   );
   await prisma.$executeRawUnsafe(`ALTER TABLE "audit_logs" ENABLE TRIGGER USER`);
+  // Les offres d'abonnement sont des données de référence
+  const { ensureDefaultPlans } = await import("@/lib/subscription");
+  await ensureDefaultPlans();
 }
 
 export async function passwordHash() {

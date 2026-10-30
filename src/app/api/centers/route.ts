@@ -1,3 +1,4 @@
+import { assertCanAddCenter } from "@/lib/subscription";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { centerSchema } from "@/lib/validations";
@@ -76,6 +77,7 @@ export async function POST(req: NextRequest) {
     }
 
     const center = await prisma.$transaction(async (tx) => {
+      await assertCanAddCenter(companyId, tx);
       const newCenter = await tx.center.create({
         data: {
           companyId,

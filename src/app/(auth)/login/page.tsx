@@ -60,7 +60,8 @@ function LoginForm() {
         applyBrand({ companyId: result.data.company.id, name: result.data.company.tradeName, logoUrl: result.data.company.logoUrl ?? null });
       }
 
-      router.push(redirect);
+      // Administrateur de la plateforme : son propre espace
+      router.push(result.data?.user?.role === "PLATFORM_ADMIN" ? "/plateforme" : redirect);
       router.refresh();
     } catch {
       setError("Impossible de se connecter. Vérifiez votre connexion Internet.");

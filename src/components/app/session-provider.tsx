@@ -23,6 +23,8 @@ export interface SessionData {
   } | null;
   centers: Array<{ id: string; name: string; code: string; status: string }>;
   permissions: Permission[];
+  /** Abonnement à la plateforme (bandeau d'échéance, consultation seule). */
+  subscription?: { status: "TRIAL" | "ACTIVE" | "GRACE" | "EXPIRED" | "SUSPENDED"; daysLeft: number | null; accessEndsAt: string | null; readOnlyFrom: string | null } | null;
 }
 
 interface SessionContextValue {
