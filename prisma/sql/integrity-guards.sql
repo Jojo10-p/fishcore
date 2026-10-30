@@ -73,3 +73,14 @@ ALTER TABLE "payments" ADD CONSTRAINT "payments_no_credit" CHECK ("method" <> 'C
 -- Plages de numéros de facture : bornes cohérentes
 ALTER TABLE "invoice_number_blocks" DROP CONSTRAINT IF EXISTS "invoice_number_blocks_range";
 ALTER TABLE "invoice_number_blocks" ADD CONSTRAINT "invoice_number_blocks_range" CHECK ("first" >= 1 AND "last" >= "first");
+
+-- Hébergement Supabase : l'API publique automatique (PostgREST) ne doit rien exposer.
+-- RLS activé sans politique = aucun accès pour les rôles anon/authenticated ;
+-- l'application, propriétaire des tables, n'est pas concernée.
+DO $$
+DECLARE t record;
+BEGIN
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tableowner = current_user LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.tablename);
+  END LOOP;
+END $$;
