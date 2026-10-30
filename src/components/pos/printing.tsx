@@ -63,8 +63,6 @@ export function snapshotToTicket(sale: SaleSnapshot, header: TicketHeader): Tick
     tax: sale.tax,
     payments: sale.payments,
     pickupPending: header.company.requiresPickup,
-    emecfEnabled: header.company.emecfEnabled ?? false,
-    emecf: sale.emecf ?? null,
   };
 }
 

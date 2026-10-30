@@ -31,7 +31,6 @@ interface Product {
   sellingPrice: string;
   stockAlertQty: string;
   taxRate: string;
-  emecfTaxGroup?: string | null;
   trackBatches: boolean;
   requiresExpiry: boolean;
   requiresPrescription: boolean;
@@ -229,7 +228,6 @@ function ProductModal({
 }) {
   const { profile, session } = useSession();
   const vatEnabled = session?.company?.vatEnabled ?? false;
-  const emecfEnabled = session?.company?.emecfEnabled ?? false;
   const defaultUnit = units.find((u) => u.symbol === profile.defaultUnit) ?? units[0];
 
   const [form, setForm] = useState(() => ({
@@ -243,7 +241,6 @@ function ProductModal({
     sellingPrice: product ? String(Number(product.sellingPrice)) : "",
     stockAlertQty: product ? String(Number(product.stockAlertQty)) : "",
     taxRate: product ? String(Number(product.taxRate)) : "",
-    emecfTaxGroup: product?.emecfTaxGroup ?? "",
   }));
   const [attributes, setAttributes] = useState<Array<{ key: string; value: string }>>(() => {
     const existing = Object.entries(product?.attributes ?? {}).map(([key, value]) => ({ key, value }));
@@ -301,7 +298,6 @@ function ProductModal({
       sellingPrice: num(form.sellingPrice),
       stockAlertQty: num(form.stockAlertQty),
       ...(form.taxRate !== "" ? { taxRate: num(form.taxRate) } : {}),
-      ...(emecfEnabled ? { emecfTaxGroup: form.emecfTaxGroup || null } : {}),
       attributes: Object.fromEntries(attributes.filter((a) => a.key.trim() && a.value.trim()).map((a) => [a.key.trim(), a.value.trim()])),
       packagings: packagings
         .filter((p) => p.unitId && num(p.factor) > 0)
@@ -395,19 +391,6 @@ function ProductModal({
           <Input inputMode="decimal" value={form.stockAlertQty} onChange={set("stockAlertQty")} />
         </Field>
       </div>
-      {emecfEnabled && (
-        <Field label="Groupe de taxe DGI (e-MECeF)" hint="Laissez « par défaut » sauf exception (article exonéré, export…).">
-          <Select value={form.emecfTaxGroup} onChange={set("emecfTaxGroup")}>
-            <option value="">Par défaut de l&apos;entreprise</option>
-            <option value="A">A — Exonéré</option>
-            <option value="B">B — Taxable 18 %</option>
-            <option value="C">C — Exportation</option>
-            <option value="D">D — TVA régime d&apos;exception</option>
-            <option value="E">E — Régime TPS</option>
-            <option value="F">F — Réservé</option>
-          </Select>
-        </Field>
-      )}
 
       {/* Conditionnements */}
       <fieldset className="space-y-2">

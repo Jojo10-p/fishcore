@@ -120,7 +120,6 @@ export async function POST(req: NextRequest) {
           requiresExpiry,
           requiresPrescription: data.requiresPrescription ?? profile.productDefaults.requiresPrescription,
           taxRate: data.taxRate ?? (company.vatEnabled ? company.defaultTaxRate : 0),
-          emecfTaxGroup: data.emecfTaxGroup ?? null,
         },
       });
 

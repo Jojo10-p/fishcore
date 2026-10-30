@@ -25,7 +25,6 @@ const STATEMENTS: Array<[string, string]> = [
   ["liens d'installation", `DELETE FROM "agency_install_links" WHERE "companyId" = ${C}`],
   ["numéros de facture", `DELETE FROM "invoice_number_blocks" WHERE "companyId" = ${C}`],
   ["logo", `DELETE FROM "company_brand_assets" WHERE "companyId" = ${C}`],
-  ["factures normalisées", `DELETE FROM "emecf_documents" WHERE "companyId" = ${C} OR "saleId" IN (${SALES})`],
   ["documents", `DELETE FROM "documents" WHERE "companyId" = ${C} OR "saleId" IN (${SALES})`],
   ["retraits", `DELETE FROM "delivery_lines" WHERE "deliveryId" IN (SELECT "id" FROM "deliveries" WHERE "companyId" = ${C} OR "saleId" IN (${SALES}))`],
   ["retraits", `DELETE FROM "deliveries" WHERE "companyId" = ${C} OR "saleId" IN (${SALES})`],

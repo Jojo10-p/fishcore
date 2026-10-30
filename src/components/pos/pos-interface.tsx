@@ -1,7 +1,5 @@
 "use client";
 
-import type { EmecfView } from "@/components/documents/emecf-block";
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOfflineDB, type OfflinePackaging, type OfflineProduct } from "@/lib/offline/db";
 import { applySaleToLocalStock, createOfflineSale } from "@/lib/offline/sales";
@@ -72,8 +70,6 @@ export interface SaleSnapshot {
   tax: number;
   payments: Array<{ method: string; amount: number; reference?: string | null; notes?: string | null }>;
   change: number;
-  /** Facture normalisée e-MECeF renvoyée par le serveur (null : en attente / hors ligne). */
-  emecf?: EmecfView | null;
 }
 
 /** Même règle que le serveur : la monnaie rendue est déduite des espèces. */
@@ -356,7 +352,6 @@ export default function POSInterface({
 
     try {
       let saleId: string;
-      let emecf: EmecfView | null = null;
       let recordedOffline = !isOnline;
 
       // Numéro de facture : pris dans la plage de cette caisse, connu avant même
@@ -419,7 +414,6 @@ export default function POSInterface({
           if (!res.ok || !data.success) throw new Error(data.error ?? "Erreur serveur");
           saleId = data.data.id;
           saleNumber = data.data.saleNumber;
-          emecf = data.data.emecf ?? null;
           if (invoice) await commitNumber(sessionId, invoice.seq);
           if (!quote) await applySaleToLocalStock(centerId, lines);
         }
@@ -451,7 +445,6 @@ export default function POSInterface({
         tax: quote ? quote.tax : round2(cart.reduce((s, i) => s + taxOf(lineTotal(i), i.taxRate), 0)),
         payments: settleLocally(cleanPayments, payTotal),
         change,
-        emecf,
       };
       onSaleRecorded?.({ id: saleId, offline: recordedOffline, snapshot });
       setNotification({

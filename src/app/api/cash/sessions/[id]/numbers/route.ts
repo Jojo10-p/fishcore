@@ -52,7 +52,6 @@ export async function GET(req: NextRequest, { params }: Params) {
           currency: true,
           invoiceNotes: true,
           requiresPickup: true,
-          emecfEnabled: true,
           invoiceFormat: true,
         },
       }),

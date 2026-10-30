@@ -18,32 +18,6 @@ interface SaleRow {
   cashier: { firstName: string; lastName: string };
   customer: { name: string; phone: string | null } | null;
   payments: Array<{ method: string; amount: string }>;
-  emecfDocuments?: Array<{ type: "FV" | "FA"; status: "PENDING" | "SUBMITTED" | "NORMALIZED" | "FAILED"; codeMecefDgi: string | null; lastError: string | null }>;
-}
-
-/** Statut DGI (e-MECeF) d'une facture. */
-function EmecfBadge({ s, onRetry, busy }: { s: SaleRow; onRetry?: () => void; busy: boolean }) {
-  const fv = s.emecfDocuments?.find((d) => d.type === "FV");
-  if (!fv) return null;
-  const fa = s.emecfDocuments?.find((d) => d.type === "FA");
-  if (fv.status === "NORMALIZED" && (!fa || fa.status === "NORMALIZED")) {
-    return (
-      <span className="ml-1" title={fv.codeMecefDgi ?? ""}>
-        <Badge tone="blue">{fa ? "DGI ✓ + avoir" : "DGI ✓"}</Badge>
-      </span>
-    );
-  }
-  const failed = fv.status === "FAILED" || fa?.status === "FAILED";
-  return (
-    <span className="ml-1 inline-flex items-center gap-1" title={(fa?.lastError ?? fv.lastError) ?? ""}>
-      <Badge tone={failed ? "red" : "amber"}>{failed ? "DGI refusée" : "DGI en attente"}</Badge>
-      {onRetry && (
-        <button className="text-xs text-blue-600 hover:underline disabled:text-gray-400" onClick={onRetry} disabled={busy}>
-          {busy ? "…" : "normaliser"}
-        </button>
-      )}
-    </span>
-  );
 }
 
 const SALE_STATUS: Record<string, { label: string; tone: "green" | "red" | "amber" | "gray" }> = {
@@ -62,18 +36,6 @@ export default function SalesPage() {
   const [sales, setSales] = useState<SaleRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cancelFor, setCancelFor] = useState<SaleRow | null>(null);
-  const [normalizing, setNormalizing] = useState<string | null>(null);
-  const normalize = async (saleId: string) => {
-    setNormalizing(saleId);
-    try {
-      await apiSend("/api/company/emecf/retry", { saleId });
-      await load();
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setNormalizing(null);
-    }
-  };
 
   const load = useCallback(async () => {
     if (!centerId) return;
@@ -134,7 +96,6 @@ export default function SalesPage() {
                 </Td>
                 <Td>
                   <Badge tone={SALE_STATUS[s.status]?.tone ?? "gray"}>{SALE_STATUS[s.status]?.label ?? s.status}</Badge>
-                  <EmecfBadge s={s} busy={normalizing === s.id} onRetry={can("sale:view_all") ? () => void normalize(s.id) : undefined} />
                   {pickup && s.status !== "CANCELLED" && s.deliveryStatus !== "DELIVERED" && (
                     <span className="ml-1">
                       <Badge tone="amber">{s.deliveryStatus === "PARTIAL" ? "servie en partie" : "à servir"}</Badge>

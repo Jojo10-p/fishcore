@@ -107,16 +107,3 @@ ALTER TABLE "stock_transfer_lines" ADD CONSTRAINT "stock_transfer_lines_quantiti
   CHECK ("quantity" > 0 AND ("receivedQty" IS NULL OR ("receivedQty" >= 0 AND "receivedQty" <= "quantity")));
 ALTER TABLE "stock_transfers" DROP CONSTRAINT IF EXISTS "stock_transfers_distinct_centers";
 ALTER TABLE "stock_transfers" ADD CONSTRAINT "stock_transfers_distinct_centers" CHECK ("fromCenterId" <> "toCenterId");
-
--- e-MECeF : groupes de taxe A à F, AIB A (1 %) ou B (5 %), mode test/production
-ALTER TABLE "products" DROP CONSTRAINT IF EXISTS "products_emecf_tax_group";
-ALTER TABLE "products" ADD CONSTRAINT "products_emecf_tax_group" CHECK ("emecfTaxGroup" IS NULL OR "emecfTaxGroup" IN ('A','B','C','D','E','F'));
-ALTER TABLE "companies" DROP CONSTRAINT IF EXISTS "companies_emecf_settings";
-ALTER TABLE "companies" ADD CONSTRAINT "companies_emecf_settings" CHECK (
-  "emecfDefaultTaxGroup" IN ('A','B','C','D','E','F')
-  AND ("emecfAib" IS NULL OR "emecfAib" IN ('A','B'))
-  AND "emecfMode" IN ('test','production'));
--- Une facture normalisée a toujours son code DGI
-ALTER TABLE "emecf_documents" DROP CONSTRAINT IF EXISTS "emecf_documents_normalized_has_code";
-ALTER TABLE "emecf_documents" ADD CONSTRAINT "emecf_documents_normalized_has_code"
-  CHECK ("status" <> 'NORMALIZED' OR ("codeMecefDgi" IS NOT NULL AND "qrCode" IS NOT NULL));

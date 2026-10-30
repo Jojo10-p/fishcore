@@ -152,8 +152,6 @@ export const productSchema = z.object({
   requiresExpiry: z.boolean().optional(),
   requiresPrescription: z.boolean().optional(),
   taxRate: z.coerce.number().min(0).max(100).optional(),
-  /** Groupe de taxe e-MECeF (A à F) ; absent = groupe par défaut de l'entreprise */
-  emecfTaxGroup: z.enum(["A", "B", "C", "D", "E", "F"]).nullable().optional(),
   packagings: z.array(packagingSchema).max(10).optional(),
 });
 

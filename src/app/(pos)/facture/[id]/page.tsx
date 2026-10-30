@@ -1,7 +1,5 @@
 "use client";
 
-import { EmecfA4Block, type EmecfView } from "@/components/documents/emecf-block";
-
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { apiGet, errorMessage } from "@/lib/client/api";
@@ -48,9 +46,7 @@ interface InvoiceData {
   quote: { id: string; number: string } | null;
   deliveries: Array<{ id: string; number: number; createdAt: string; deliveredBy: string; lines: Array<{ saleLineId: string; quantity: string }> }>;
   session: { cashRegister: { name: string; center: { name: string; address: string | null; city: string | null; phone: string | null } } };
-  company: DocCompany & { requiresPickup: boolean; emecfEnabled?: boolean };
-  emecf?: EmecfView | null;
-  emecfCredit?: EmecfView | null;
+  company: DocCompany & { requiresPickup: boolean };
 }
 
 const METHODS: Record<string, string> = { CASH: "Espèces", MOBILE_MONEY: "Mobile money", CARD: "Carte", TRANSFER: "Virement", MIXED: "Mixte" };
@@ -195,13 +191,6 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
             </p>
           )}
         </section>
-      )}
-
-      {(sale.emecf || sale.company.emecfEnabled) && (
-        <EmecfA4Block
-          e={sale.emecf ?? { status: "PENDING", codeMecefDgi: null, qrCode: null, counters: null, nim: null, dgiDateTime: null }}
-          credit={sale.emecfCredit ? { ...sale.emecfCredit, type: "FA" } : null}
-        />
       )}
 
       <Signatures labels={pickup ? ["Le client", "La caisse", "Le magasin"] : ["Le client", "La caisse"]} />

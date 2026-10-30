@@ -1,7 +1,5 @@
 "use client";
 
-import type { EmecfView } from "@/components/documents/emecf-block";
-
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { TICKET_PRINT_CSS, Ticket80, type TicketData } from "@/components/documents/ticket-80";
@@ -31,9 +29,7 @@ interface SaleDetail {
   refunds: Array<{ amount: string }>;
   cashier: { firstName: string };
   session: { cashRegister: { center: { name: string; address: string | null; city: string | null; phone: string | null } } };
-  company: TicketData["company"] & { requiresPickup: boolean; emecfEnabled?: boolean };
-  emecf?: EmecfView | null;
-  emecfCredit?: EmecfView | null;
+  company: TicketData["company"] & { requiresPickup: boolean };
 }
 
 function toTicket(s: SaleDetail): TicketData {
@@ -62,9 +58,6 @@ function toTicket(s: SaleDetail): TicketData {
     refunded: s.refunds.reduce((sum, r) => sum + Number(r.amount), 0),
     cancelled: s.status === "CANCELLED",
     pickupPending: s.company.requiresPickup && s.deliveryStatus !== "DELIVERED",
-    emecfEnabled: !!s.company.emecfEnabled || !!s.emecf,
-    emecf: s.emecf ?? null,
-    emecfCredit: s.emecfCredit ?? null,
   };
 }
 

@@ -26,8 +26,6 @@
 | `NEXT_PUBLIC_APP_URL` | `https://votre-domaine` (ou l'adresse `.vercel.app`) |
 | `NEXT_PUBLIC_APP_NAME` | nom affiché, ex. `fishcore` |
 | `DATABASE_CA_CERT` | facultatif, voir plus haut |
-| `DATA_ENCRYPTION_KEY` | `openssl rand -base64 32` — chiffre les jetons e-MCF des entreprises. **Ne jamais la changer** une fois des jetons enregistrés (ils deviendraient illisibles) |
-| `CRON_SECRET` | `openssl rand -base64 32` — protège la reprise quotidienne des factures en attente (`/api/cron/emecf`) |
 | `NEXT_PUBLIC_SUPPORT_CONTACT` | facultatif : contact de l'assistance affiché aux propriétaires (« Mot de passe oublié »), ex. `WhatsApp +229 01 00 00 00 00` |
 
    L'application refuse de démarrer en production sans `JWT_SECRET` et `INSTALL_LINK_SECRET`.
@@ -72,21 +70,7 @@ Chaque `git push` sur la branche principale redéploie. Les caisses se mettent �
 - Au retour du réseau, les ventes partent aussitôt au serveur, avec leur heure réelle.
 - La clôture de caisse se fait avec connexion (toutes les ventes doivent être envoyées).
 
-## 5. Facture normalisée e-MECeF (DGI)
-
-1. L'entreprise demande son e-MCF à la DGI et récupère le **jeton** (JWT) sur le portail e-MECeF.
-2. *Paramètres* : IFU renseigné (13 chiffres), puis *Facture normalisée e-MECeF* → coller le jeton, choisir
-   **Bac à sable** pour les essais puis **Production**, cocher *Normaliser toutes les ventes* → *Vérifier et enregistrer*.
-   Le jeton est vérifié auprès de la DGI (il doit appartenir à l'IFU de l'entreprise) puis chiffré ; il n'est jamais réaffiché.
-3. Groupe de taxe par défaut : **B** (TVA 18 %) pour une entreprise assujettie, **E** (TPS) pour le régime TPS ; un article
-   peut avoir son propre groupe (fiche article : exonéré A, export C…).
-4. Chaque vente est déclarée à la DGI : le ticket 80 mm et la facture A4 portent le code MECeF/DGI, le QR code, le NIM,
-   les compteurs et l'heure MECeF. Une vente annulée reçoit automatiquement sa **facture d'avoir** (FA).
-5. Sans connexion (ou DGI injoignable), la vente passe et le ticket l'indique (« en attente de normalisation ») : la facture
-   est normalisée dès le retour du réseau (activité des caisses, bouton *Normaliser maintenant*, tâche quotidienne), et la
-   facture normalisée se réimprime depuis *Factures & ventes*.
-
-## 6. Assistance
+## 5. Assistance
 
 - **Employé qui a oublié son mot de passe** : son responsable ouvre *Utilisateurs* → **🔑 Mot de passe** et lui envoie le
   lien par WhatsApp/SMS (valable 24 h, une seule fois). Aucun e-mail n'est nécessaire.
@@ -99,7 +83,7 @@ Chaque `git push` sur la branche principale redéploie. Les caisses se mettent �
   l'entreprise recopié). Tout est effacé en une transaction ; l'e-mail peut resservir aussitôt.
 - **Journal d'audit** : *Administration → Journal d'audit* (propriétaire), avec vérification de l'intégrité.
 
-## 7. Sauvegardes
+## 6. Sauvegardes
 
 Les sauvegardes automatiques dépendent de l'offre Supabase (quotidiennes à partir de l'offre Pro ;
 l'offre gratuite n'en garantit pas) : vérifier dans *Database → Backups*. En complément, faire une copie

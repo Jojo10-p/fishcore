@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runAfter } from "@/lib/background";
-import { sweepIfDue } from "@/lib/emecf/normalize";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser, handleApiError, requireCenterAccess, requireCompany, requirePermission } from "@/lib/auth";
 
@@ -34,9 +32,6 @@ export async function GET(req: NextRequest) {
              FROM "unit_conversions" uc JOIN "products" p ON p."id" = uc."productId" WHERE p."companyId" = ${companyId}),
           (SELECT count(*) FILTER (WHERE "allowsDecimal") FROM "units" WHERE "companyId" = ${companyId})
         )) AS catalog`;
-
-    // Factures en attente de normalisation : reprises dès que le réseau revient
-    runAfter(() => sweepIfDue(companyId));
 
     return NextResponse.json(
       { success: true, data: { stock: row.stock, catalog: row.catalog, stamp: `${row.stock}.${row.catalog}` } },

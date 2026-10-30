@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
         role: true,
         avatarUrl: true,
         company: {
-          select: { id: true, tradeName: true, logoUrl: true, currency: true, timezone: true, businessType: true, vatEnabled: true, requiresPickup: true, invoiceFormat: true, emecfEnabled: true },
+          select: { id: true, tradeName: true, logoUrl: true, currency: true, timezone: true, businessType: true, vatEnabled: true, requiresPickup: true, invoiceFormat: true },
         },
       },
     });
