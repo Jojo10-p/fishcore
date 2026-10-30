@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { Permission } from "@/lib/rbac";
 import { apiGet } from "@/lib/client/api";
 import { getBusinessProfile, type BusinessProfile } from "@/lib/business-profiles";
+import { applyBrand } from "@/lib/client/brand";
 
 export interface SessionData {
   user: { id: string; email: string; firstName: string; lastName: string; role: string; avatarUrl?: string | null };
@@ -88,6 +89,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const t = setTimeout(() => void refresh(), 0);
     return () => clearTimeout(t);
   }, [refresh]);
+
+  // L'application porte le nom et le logo de l'entreprise connectée
+  const company = session?.company;
+  useEffect(() => {
+    if (company) applyBrand({ companyId: company.id, name: company.tradeName, logoUrl: company.logoUrl ?? null });
+  }, [company]);
 
   const setCenterId = useCallback((id: string) => {
     setCenterIdState(id);

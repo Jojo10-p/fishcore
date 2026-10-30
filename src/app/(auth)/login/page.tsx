@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { applyBrand, readBrand, type Brand } from "@/lib/client/brand";
 import { useForm } from "react-hook-form";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -19,6 +20,16 @@ function LoginForm() {
 
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Application installée par une entreprise : on garde son nom et son logo
+  const [brand, setBrand] = useState<Brand | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const b = readBrand();
+      setBrand(b);
+      if (b) applyBrand(b);
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
 
   const {
     register,
@@ -44,10 +55,9 @@ function LoginForm() {
         return;
       }
 
-      // Stocker le nom de l'entreprise pour le label de la page
-      if (result.data?.company?.tradeName) {
-        localStorage.setItem("fishcore-company-name", result.data.company.tradeName);
-        localStorage.setItem("fishcore-company-logo", result.data.company.logoUrl ?? "");
+      // L'application prend le nom et le logo de l'entreprise
+      if (result.data?.company?.id) {
+        applyBrand({ companyId: result.data.company.id, name: result.data.company.tradeName, logoUrl: result.data.company.logoUrl ?? null });
       }
 
       router.push(redirect);
@@ -63,12 +73,18 @@ function LoginForm() {
     <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
       {/* Logo / En-tête */}
       <div className="text-center mb-8">
-        <div className="inline-flex items-center justify-center w-14 h-14 bg-blue-600 rounded-2xl mb-4 shadow-lg">
-          <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
-        </div>
-        <h1 className="text-2xl font-bold text-gray-900">Connexion</h1>
+        {brand?.logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- logo de l'entreprise servi par l'API
+          <img src={`/api/brand/${brand.companyId}/icon-192.png?v=${new URLSearchParams(brand.logoUrl.split("?")[1] ?? "").get("v") ?? ""}`} alt="" className="mx-auto mb-4 h-16 w-16 rounded-2xl object-contain shadow" />
+        ) : (
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-blue-600 rounded-2xl mb-4 shadow-lg">
+            {/* eslint-disable-next-line @next/next/no-img-element -- icône statique */}
+            <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
+          </div>
+        )}
+        <h1 className="text-2xl font-bold text-gray-900">{brand ? brand.name : "Connexion"}</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Accédez à votre espace de gestion
+          {brand ? "Connectez-vous à votre espace" : "Accédez à votre espace de gestion"}
         </p>
       </div>
 
@@ -124,6 +140,11 @@ function LoginForm() {
           {errors.password && (
             <p className="mt-1.5 text-xs text-red-600">{errors.password.message}</p>
           )}
+          <div className="mt-1.5 text-right">
+            <Link href="/mot-de-passe-oublie" className="text-xs text-blue-600 hover:underline">
+              Mot de passe oublié ?
+            </Link>
+          </div>
         </div>
 
         {/* Bouton connexion */}

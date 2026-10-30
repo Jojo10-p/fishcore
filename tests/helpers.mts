@@ -39,11 +39,11 @@ export async function call(
   return { status: res.status, json: (await res.json()) as Json };
 }
 
-export async function login(email: string): Promise<string> {
+export async function login(email: string, password: string = PASSWORD): Promise<string> {
   const req = new NextRequest(`${BASE}/api/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password: PASSWORD }),
+    body: JSON.stringify({ email, password }),
   });
   const res = await loginRoute.POST(req);
   assert.equal(res.status, 200, `connexion ${email}`);

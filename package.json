@@ -13,7 +13,8 @@
     "db:migrate": "prisma migrate dev && node scripts/apply-sql-guards.mjs",
     "db:deploy": "prisma migrate deploy && node scripts/apply-sql-guards.mjs",
     "db:guards": "node scripts/apply-sql-guards.mjs",
-    "test": "tsx --test --test-concurrency=1 tests/*.test.mts"
+    "test": "tsx --test --test-concurrency=1 tests/*.test.mts",
+    "reset-link": "node scripts/reset-link.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^6.0.0",

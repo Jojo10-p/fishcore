@@ -2,3 +2,5 @@
 // définir NEXT_PUBLIC_APP_NAME pour le changer partout sans toucher au code.
 export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || "fishcore";
 export const APP_TAGLINE = "Gestion commerciale — caisse, stocks et pilotage multi-centres";
+/** Contact de l'assistance de la plateforme (WhatsApp, téléphone…), affiché aux propriétaires. */
+export const SUPPORT_CONTACT = process.env.NEXT_PUBLIC_SUPPORT_CONTACT || "";

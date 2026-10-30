@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BUSINESS_PROFILES, BUSINESS_TYPE_ORDER } from "@/lib/business-profiles";
+import { applyBrand } from "@/lib/client/brand";
 
 // ─────────────────────────────────────────────
 // Types
@@ -71,6 +72,12 @@ export default function RegisterPage() {
   const [step1Data, setStep1Data] = useState<StepOneData | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  // Arrivée après une suppression de compte
+  const [deleted, setDeleted] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setDeleted(new URLSearchParams(window.location.search).get("compte") === "supprime"), 0);
+    return () => clearTimeout(t);
+  }, []);
 
   // Restaurer le brouillon
   useEffect(() => {
@@ -377,6 +384,10 @@ export default function RegisterPage() {
         body: JSON.stringify({ email: step1Data.email, password: step2.password }),
       });
       if (loginRes.ok) {
+        // L'application prend tout de suite le nom de l'entreprise
+        const login = await loginRes.json().catch(() => null);
+        const company = login?.data?.company;
+        if (company?.id) applyBrand({ companyId: company.id, name: company.tradeName, logoUrl: company.logoUrl ?? null });
         router.push("/onboarding");
       } else {
         router.push("/login");
@@ -398,6 +409,11 @@ export default function RegisterPage() {
         <h1 className="text-xl font-bold text-gray-900">Créer mon espace</h1>
         <p className="text-sm text-gray-500 mt-0.5">Configuration initiale de votre entreprise</p>
       </div>
+      {deleted && (
+        <div className="mb-5 rounded-xl border border-green-200 bg-green-50 p-3.5 text-sm text-green-800">
+          Votre compte et toutes ses données ont été supprimés. Vous pouvez créer un nouvel espace, avec la même adresse e-mail si vous le souhaitez.
+        </div>
+      )}
 
       <ProgressBar step={step} />
 

@@ -10,6 +10,8 @@ import { ConnectionBadge } from "@/components/app/connection-badge";
 import { Select, Spinner } from "@/components/ui";
 import { getPendingSyncCount } from "@/lib/offline/sync";
 import { APP_NAME } from "@/lib/app-config";
+import { InstallAppButton } from "@/components/app/install-app";
+import { ChangePasswordButton } from "@/components/app/change-password";
 
 interface NavItem {
   href: string;
@@ -49,6 +51,8 @@ const NAV: Array<{ group: string | null; items: NavItem[] }> = [
     items: [
       { href: "/produits", label: "Articles", icon: "🏷️", any: ["product:create", "product:edit"] },
       { href: "/stock", label: "Stock", icon: "📦", any: ["stock:view"] },
+      { href: "/inventaires", label: "Inventaires", icon: "📋", any: ["inventory:start", "inventory:validate"] },
+      { href: "/transferts", label: "Transferts", icon: "🔁", any: ["stock:transfer"] },
     ],
   },
   {
@@ -64,6 +68,7 @@ const NAV: Array<{ group: string | null; items: NavItem[] }> = [
     items: [
       { href: "/utilisateurs", label: "Utilisateurs", icon: "👥", any: ["user:view"] },
       { href: "/parametres", label: "Paramètres", icon: "⚙️", any: ["company:edit"] },
+      { href: "/journal", label: "Journal d'audit", icon: "🗂️", any: ["audit:view"] },
       { href: "/synchronisation", label: "Synchronisation", icon: "🔄", any: [] },
     ],
   },
@@ -100,6 +105,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     clearSessionCache();
     router.replace("/login");
   };
+
+  // Marque blanche : nom et logo de l'entreprise
+  const appName = session.company?.tradeName ?? APP_NAME;
+  const brandIcon = session.company?.logoUrl ? `/api/brand/${session.company.id}/icon-192.png?v=${new URLSearchParams(session.company.logoUrl.split("?")[1] ?? "").get("v") ?? ""}` : "/icons/icon.svg";
 
   const nav = (
     <nav className="flex flex-col gap-3">
@@ -152,6 +161,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </p>
         <p className="text-xs text-gray-500 truncate">{session.company?.tradeName}</p>
       </div>
+      <InstallAppButton appName={appName} />
+      <ChangePasswordButton />
       <button onClick={logout} disabled={loggingOut} className="w-full text-left text-sm text-red-600 hover:bg-red-50 rounded-lg px-3 py-2">
         {loggingOut ? "Déconnexion…" : "Se déconnecter"}
       </button>
@@ -162,9 +173,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-dvh bg-gray-50 lg:flex">
       {/* Barre latérale (ordinateur) */}
       <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-white border-r border-gray-200 p-4">
-        <Link href="/dashboard" className="flex items-center gap-2 px-1 mb-4">
-          <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
-          <span className="font-bold text-gray-900">{APP_NAME}</span>
+        <Link href="/dashboard" className="flex items-center gap-2 px-1 mb-4 min-w-0">
+          {/* eslint-disable-next-line @next/next/no-img-element -- logo de l'entreprise servi par l'API */}
+          <img src={brandIcon} alt="" className="h-8 w-8 rounded object-contain" />
+          <span className="font-bold text-gray-900 truncate">{appName}</span>
         </Link>
         <div className="mb-4">{centerPicker}</div>
         <div className="flex-1 overflow-y-auto">{nav}</div>
@@ -176,7 +188,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <button onClick={() => setMenuOpen(true)} className="text-2xl leading-none" aria-label="Ouvrir le menu">
           ☰
         </button>
-        <span className="font-bold text-gray-900 truncate">{session.company?.tradeName ?? APP_NAME}</span>
+        <span className="font-bold text-gray-900 truncate">{appName}</span>
         <ConnectionBadge compact />
       </header>
 

@@ -6,6 +6,8 @@ import { Alert, Button, Card, Field, Input, PageHeader, Spinner, Textarea } from
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
 import { BUSINESS_PROFILES, BUSINESS_TYPE_ORDER } from "@/lib/business-profiles";
 import { cn } from "@/lib/utils";
+import { BrandCard } from "@/components/app/brand-settings";
+import { DeleteAccountCard } from "@/components/app/delete-account";
 
 interface CompanySettings {
   tradeName: string;
@@ -99,6 +101,8 @@ export default function SettingsPage() {
       <div className="space-y-6 max-w-3xl">
         {error && <Alert>{error}</Alert>}
         {saved && <Alert tone="green">Paramètres enregistrés.</Alert>}
+
+        <BrandCard editable={editable} />
 
         <Card className="p-4 sm:p-6 space-y-4">
           <h2 className="font-semibold text-gray-900">Métier</h2>
@@ -288,6 +292,8 @@ export default function SettingsPage() {
             </Button>
           </div>
         )}
+
+        <DeleteAccountCard />
       </div>
     </>
   );

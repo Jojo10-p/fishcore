@@ -96,6 +96,28 @@ export const createUserSchema = z.object({
     .regex(/[0-9]/, "Au moins un chiffre"),
 });
 
+/** Règle commune des mots de passe. */
+export const passwordRule = z
+  .string()
+  .min(8, "Mot de passe : min. 8 caractères")
+  .max(128, "Mot de passe trop long")
+  .regex(/[A-Z]/, "Au moins une majuscule")
+  .regex(/[0-9]/, "Au moins un chiffre");
+
+export const updateUserSchema = z.object({
+  firstName: z.string().trim().min(1, "Prénom requis").optional(),
+  lastName: z.string().trim().min(1, "Nom requis").optional(),
+  phone: z.string().trim().max(30).nullable().optional(),
+  role: createUserSchema.shape.role.optional(),
+  centerIds: z.array(z.string()).min(1, "Affecter au moins un centre").optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const passwordResetSchema = z.object({
+  token: z.string().min(20).max(200),
+  password: passwordRule,
+});
+
 // ─────────────────────────────────────────────
 // PRODUIT
 // ─────────────────────────────────────────────
@@ -197,6 +219,60 @@ export const deliverySchema = z.object({
     .array(z.object({ saleLineId: z.string().min(1), quantity: z.coerce.number().positive() }))
     .min(1, "Rien à remettre"),
   notes: z.string().trim().max(500).optional(),
+});
+
+// ─────────────────────────────────────────────
+// INVENTAIRES & TRANSFERTS
+// ─────────────────────────────────────────────
+
+export const inventoryCreateSchema = z.object({
+  centerId: z.string().min(1, "Centre requis"),
+  label: z.string().trim().max(120).optional(),
+  /** Limiter le comptage à des familles d'articles (vide = tout le catalogue actif). */
+  categoryIds: z.array(z.string().min(1)).max(100).optional(),
+  notes: z.string().trim().max(500).optional(),
+});
+
+export const inventoryCountSchema = z.object({
+  lines: z
+    .array(
+      z.object({
+        productId: z.string().min(1),
+        /** null = remettre la ligne « non comptée » */
+        countedQty: z.union([z.coerce.number().min(0, "Quantité comptée négative"), z.null()]),
+        reason: z.string().trim().max(200).optional(),
+      })
+    )
+    .min(1, "Aucune quantité saisie")
+    .max(2000),
+});
+
+export const inventoryValidateSchema = z.object({
+  /** Articles non comptés : laissés tels quels (défaut) ou mis à zéro. */
+  uncounted: z.enum(["keep", "zero"]).default("keep"),
+});
+
+export const transferCreateSchema = z
+  .object({
+    fromCenterId: z.string().min(1, "Centre d'origine requis"),
+    toCenterId: z.string().min(1, "Centre de destination requis"),
+    notes: z.string().trim().max(500).optional(),
+    lines: z
+      .array(z.object({ productId: z.string().min(1), quantity: z.coerce.number().positive("Quantité invalide") }))
+      .min(1, "Ajoutez au moins un article")
+      .max(500),
+  })
+  .refine((d) => d.fromCenterId !== d.toCenterId, { message: "Origine et destination doivent être différentes", path: ["toCenterId"] })
+  .refine((d) => new Set(d.lines.map((l) => l.productId)).size === d.lines.length, { message: "Un article apparaît deux fois", path: ["lines"] });
+
+export const transferReceiveSchema = z.object({
+  /** Quantités réellement reçues par ligne ; absentes = tout reçu. */
+  lines: z.array(z.object({ lineId: z.string().min(1), receivedQty: z.coerce.number().min(0) })).optional(),
+  notes: z.string().trim().max(500).optional(),
+});
+
+export const cancelReasonSchema = z.object({
+  reason: z.string().trim().min(3, "Motif obligatoire (min. 3 caractères)").max(300),
 });
 
 // ─────────────────────────────────────────────

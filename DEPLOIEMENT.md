@@ -26,6 +26,7 @@
 | `NEXT_PUBLIC_APP_URL` | `https://votre-domaine` (ou l'adresse `.vercel.app`) |
 | `NEXT_PUBLIC_APP_NAME` | nom affiché, ex. `fishcore` |
 | `DATABASE_CA_CERT` | facultatif, voir plus haut |
+| `NEXT_PUBLIC_SUPPORT_CONTACT` | facultatif : contact de l'assistance affiché aux propriétaires (« Mot de passe oublié »), ex. `WhatsApp +229 01 00 00 00 00` |
 
    L'application refuse de démarrer en production sans `JWT_SECRET` et `INSTALL_LINK_SECRET`.
 3. *Deploy*. Le build :
@@ -42,6 +43,10 @@ Chaque `git push` sur la branche principale redéploie. Les caisses se mettent �
 à leur prochaine connexion (le cache hors ligne est renouvelé à chaque version).
 
 ## 3. Postes de caisse (Windows + XP-80C)
+
+0. **Installer le logiciel** : une fois connecté, menu de gauche → **💻 Installer le logiciel** (ou *Paramètres → Votre
+   application*). L'application s'installe sous le nom de l'entreprise, avec son logo comme icône (bureau, menu Démarrer),
+   et s'ouvre dans sa propre fenêtre, même sans Internet. Le logo se change dans *Paramètres*.
 
 1. **Imprimante** : pilote XP-80C installé, définie comme **imprimante par défaut** de Windows ;
    *Propriétés → Options avancées → Format du papier* : **80(72.1) x 3276 mm**.
@@ -65,7 +70,20 @@ Chaque `git push` sur la branche principale redéploie. Les caisses se mettent �
 - Au retour du réseau, les ventes partent aussitôt au serveur, avec leur heure réelle.
 - La clôture de caisse se fait avec connexion (toutes les ventes doivent être envoyées).
 
-## 5. Sauvegardes
+## 5. Assistance
+
+- **Employé qui a oublié son mot de passe** : son responsable ouvre *Utilisateurs* → **🔑 Mot de passe** et lui envoie le
+  lien par WhatsApp/SMS (valable 24 h, une seule fois). Aucun e-mail n'est nécessaire.
+- **Propriétaire qui a oublié son mot de passe** (et pas d'autre propriétaire) : après vérification de son identité,
+  générer le lien depuis un poste qui a les variables de production :
+  ```
+  npm run reset-link -- adresse@email.bj
+  ```
+- **Suppression d'un compte** : le propriétaire le fait lui-même (*Paramètres → Supprimer le compte*, mot de passe + nom de
+  l'entreprise recopié). Tout est effacé en une transaction ; l'e-mail peut resservir aussitôt.
+- **Journal d'audit** : *Administration → Journal d'audit* (propriétaire), avec vérification de l'intégrité.
+
+## 6. Sauvegardes
 
 Les sauvegardes automatiques dépendent de l'offre Supabase (quotidiennes à partir de l'offre Pro ;
 l'offre gratuite n'en garantit pas) : vérifier dans *Database → Backups*. En complément, faire une copie

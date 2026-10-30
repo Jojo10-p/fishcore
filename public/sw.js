@@ -6,6 +6,7 @@
  * Stratégies :
  *  - Pages (navigation)      : réseau d'abord, copie en cache ; sans réseau → copie en cache, sinon /offline.html
  *  - /_next/static, /icons   : cache d'abord (fichiers versionnés, immuables)
+ *  - /api/brand/*.png?v=…    : cache d'abord (logo de l'entreprise, adresse versionnée)
  *  - /api/*                  : JAMAIS mis en cache (les données hors ligne sont dans IndexedDB)
  *
  * Version : celle du déploiement (/sw.js?v=<commit>). Chaque mise en production
@@ -53,6 +54,11 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  // Logo de l'entreprise : adresse versionnée, donc immuable → disponible hors ligne
+  if (url.pathname.startsWith("/api/brand/") && url.pathname.endsWith(".png") && url.searchParams.has("v")) {
+    event.respondWith(cacheFirst(request));
+    return;
+  }
   if (url.pathname.startsWith("/api/")) return; // données : toujours le réseau
 
   if (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/")) {

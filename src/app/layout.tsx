@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/pwa/service-worker-register";
+import { BrandBoot } from "@/components/pwa/brand-boot";
 import { APP_NAME, APP_TAGLINE } from "@/lib/app-config";
 
 const geistSans = Geist({
@@ -37,6 +38,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         {children}
         <ServiceWorkerRegister />
+        <BrandBoot />
       </body>
     </html>
   );

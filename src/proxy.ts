@@ -16,8 +16,13 @@ const PUBLIC_PATHS = [
   "/install",
   "/api/auth/login",
   "/api/auth/register",
+  "/api/auth/password-reset",
+  "/mot-de-passe-oublie",
+  "/reinitialiser",
   "/api/install",
   "/api/health",
+  // Identité de l'entreprise pour l'application installée (nom, icônes)
+  "/api/brand",
   // Fichiers de l'application installable (doivent rester accessibles hors session)
   "/sw.js",
   "/manifest.webmanifest",

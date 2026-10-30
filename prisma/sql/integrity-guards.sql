@@ -13,9 +13,19 @@
 
 -- 1. Journal d'audit en ajout seul (cahier §17.3)
 --    Aucune modification ni suppression, quel que soit l'utilisateur SQL.
+--    Seule exception : la suppression définitive d'un compte entreprise à la
+--    demande de son propriétaire (src/lib/account-deletion.ts). La transaction
+--    déclare alors l'entreprise concernée (SET LOCAL fishcore.purge_company) et
+--    seules les lignes de CETTE entreprise peuvent disparaître.
 CREATE OR REPLACE FUNCTION fishcore_audit_logs_immutable()
 RETURNS trigger SET search_path = '' AS $$
 BEGIN
+  IF TG_OP IN ('DELETE', 'UPDATE')
+     AND NULLIF(current_setting('fishcore.purge_company', true), '') IS NOT NULL
+     AND OLD."companyId" = current_setting('fishcore.purge_company', true) THEN
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+  END IF;
   RAISE EXCEPTION 'audit_logs est en ajout seul : % interdit', TG_OP
     USING ERRCODE = 'insufficient_privilege';
 END;
@@ -84,3 +94,16 @@ BEGIN
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.tablename);
   END LOOP;
 END $$;
+
+-- Inventaires : un seul comptage en cours par centre ; quantités comptées positives
+CREATE UNIQUE INDEX IF NOT EXISTS "inventories_one_in_progress_per_center"
+  ON "inventories" ("centerId") WHERE "status" = 'IN_PROGRESS';
+ALTER TABLE "inventory_lines" DROP CONSTRAINT IF EXISTS "inventory_lines_counted_positive";
+ALTER TABLE "inventory_lines" ADD CONSTRAINT "inventory_lines_counted_positive" CHECK ("countedQty" IS NULL OR "countedQty" >= 0);
+
+-- Transferts : quantités positives, reçu ≤ expédié
+ALTER TABLE "stock_transfer_lines" DROP CONSTRAINT IF EXISTS "stock_transfer_lines_quantities";
+ALTER TABLE "stock_transfer_lines" ADD CONSTRAINT "stock_transfer_lines_quantities"
+  CHECK ("quantity" > 0 AND ("receivedQty" IS NULL OR ("receivedQty" >= 0 AND "receivedQty" <= "quantity")));
+ALTER TABLE "stock_transfers" DROP CONSTRAINT IF EXISTS "stock_transfers_distinct_centers";
+ALTER TABLE "stock_transfers" ADD CONSTRAINT "stock_transfers_distinct_centers" CHECK ("fromCenterId" <> "toCenterId");
