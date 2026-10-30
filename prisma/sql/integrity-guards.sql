@@ -14,7 +14,7 @@
 -- 1. Journal d'audit en ajout seul (cahier §17.3)
 --    Aucune modification ni suppression, quel que soit l'utilisateur SQL.
 CREATE OR REPLACE FUNCTION fishcore_audit_logs_immutable()
-RETURNS trigger AS $$
+RETURNS trigger SET search_path = '' AS $$
 BEGIN
   RAISE EXCEPTION 'audit_logs est en ajout seul : % interdit', TG_OP
     USING ERRCODE = 'insufficient_privilege';
