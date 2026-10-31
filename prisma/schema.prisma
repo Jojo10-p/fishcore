@@ -1,0 +1,527 @@
+// Aurane Finance — schéma de données
+// Conventions : UUID, timestamps, soft-delete (deletedAt) sur les entités métier,
+// historisation des actions sensibles (ApplicationStatusHistory, AuditLog).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────── Identité & accès ─────────────────────────
+
+enum UserType {
+  CUSTOMER
+  STAFF
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+model User {
+  id             String        @id @default(uuid()) @db.Uuid
+  email          String        @unique
+  passwordHash   String
+  firstName      String
+  lastName       String
+  phone          String?
+  type           UserType      @default(CUSTOMER)
+  status         AccountStatus @default(ACTIVE)
+  roleId         String?       @db.Uuid
+  role           Role?         @relation(fields: [roleId], references: [id])
+  failedLogins   Int           @default(0)
+  lockedUntil    DateTime?
+  lastLoginAt    DateTime?
+  notifyByEmail  Boolean       @default(true)
+  notifyInApp    Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  customer          Customer?
+  sessions          Session[]
+  resetTokens       PasswordResetToken[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  internalNotes     InternalNote[]
+  statusChanges     ApplicationStatusHistory[]
+  assignedApps      LoanApplication[]          @relation("AssignedAgent")
+  ticketMessages    TicketMessage[]
+  uploadedDocuments ApplicationDocument[]      @relation("DocumentUploader")
+  reviewedDocuments ApplicationDocument[]      @relation("DocumentReviewer")
+  handledMessages   ContactMessage[]
+
+  @@index([type, status])
+  @@map("users")
+}
+
+model Role {
+  id          String       @id @default(uuid()) @db.Uuid
+  key         String       @unique
+  name        String
+  description String?
+  isSystem    Boolean      @default(false)
+  permissions Permission[]
+  users       User[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@map("roles")
+}
+
+model Permission {
+  id    String @id @default(uuid()) @db.Uuid
+  key   String @unique
+  label String
+  group String
+  roles Role[]
+
+  @@map("permissions")
+}
+
+model Session {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  ip        String?
+  userAgent String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@map("password_reset_tokens")
+}
+
+model RateLimit {
+  key       String   @id
+  count     Int      @default(0)
+  resetAt   DateTime
+
+  @@map("rate_limits")
+}
+
+// ───────────────────────── Clients ─────────────────────────
+
+model Customer {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String?   @unique @db.Uuid
+  user             User?     @relation(fields: [userId], references: [id])
+  firstName        String
+  lastName         String
+  birthDate        DateTime? @db.Date
+  nationality      String?
+  email            String
+  phone            String
+  country          String
+  city             String
+  address          String
+  profession       String?
+  employmentStatus String?
+  employer         String?
+  monthlyIncome    Decimal?  @db.Decimal(14, 2)
+  monthlyCharges   Decimal?  @db.Decimal(14, 2)
+  isDemo           Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  applications LoanApplication[]
+  documents    ApplicationDocument[]
+  tickets      SupportTicket[]
+
+  @@index([email])
+  @@index([lastName, firstName])
+  @@map("customers")
+}
+
+// ───────────────────────── Offres ─────────────────────────
+
+enum ProductCategory {
+  PERSONAL
+  PROFESSIONAL
+  REAL_ESTATE
+  PROJECT
+  CUSTOM
+}
+
+model LoanProduct {
+  id                String          @id @default(uuid()) @db.Uuid
+  slug              String          @unique
+  name              String
+  category          ProductCategory
+  tagline           String?
+  description       String
+  minAmount         Decimal         @db.Decimal(14, 2)
+  maxAmount         Decimal         @db.Decimal(14, 2)
+  minDurationMonths Int
+  maxDurationMonths Int
+  /// Taux annuel nominal en pourcentage (ex. 6.5). Toujours saisi par un administrateur.
+  annualRate        Decimal         @db.Decimal(6, 3)
+  /// Frais de dossier fixes (devise du site)
+  feesFixed         Decimal         @default(0) @db.Decimal(14, 2)
+  /// Frais de dossier proportionnels, en % du capital
+  feesPercent       Decimal         @default(0) @db.Decimal(6, 3)
+  /// Assurance : % annuel du capital initial, réparti mensuellement
+  insuranceRate     Decimal         @default(0) @db.Decimal(6, 3)
+  eligibility       String[]
+  requiredDocuments Json            @default("[]")
+  isActive          Boolean         @default(false)
+  sortOrder         Int             @default(0)
+  archivedAt        DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  applications LoanApplication[]
+
+  @@index([isActive, archivedAt])
+  @@map("loan_products")
+}
+
+// ───────────────────────── Demandes ─────────────────────────
+
+enum ApplicationStatus {
+  NEW
+  UNDER_REVIEW
+  MISSING_DOCUMENTS
+  ON_HOLD
+  APPROVED
+  REJECTED
+  CLOSED
+}
+
+model LoanApplication {
+  id                 String            @id @default(uuid()) @db.Uuid
+  reference          String            @unique
+  customerId         String            @db.Uuid
+  customer           Customer          @relation(fields: [customerId], references: [id])
+  productId          String            @db.Uuid
+  product            LoanProduct       @relation(fields: [productId], references: [id])
+  amount             Decimal           @db.Decimal(14, 2)
+  durationMonths     Int
+  purpose            String
+  description        String
+  status             ApplicationStatus @default(NEW)
+  /// Instantané des conditions au moment du dépôt (taux, frais, mensualité estimée)
+  termsSnapshot      Json
+  /// Instantané des informations déclarées par le demandeur
+  applicantSnapshot  Json
+  assignedToId       String?           @db.Uuid
+  assignedTo         User?             @relation("AssignedAgent", fields: [assignedToId], references: [id])
+  decisionReason     String?
+  decidedAt          DateTime?
+  consentTermsAt     DateTime
+  consentDataAt      DateTime
+  submittedIp        String?
+  isDemo             Boolean           @default(false)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  deletedAt          DateTime?
+
+  documents        ApplicationDocument[]
+  statusHistory    ApplicationStatusHistory[]
+  internalNotes    InternalNote[]
+  documentRequests DocumentRequest[]
+  tickets          SupportTicket[]
+
+  @@index([status, createdAt])
+  @@index([customerId])
+  @@index([productId])
+  @@map("loan_applications")
+}
+
+enum DocumentStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+model ApplicationDocument {
+  id            String           @id @default(uuid()) @db.Uuid
+  customerId    String           @db.Uuid
+  customer      Customer         @relation(fields: [customerId], references: [id])
+  applicationId String?          @db.Uuid
+  application   LoanApplication? @relation(fields: [applicationId], references: [id])
+  requestId     String?          @db.Uuid
+  request       DocumentRequest? @relation(fields: [requestId], references: [id])
+  type          String
+  originalName  String
+  storageKey    String           @unique
+  mimeType      String
+  size          Int
+  sha256        String
+  status        DocumentStatus   @default(PENDING)
+  reviewNote    String?
+  uploadedById  String?          @db.Uuid
+  uploadedBy    User?            @relation("DocumentUploader", fields: [uploadedById], references: [id])
+  reviewedById  String?          @db.Uuid
+  reviewedBy    User?            @relation("DocumentReviewer", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime?
+  createdAt     DateTime         @default(now())
+  deletedAt     DateTime?
+
+  @@index([customerId])
+  @@index([applicationId])
+  @@map("application_documents")
+}
+
+model DocumentRequest {
+  id            String                @id @default(uuid()) @db.Uuid
+  applicationId String                @db.Uuid
+  application   LoanApplication       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  label         String
+  message       String?
+  fulfilledAt   DateTime?
+  createdAt     DateTime              @default(now())
+  documents     ApplicationDocument[]
+
+  @@index([applicationId])
+  @@map("document_requests")
+}
+
+model ApplicationStatusHistory {
+  id            String             @id @default(uuid()) @db.Uuid
+  applicationId String             @db.Uuid
+  application   LoanApplication    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus
+  /// Commentaire communiqué au client
+  publicComment String?
+  actorId       String?            @db.Uuid
+  actor         User?              @relation(fields: [actorId], references: [id])
+  createdAt     DateTime           @default(now())
+
+  @@index([applicationId, createdAt])
+  @@map("application_status_history")
+}
+
+model InternalNote {
+  id            String          @id @default(uuid()) @db.Uuid
+  applicationId String          @db.Uuid
+  application   LoanApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  authorId      String          @db.Uuid
+  author        User            @relation(fields: [authorId], references: [id])
+  body          String
+  createdAt     DateTime        @default(now())
+
+  @@index([applicationId])
+  @@map("internal_notes")
+}
+
+// ───────────────────────── Contenus ─────────────────────────
+
+model Testimonial {
+  id              String    @id @default(uuid()) @db.Uuid
+  authorName      String
+  authorRole      String?
+  content         String
+  rating          Int?
+  /// Le témoignage n'est publiable que si le consentement écrit a été recueilli.
+  consentObtained Boolean   @default(false)
+  consentDate     DateTime?
+  isPublished     Boolean   @default(false)
+  locale          String    @default("fr")
+  sortOrder       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("testimonials")
+}
+
+model Faq {
+  id          String   @id @default(uuid()) @db.Uuid
+  category    String
+  question    String
+  answer      String
+  locale      String   @default("fr")
+  sortOrder   Int      @default(0)
+  isPublished Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([locale, isPublished])
+  @@map("faqs")
+}
+
+enum ContactStatus {
+  NEW
+  IN_PROGRESS
+  DONE
+}
+
+model ContactMessage {
+  id          String        @id @default(uuid()) @db.Uuid
+  name        String
+  email       String
+  phone       String?
+  subject     String
+  message     String
+  status      ContactStatus @default(NEW)
+  handledById String?       @db.Uuid
+  handledBy   User?         @relation(fields: [handledById], references: [id])
+  ip          String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([status, createdAt])
+  @@map("contact_messages")
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+  QUEUED
+}
+
+model Notification {
+  id             String              @id @default(uuid()) @db.Uuid
+  userId         String?             @db.Uuid
+  user           User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel        NotificationChannel
+  status         NotificationStatus  @default(SENT)
+  recipientEmail String?
+  templateKey    String?
+  title          String
+  body           String
+  link           String?
+  error          String?
+  readAt         DateTime?
+  createdAt      DateTime            @default(now())
+
+  @@index([userId, readAt])
+  @@index([channel, createdAt])
+  @@map("notifications")
+}
+
+model EmailTemplate {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String
+  locale    String   @default("fr")
+  name      String
+  subject   String
+  body      String
+  variables String[]
+  updatedAt DateTime @updatedAt
+
+  @@unique([key, locale])
+  @@map("email_templates")
+}
+
+model SiteSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("site_settings")
+}
+
+model Translation {
+  id        String   @id @default(uuid()) @db.Uuid
+  locale    String
+  key       String
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@unique([locale, key])
+  @@map("translations")
+}
+
+model MediaAsset {
+  id         String   @id @default(uuid()) @db.Uuid
+  storageKey String   @unique
+  mimeType   String
+  size       Int
+  alt        String?
+  createdAt  DateTime @default(now())
+
+  @@map("media_assets")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String?  @db.Uuid
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ───────────────────────── Assistance ─────────────────────────
+
+enum TicketStatus {
+  OPEN
+  ANSWERED
+  CLOSED
+}
+
+model SupportTicket {
+  id            String           @id @default(uuid()) @db.Uuid
+  reference     String           @unique
+  customerId    String           @db.Uuid
+  customer      Customer         @relation(fields: [customerId], references: [id])
+  applicationId String?          @db.Uuid
+  application   LoanApplication? @relation(fields: [applicationId], references: [id])
+  subject       String
+  status        TicketStatus     @default(OPEN)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  messages      TicketMessage[]
+
+  @@index([customerId])
+  @@index([status, updatedAt])
+  @@map("support_tickets")
+}
+
+model TicketMessage {
+  id        String        @id @default(uuid()) @db.Uuid
+  ticketId  String        @db.Uuid
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  String        @db.Uuid
+  author    User          @relation(fields: [authorId], references: [id])
+  isStaff   Boolean       @default(false)
+  body      String
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_messages")
+}
+
+/// Contenu binaire des fichiers lorsque STORAGE_DRIVER=database (hébergements sans disque persistant, ex. Vercel).
+model StoredFile {
+  key       String   @id
+  data      Bytes
+  createdAt DateTime @default(now())
+
+  @@map("stored_files")
+}

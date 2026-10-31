@@ -1,0 +1,7 @@
+node_modules
+.next
+.env
+storage/private/*
+!storage/private/.gitkeep
+*.tsbuildinfo
+src/generated

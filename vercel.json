@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "regions": ["cdg1"],
+  "ignoreCommand": "if [ -n \"$AURANE_BUILD\" ]; then exit 1; else echo 'Branche Aurane Finance : build ignoré pour ce projet'; exit 0; fi"
+}
