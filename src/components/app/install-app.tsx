@@ -13,6 +13,8 @@ interface InstallPromptEvent extends Event {
 }
 
 let deferred: InstallPromptEvent | null = null;
+/** Installée depuis cet onglet pendant la visite (la page, elle, reste un onglet). */
+let justInstalled = false;
 const listeners = new Set<() => void>();
 if (typeof window !== "undefined") {
   window.addEventListener("beforeinstallprompt", (e) => {
@@ -22,21 +24,27 @@ if (typeof window !== "undefined") {
   });
   window.addEventListener("appinstalled", () => {
     deferred = null;
+    justInstalled = true;
     listeners.forEach((l) => l());
   });
 }
 
 function isStandalone(): boolean {
+  if (justInstalled) return true;
   return typeof window !== "undefined" && (window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true);
 }
 
-export function InstallAppButton({ appName, className }: { appName: string; className?: string }) {
+/** État d'installation partagé : déjà installée ? installation en un clic possible ? */
+function useInstall() {
   const [, force] = useState(0);
   const [help, setHelp] = useState(false);
-  const [installed, setInstalled] = useState(false);
+  const [installed, setInstalled] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const update = () => force((n) => n + 1);
+    const update = () => {
+      force((n) => n + 1);
+      if (!deferred) setInstalled(isStandalone());
+    };
     listeners.add(update);
     const t = setTimeout(() => setInstalled(isStandalone()), 0);
     return () => {
@@ -45,28 +53,43 @@ export function InstallAppButton({ appName, className }: { appName: string; clas
     };
   }, []);
 
-  if (installed) return null;
-
-  const install = async () => {
+  const install = async (): Promise<boolean> => {
     if (!deferred) {
       setHelp(true);
-      return;
+      return false;
     }
     await deferred.prompt();
     const choice = await deferred.userChoice.catch(() => null);
-    if (choice?.outcome === "accepted") deferred = null;
+    const ok = choice?.outcome === "accepted";
+    if (ok) deferred = null;
     force((n) => n + 1);
+    return ok;
   };
+
+  return { installed, install, help, setHelp };
+}
+
+export function InstallAppButton({ appName, className }: { appName: string; className?: string }) {
+  const { installed, install, help, setHelp } = useInstall();
+  if (installed !== false) return null;
 
   return (
     <>
       <button
-        onClick={install}
+        onClick={() => void install()}
         className={className ?? "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"}
       >
-        <span aria-hidden>💻</span> Installer le logiciel
+        <span aria-hidden>💻</span> Installer {appName}
       </button>
-      <Modal open={help} title={`Installer ${appName}`} onClose={() => setHelp(false)} footer={<Button onClick={() => setHelp(false)}>Compris</Button>}>
+      <InstallHelp appName={appName} open={help} onClose={() => setHelp(false)} />
+    </>
+  );
+}
+
+function InstallHelp({ appName, open, onClose }: { appName: string; open: boolean; onClose: () => void }) {
+  return (
+    <>
+      <Modal open={open} title={`Installer ${appName}`} onClose={onClose} footer={<Button onClick={onClose}>Compris</Button>}>
         <p className="text-sm text-gray-700">
           {appName} s&apos;installe comme un logiciel : une icône sur le bureau et dans le menu Démarrer, sa propre fenêtre, et la caisse continue de
           fonctionner sans Internet.
@@ -86,5 +109,97 @@ export function InstallAppButton({ appName, className }: { appName: string; clas
         <p className="text-xs text-gray-500">Si l&apos;option n&apos;apparaît pas, l&apos;application est peut-être déjà installée sur cet appareil.</p>
       </Modal>
     </>
+  );
+}
+
+const DISMISS_KEY = "fishcore-install-dismissed";
+
+/**
+ * Proposition d'installation, montrée APRÈS l'inscription de l'entreprise
+ * (fin de la configuration, puis tableau de bord tant que ce n'est pas fait) :
+ * le logiciel s'installe sous le nom et avec le logo de l'entreprise.
+ */
+export function InstallInvite({
+  appName,
+  logoUrl,
+  variant = "banner",
+  onDone,
+}: {
+  appName: string;
+  logoUrl?: string | null;
+  variant?: "banner" | "card";
+  onDone?: () => void;
+}) {
+  const { installed, install, help, setHelp } = useInstall();
+  const [dismissed, setDismissed] = useState<boolean | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        setDismissed(localStorage.getItem(DISMISS_KEY) === "1");
+      } catch {
+        setDismissed(false);
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  const later = () => {
+    try {
+      localStorage.setItem(DISMISS_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+    setDismissed(true);
+    onDone?.();
+  };
+  const go = async () => {
+    if (await install()) onDone?.();
+  };
+
+  const icon = (
+    // eslint-disable-next-line @next/next/no-img-element -- logo de l'entreprise (adresse dynamique)
+    <img src={logoUrl || "/icons/icon-192.png"} alt="" className={variant === "card" ? "h-20 w-20 rounded-2xl border border-gray-200 bg-white object-contain shadow" : "h-12 w-12 shrink-0 rounded-xl border border-gray-200 bg-white object-contain"} />
+  );
+
+  if (variant === "card") {
+    if (installed === null) return null;
+    return (
+      <div className="text-center">
+        <div className="flex justify-center">{icon}</div>
+        <p className="mt-2 text-sm font-semibold text-gray-900">{appName}</p>
+        {installed ? (
+          <p className="mt-3 text-sm text-green-700">✓ {appName} est installé sur cet appareil.</p>
+        ) : (
+          <>
+            <p className="mt-3 text-sm text-gray-600">
+              Installez <strong>{appName}</strong> sur cet ordinateur : une icône à votre nom sur le bureau, sa propre fenêtre, et la caisse qui
+              continue de marcher sans Internet.
+            </p>
+            <button onClick={() => void go()} className="mt-4 w-full rounded-xl bg-blue-600 py-3 font-semibold text-white transition-colors hover:bg-blue-700">
+              💻 Installer {appName}
+            </button>
+          </>
+        )}
+        <InstallHelp appName={appName} open={help} onClose={() => setHelp(false)} />
+      </div>
+    );
+  }
+
+  if (installed !== false || dismissed !== false) return null;
+  return (
+    <div className="mb-6 flex flex-col gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 sm:flex-row sm:items-center">
+      {icon}
+      <div className="flex-1 text-sm">
+        <p className="font-semibold text-gray-900">Installez {appName} sur cet appareil</p>
+        <p className="text-gray-600">Une icône {appName} sur le bureau, sa propre fenêtre, et la caisse qui marche même sans Internet.</p>
+      </div>
+      <div className="flex gap-2">
+        <Button variant="secondary" onClick={later}>
+          Plus tard
+        </Button>
+        <Button onClick={() => void go()}>Installer</Button>
+      </div>
+      <InstallHelp appName={appName} open={help} onClose={() => setHelp(false)} />
+    </div>
   );
 }

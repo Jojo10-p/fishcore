@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { InstallInvite } from "@/components/app/install-app";
+import { readBrand, type Brand } from "@/lib/client/brand";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 
@@ -17,6 +19,12 @@ export default function OnboardingPage() {
   const [step, setStep] = useState<"center" | "products" | "done">("center");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Nom et logo de l'entreprise qui vient de s'inscrire : l'application installée les portera
+  const [brand, setBrand] = useState<Brand | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => setBrand(readBrand()), 0);
+    return () => clearTimeout(t);
+  }, []);
 
   const { register, handleSubmit, formState: { errors } } = useForm<OnboardingData>({
     defaultValues: { centerCity: "Cotonou", centerCode: "SIEG" },
@@ -63,9 +71,14 @@ export default function OnboardingPage() {
           <p className="text-gray-500 mt-3 text-sm">
             Votre premier centre de vente est créé. Vous pouvez maintenant commencer à utiliser votre logiciel.
           </p>
+          {brand && (
+            <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-5">
+              <InstallInvite variant="card" appName={brand.name} logoUrl={`/api/brand/${brand.companyId}/icon-192.png`} />
+            </div>
+          )}
           <button
             onClick={() => router.push("/dashboard")}
-            className="mt-6 w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors"
+            className={brand ? "mt-4 w-full py-2.5 text-sm font-medium text-gray-600 hover:text-gray-900" : "mt-6 w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors"}
           >
             Accéder au tableau de bord →
           </button>

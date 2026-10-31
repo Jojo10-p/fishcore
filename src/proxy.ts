@@ -25,7 +25,6 @@ const PUBLIC_PATHS = [
   "/api/brand",
   // Fichiers de l'application installable (doivent rester accessibles hors session)
   "/sw.js",
-  "/manifest.webmanifest",
   "/offline.html",
   "/icons",
 ];

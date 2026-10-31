@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
+import { InstallInvite } from "@/components/app/install-app";
 import { Alert, Badge, Card, Input, Money, PageHeader, Spinner, Table, Td } from "@/components/ui";
 import { apiGet, errorMessage } from "@/lib/client/api";
 
@@ -92,6 +93,7 @@ export default function DashboardPage() {
         }
       />
 
+      {session?.company && <InstallInvite appName={session.company.tradeName} logoUrl={`/api/brand/${session.company.id}/icon-192.png`} />}
       {error && <Alert>{error}</Alert>}
       {!data && !error && <Spinner />}
 
