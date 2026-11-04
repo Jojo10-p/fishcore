@@ -82,7 +82,7 @@ export function DeleteAccountCard() {
       } catch {
         /* ignore */
       }
-      window.location.replace("/register?compte=supprime");
+      window.location.replace("/login?compte=supprime");
     } catch (e) {
       setError(errorMessage(e));
       setBusy(false);
@@ -95,9 +95,8 @@ export function DeleteAccountCard() {
       <p className="text-sm text-gray-600">
         Supprime définitivement <strong>{name}</strong> et toutes ses données :
         centres, caisses, articles, stocks, ventes, factures, devis, clients,
-        fournisseurs, dépenses, utilisateurs et logo. Cette action est
-        irréversible. L&apos;adresse e-mail pourra servir aussitôt à une
-        nouvelle inscription.
+        fournisseurs, dépenses, utilisateurs et téléphones abonnés. Tout est
+        effacé de la base de données. Cette action est irréversible.
       </p>
       <div>
         <Button variant="danger" onClick={openDialog}>

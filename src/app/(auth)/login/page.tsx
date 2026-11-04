@@ -17,6 +17,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
   // Redirection interne uniquement (empêche une redirection vers un site externe)
   const requested = searchParams.get("redirect");
+  const deleted = searchParams.get("compte") === "supprime";
   const redirect = requested && requested.startsWith("/") && !requested.startsWith("//") ? requested : "/dashboard";
 
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +80,12 @@ function LoginForm() {
           <h1 className="text-2xl font-bold text-gray-900">{APP_NAME}</h1>
           <p className="text-sm text-gray-500 mt-1">Connectez-vous à votre espace</p>
         </div>
+
+        {deleted && (
+          <div className="mb-5 p-3.5 bg-green-50 border border-green-200 rounded-xl text-sm text-green-800">
+            Le compte a été supprimé définitivement, avec toutes ses données.
+          </div>
+        )}
 
         {/* Erreur globale */}
         {error && (

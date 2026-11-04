@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Button, Card, Field, Input, PageHeader, Spinner, Textarea } from "@/components/ui";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
+import { DeleteAccountCard } from "@/components/app/delete-account";
 
 interface CompanySettings {
   tradeName: string;
@@ -230,6 +231,8 @@ export default function SettingsPage() {
           </div>
         )}
 
+
+        <DeleteAccountCard />
       </div>
     </>
   );

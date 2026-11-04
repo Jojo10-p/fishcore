@@ -32,44 +32,45 @@ interface ProductOption {
   id: string;
   name: string;
   purchasePrice: string;
-  trackBatches: boolean;
-  requiresExpiry: boolean;
-  baseUnit: { symbol: string; allowsDecimal: boolean };
+  sellingPrice: string;
+  baseUnit: { symbol: string };
+  stocks?: Array<{ quantity: string }>;
 }
 interface Supplier {
   id: string;
   name: string;
 }
+interface Unit {
+  id: string;
+  symbol: string;
+  name: string;
+}
 
+// Saisie GJH : un arrivage = des lignes « article, nombre de bidons, litres par bidon,
+// prix du lot, prix de vente ». Un article qui n'existe pas encore est créé.
 interface DraftLine {
-  productId: string;
-  packageCount: string;
-  grossWeight: string;
+  name: string;
   quantity: string;
-  lotNumber: string;
-  expiresAt: string;
-  unitPrice: string;
+  liters: string;
+  lotPrice: string;
+  sellingPrice: string;
 }
 interface ReceiptDraft {
   supplierId: string;
   reference: string;
   receivedAt: string;
   transportCost: string;
-  iceCost: string;
   handlingCost: string;
-  otherCosts: string;
   lines: DraftLine[];
 }
 
-const emptyLine = (): DraftLine => ({ productId: "", packageCount: "", grossWeight: "", quantity: "", unitPrice: "", lotNumber: "", expiresAt: "" });
+const emptyLine = (): DraftLine => ({ name: "", quantity: "", liters: "", lotPrice: "", sellingPrice: "" });
 const emptyDraft = (): ReceiptDraft => ({
   supplierId: "",
   reference: "",
   receivedAt: new Date().toISOString().slice(0, 10),
   transportCost: "",
-  iceCost: "",
   handlingCost: "",
-  otherCosts: "",
   lines: [emptyLine()],
 });
 const num = (v: string) => Number((v || "0").replace(",", "."));
@@ -114,7 +115,7 @@ export default function ReceptionsPage() {
     <>
       <PageHeader
         title="Ajouter du stock"
-        description="Marchandise reçue du fournisseur : le stock augmente dès que vous validez."
+        description="Marchandise reçue du fournisseur : le stock augmente dès que l'arrivage est enregistré."
         actions={!creating && <Button onClick={() => setCreating(true)}>+ Ajouter du stock</Button>}
       />
       {error && <Alert>{error}</Alert>}
@@ -135,7 +136,7 @@ export default function ReceptionsPage() {
         {!receipts ? (
           <Spinner />
         ) : receipts.length === 0 ? (
-          <EmptyState icon="🚚" title="Aucune réception" />
+          <EmptyState icon="🚚" title="Aucun arrivage enregistré" />
         ) : (
           <Table head={["Date", "Fournisseur", "Articles reçus", "Coût total", "Statut", ""]}>
             {receipts.map((r) => {
@@ -179,39 +180,64 @@ export default function ReceptionsPage() {
   );
 }
 
-// ── Saisie avec sauvegarde automatique (cahier §8.3) ─────
+// ── Nouvel arrivage (saisie simple GJH, brouillon sauvegardé sur l'appareil) ─────
+const PLURAL: Record<string, string> = { btl: "bouteilles", bidon: "bidons", seau: "seaux", "fût": "fûts", carton: "cartons", pce: "pièces", L: "litres" };
+const unitWord = (symbol?: string) => (symbol ? (PLURAL[symbol] ?? symbol) : "bidons");
+const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+/** Contenance lue dans le nom de l'article : « — bidon 4 L » → 4, « 500 ml » → 0,5. */
+function litersFromName(name: string): number | null {
+  const ml = name.match(/(\d+(?:[.,]\d+)?)\s*ml\b/i);
+  if (ml) return Number(ml[1].replace(",", ".")) / 1000;
+  const l = name.match(/(\d+(?:[.,]\d+)?)\s*l\b/i);
+  return l ? Number(l[1].replace(",", ".")) : null;
+}
+const fmtL = (n: number) => `${n.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} L`;
+
 function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: string; currency: string; onCancel: () => void; onSaved: () => Promise<void> }) {
   const online = useOnline();
   const [draft, setDraft] = useState<ReceiptDraft>(emptyDraft);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [newSupplier, setNewSupplier] = useState("");
+  const [showFees, setShowFees] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [tried, setTried] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const touched = useMemo(
-    () => draft.supplierId !== "" || draft.reference !== "" || draft.lines.some((l) => l.productId || l.quantity || l.packageCount),
-    [draft]
-  );
-  const { profile, session } = useSession();
-  // Poids brut utile pour les marchandises pesées (poisson, vrac…)
-  const showWeight = ["FISHMONGER", "WHOLESALE", "BUILDING_MATERIALS"].includes(session?.company?.businessType ?? "") || !!profile.units.find((u) => u.kind === "WEIGHT" && u.symbol === profile.defaultUnit);
-  const autosave = useAutosaveDraft(`goods-receipt:v2:${centerId}`, draft, { enabled: touched });
+  const touched = useMemo(() => draft.supplierId !== "" || draft.reference !== "" || draft.lines.some((l) => l.name || l.quantity || l.lotPrice), [draft]);
+  const autosave = useAutosaveDraft(`goods-receipt:v3:${centerId}`, draft, { enabled: touched });
 
   useEffect(() => {
-    apiGet<{ data: ProductOption[] }>("/api/products").then((r) => setProducts(r.data)).catch(() => undefined);
+    apiGet<{ data: ProductOption[] }>(`/api/products?centerId=${centerId}`).then((r) => setProducts(r.data)).catch(() => undefined);
     apiGet<{ data: Supplier[] }>("/api/suppliers").then((r) => setSuppliers(r.data)).catch(() => undefined);
-  }, []);
+    apiGet<{ data: Unit[] }>("/api/units").then((r) => setUnits(r.data)).catch(() => undefined);
+  }, [centerId]);
 
-  const setField = (k: keyof Omit<ReceiptDraft, "lines">) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-    setDraft((d) => ({ ...d, [k]: e.target.value }));
-  const setLine = (i: number, k: keyof DraftLine, v: string) =>
-    setDraft((d) => ({ ...d, lines: d.lines.map((l, j) => (j === i ? { ...l, [k]: v } : l)) }));
+  const byName = useMemo(() => new Map(products.map((p) => [norm(p.name), p])), [products]);
+  const setField = (k: keyof Omit<ReceiptDraft, "lines">) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+  const setLine = (i: number, patch: Partial<DraftLine>) => setDraft((d) => ({ ...d, lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) }));
 
-  const goods = draft.lines.reduce((s, l) => s + num(l.quantity) * num(l.unitPrice), 0);
-  const fees = num(draft.transportCost) + num(draft.iceCost) + num(draft.handlingCost) + num(draft.otherCosts);
-  const validLines = draft.lines.filter((l) => l.productId && num(l.quantity) > 0);
-  const missingExpiry = draft.lines.some((l) => l.productId && !l.expiresAt && products.find((p) => p.id === l.productId)?.requiresExpiry);
+  const rows = draft.lines.map((l) => {
+    const product = byName.get(norm(l.name)) ?? null;
+    const qty = num(l.quantity);
+    const lot = num(l.lotPrice);
+    const sell = num(l.sellingPrice);
+    const liters = product ? litersFromName(product.name) : num(l.liters) || null;
+    const errors = {
+      name: !l.name.trim() ? "Nom de l'article requis" : undefined,
+      quantity: !(qty > 0) ? "Combien ?" : undefined,
+      liters: !product && !(num(l.liters) > 0) ? "Litres par bidon requis" : undefined,
+      lotPrice: !(lot > 0) ? "Prix du lot requis" : undefined,
+      sellingPrice: !(sell > 0) ? "Prix de vente requis" : undefined,
+    };
+    const blank = !l.name.trim() && !l.quantity && !l.lotPrice;
+    return { l, product, qty, lot, sell, liters, errors, ok: !Object.values(errors).some(Boolean), blank };
+  });
+  const filled = rows.filter((r) => !r.blank);
+  const goods = filled.reduce((s, r) => s + r.lot, 0);
+  const fees = num(draft.transportCost) + num(draft.handlingCost);
+  const canSave = online && filled.length > 0 && filled.every((r) => r.ok);
 
   const addSupplier = async () => {
     if (!newSupplier.trim()) return;
@@ -225,47 +251,65 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
     }
   };
 
-  const save = async (andValidate: boolean) => {
+  const save = async () => {
+    setTried(true);
+    if (!canSave) return;
     setBusy(true);
     setError(null);
     try {
+      const bidon = units.find((u) => u.symbol === "bidon") ?? units[0];
+      const lines: Array<{ productId: string; quantity: number; unitPrice: number; totalPrice: number }> = [];
+      for (const r of filled) {
+        const cost = Math.round((r.lot / r.qty) * 100) / 100;
+        let id = r.product?.id;
+        if (!id) {
+          // Nouvel article : le nom porte la contenance (« Huile nationale 1 L »)
+          if (!bidon) throw new Error("Aucune unité disponible pour créer l'article");
+          const base = r.l.name.trim();
+          const name = litersFromName(base) ? base : `${base} ${fmtL(num(r.l.liters))}`;
+          const created = await apiSend<{ data: { id: string } }>("/api/products", {
+            name,
+            baseUnitId: bidon.id,
+            purchasePrice: cost,
+            sellingPrice: r.sell,
+            stockAlertQty: 7,
+            attributes: { contenance: fmtL(num(r.l.liters)) },
+          });
+          id = created.data.id;
+        } else if (Number(r.product!.sellingPrice) !== r.sell) {
+          await apiSend(`/api/products/${id}`, { sellingPrice: r.sell }, "PATCH");
+        }
+        lines.push({ productId: id, quantity: r.qty, unitPrice: cost, totalPrice: Math.round(r.lot) });
+      }
       const res = await apiSend<{ data: { id: string } }>("/api/goods-receipts", {
         centerId,
         supplierId: draft.supplierId || undefined,
         reference: draft.reference || undefined,
         receivedAt: draft.receivedAt,
         transportCost: num(draft.transportCost),
-        iceCost: num(draft.iceCost),
         handlingCost: num(draft.handlingCost),
-        otherCosts: num(draft.otherCosts),
-        lines: validLines.map((l) => ({
-          productId: l.productId,
-          packageCount: l.packageCount ? Math.round(num(l.packageCount)) : undefined,
-          grossWeight: l.grossWeight ? num(l.grossWeight) : undefined,
-          quantity: num(l.quantity),
-          lotNumber: l.lotNumber || undefined,
-          expiresAt: l.expiresAt || undefined,
-          unitPrice: num(l.unitPrice),
-          totalPrice: Math.round(num(l.quantity) * num(l.unitPrice)),
-        })),
+        lines,
       });
-      if (andValidate) await apiSend(`/api/goods-receipts/${res.data.id}/validate`, {});
+      await apiSend(`/api/goods-receipts/${res.data.id}/validate`, {});
       await autosave.clear();
       await onSaved();
     } catch (e) {
       setError(errorMessage(e)); // le brouillon local est conservé
+      // Les articles créés sont repris par leur nom au prochain essai
+      apiGet<{ data: ProductOption[] }>(`/api/products?centerId=${centerId}`).then((r) => setProducts(r.data)).catch(() => undefined);
     } finally {
       setBusy(false);
     }
   };
 
+  const err = (msg?: string) => (tried ? msg : undefined);
+
   return (
     <Card className="p-4 sm:p-6 space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-semibold text-gray-900">Nouvel arrivage</h2>
+        <h2 className="text-lg font-semibold text-gray-900">Nouvel arrivage</h2>
         <span className="text-xs text-gray-500">
-          {autosave.status === "saving" && "Enregistrement…"}
-          {autosave.status === "saved" && autosave.savedAt && `Brouillon enregistré sur cet appareil à ${autosave.savedAt.toLocaleTimeString("fr-FR")}`}
+          {autosave.status === "saved" && autosave.savedAt && `Brouillon gardé sur cet appareil (${autosave.savedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })})`}
           {autosave.status === "error" && <span className="text-red-600">Sauvegarde locale impossible</span>}
         </span>
       </div>
@@ -273,9 +317,7 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
       {autosave.restored && (
         <Alert tone="blue">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>
-              Une réception non terminée a été retrouvée (dernière saisie le {new Date(autosave.restored.updatedAt).toLocaleString("fr-FR")}).
-            </span>
+            <span>Un arrivage non terminé a été retrouvé ({new Date(autosave.restored.updatedAt).toLocaleString("fr-FR")}).</span>
             <span className="flex gap-2">
               <Button
                 className="px-3 py-1.5"
@@ -286,26 +328,21 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
               >
                 Reprendre
               </Button>
-              <Button
-                variant="secondary"
-                className="px-3 py-1.5"
-                onClick={async () => {
-                  await autosave.clear();
-                }}
-              >
+              <Button variant="secondary" className="px-3 py-1.5" onClick={async () => await autosave.clear()}>
                 Ignorer
               </Button>
             </span>
           </div>
         </Alert>
       )}
-      {!online && <Alert tone="amber">Hors connexion : la saisie est conservée sur cet appareil. L&apos;enregistrement se fera au retour du réseau.</Alert>}
+      {!online && <Alert tone="amber">Hors connexion : la saisie est gardée sur cet appareil. Enregistrez au retour du réseau.</Alert>}
       {error && <Alert>{error}</Alert>}
 
+      {/* 1. Fournisseur */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Field label="Fournisseur">
           <Select value={draft.supplierId} onChange={setField("supplierId")}>
-            <option value="">— Sans fournisseur —</option>
+            <option value="">— Choisir —</option>
             {suppliers.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -313,127 +350,134 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
             ))}
           </Select>
         </Field>
-        <Field label="Référence (bon, facture…)">
-          <Input value={draft.reference} onChange={setField("reference")} />
+        <Field label="Référence (n° du bon ou de la facture)">
+          <Input value={draft.reference} onChange={setField("reference")} placeholder="ex. BL-0412" />
         </Field>
-        <Field label="Date de réception">
+        <Field label="Date d'arrivée">
           <Input type="date" value={draft.receivedAt} onChange={setField("receivedAt")} />
         </Field>
       </div>
       <div className="flex gap-2 items-end">
-        <Field label="Ajouter un fournisseur">
-          <Input value={newSupplier} onChange={(e) => setNewSupplier(e.target.value)} placeholder="Nom du fournisseur" />
-        </Field>
+        <div className="flex-1">
+          <Field label="Nouveau fournisseur">
+            <Input value={newSupplier} onChange={(e) => setNewSupplier(e.target.value)} placeholder="Nom du fournisseur" />
+          </Field>
+        </div>
         <Button variant="secondary" onClick={addSupplier} disabled={!newSupplier.trim() || !online}>
           Ajouter
         </Button>
       </div>
 
+      {/* 2. Articles */}
       <div className="space-y-3">
         <h3 className="text-sm font-semibold text-gray-700">Articles reçus</h3>
-        {draft.lines.map((l, i) => {
-          const product = products.find((p) => p.id === l.productId);
+        <datalist id="gjh-articles">
+          {products.map((p) => (
+            <option key={p.id} value={p.name} />
+          ))}
+        </datalist>
+        {rows.map((r, i) => {
+          const word = unitWord(r.product?.baseUnit.symbol);
+          const one = r.product?.baseUnit.symbol === "btl" ? "bouteille" : word === "seaux" ? "seau" : word.replace(/s$/, "");
+          const costPer = r.qty > 0 && r.lot > 0 ? r.lot / r.qty : 0;
+          const stock = r.product?.stocks?.[0] ? Number(r.product.stocks[0].quantity) : null;
           return (
-            <div key={i} className="grid grid-cols-2 sm:grid-cols-6 gap-2 items-end rounded-lg border border-gray-200 p-3">
-              <div className="col-span-2">
-                <Field label="Article">
-                  <Select
-                    value={l.productId}
-                    onChange={(e) => {
-                      const p = products.find((x) => x.id === e.target.value);
-                      setLine(i, "productId", e.target.value);
-                      if (p && !l.unitPrice) setLine(i, "unitPrice", String(Number(p.purchasePrice)));
-                    }}
-                  >
-                    <option value="">Choisir…</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </div>
-              <Field label="Colis (cartons, sacs…)">
-                <Input inputMode="numeric" value={l.packageCount} onChange={(e) => setLine(i, "packageCount", e.target.value)} />
-              </Field>
-              <Field label={`Quantité (${product?.baseUnit.symbol ?? "unité"})`}>
-                <Input inputMode={product?.baseUnit.allowsDecimal ? "decimal" : "numeric"} value={l.quantity} onChange={(e) => setLine(i, "quantity", e.target.value)} />
-              </Field>
-              <Field label={`Coût / ${product?.baseUnit.symbol ?? "unité"}`}>
-                <Input inputMode="decimal" value={l.unitPrice} onChange={(e) => setLine(i, "unitPrice", e.target.value)} />
-              </Field>
-              {showWeight && (
-                <Field label="Poids brut">
-                  <Input inputMode="decimal" value={l.grossWeight} onChange={(e) => setLine(i, "grossWeight", e.target.value)} />
-                </Field>
-              )}
-              {product?.trackBatches && (
-                <>
-                  <Field label="N° de lot">
-                    <Input value={l.lotNumber} onChange={(e) => setLine(i, "lotNumber", e.target.value)} />
-                  </Field>
-                  <Field label={`Péremption${product.requiresExpiry ? " *" : ""}`}>
-                    <Input type="date" value={l.expiresAt} onChange={(e) => setLine(i, "expiresAt", e.target.value)} />
-                  </Field>
-                </>
-              )}
-              <div className="col-span-2 sm:col-span-6 flex items-center justify-between text-xs text-gray-500">
-                <span>
-                  {num(l.packageCount) > 0 && num(l.quantity) > 0 && (
-                    <>Moyenne : <Qty value={num(l.quantity) / num(l.packageCount)} unit={`${product?.baseUnit.symbol ?? ""}/colis`} /> · </>
+            <div key={i} className="rounded-xl border border-gray-200 p-3 sm:p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Article {i + 1}</span>
+                <span className="flex items-center gap-3">
+                  {r.l.name.trim() && (r.product ? <Badge tone="green">Article existant</Badge> : <Badge tone="blue">Nouvel article</Badge>)}
+                  {draft.lines.length > 1 && (
+                    <button className="text-sm text-red-600 hover:underline" onClick={() => setDraft((d) => ({ ...d, lines: d.lines.filter((_, j) => j !== i) }))}>
+                      Retirer
+                    </button>
                   )}
-                  Montant : <Money value={num(l.quantity) * num(l.unitPrice)} currency={currency} />
                 </span>
-                {draft.lines.length > 1 && (
-                  <button className="text-red-600 hover:underline" onClick={() => setDraft((d) => ({ ...d, lines: d.lines.filter((_, j) => j !== i) }))}>
-                    Retirer
-                  </button>
-                )}
               </div>
+              <Field label="Nom de l'article" error={err(r.errors.name)} hint={r.product ? `En stock : ${stock ?? 0} ${word}${r.liters ? ` · ${fmtL(r.liters)} par ${r.product.baseUnit.symbol}` : ""}` : "Tapez le nom : choisissez dans la liste ou écrivez un nouvel article"}>
+                <Input
+                  list="gjh-articles"
+                  value={r.l.name}
+                  placeholder="ex. Huile nationale"
+                  onChange={(e) => {
+                    const p = byName.get(norm(e.target.value));
+                    setLine(i, { name: e.target.value, ...(p && !r.l.sellingPrice ? { sellingPrice: String(Number(p.sellingPrice)) } : {}) });
+                  }}
+                />
+              </Field>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <Field label={`Nombre de ${word}`} error={err(r.errors.quantity)}>
+                  <Input inputMode="numeric" value={r.l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} placeholder="ex. 30" />
+                </Field>
+                {r.product ? (
+                  <Field label={`Litres par ${one}`}>
+                    <Input value={r.liters ? fmtL(r.liters) : "—"} disabled readOnly />
+                  </Field>
+                ) : (
+                  <Field label="Litres par bidon" error={err(r.errors.liters)}>
+                    <Input inputMode="decimal" value={r.l.liters} onChange={(e) => setLine(i, { liters: e.target.value })} placeholder="ex. 1" />
+                  </Field>
+                )}
+                <Field label="Prix du lot (total payé)" error={err(r.errors.lotPrice)}>
+                  <Input inputMode="numeric" value={r.l.lotPrice} onChange={(e) => setLine(i, { lotPrice: e.target.value })} placeholder="ex. 28 200" />
+                </Field>
+                <Field label={`Prix de vente (1 ${one})`} error={err(r.errors.sellingPrice)}>
+                  <Input inputMode="numeric" value={r.l.sellingPrice} onChange={(e) => setLine(i, { sellingPrice: e.target.value })} placeholder="ex. 1 500" />
+                </Field>
+              </div>
+              {costPer > 0 && (
+                <p className="text-sm text-gray-600">
+                  Revient à <strong><Money value={costPer} currency={currency} /></strong> l&apos;unité
+                  {r.sell > 0 && (
+                    <>
+                      {" "}· vendu <Money value={r.sell} currency={currency} /> ›{" "}
+                      <strong className={r.sell - costPer > 0 ? "text-green-700" : "text-red-700"}>
+                        {r.sell - costPer >= 0 ? "bénéfice" : "perte"} <Money value={Math.abs(r.sell - costPer)} currency={currency} /> par unité
+                      </strong>
+                    </>
+                  )}
+                </p>
+              )}
             </div>
           );
         })}
         <Button variant="secondary" onClick={() => setDraft((d) => ({ ...d, lines: [...d.lines, emptyLine()] }))}>
-          + Ajouter un article
+          + Ajouter un autre article
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Field label="Transport">
-          <Input inputMode="numeric" value={draft.transportCost} onChange={setField("transportCost")} />
-        </Field>
-        {session?.company?.businessType === "FISHMONGER" && (
-          <Field label="Glace">
-            <Input inputMode="numeric" value={draft.iceCost} onChange={setField("iceCost")} />
+      {/* 3. Frais (facultatif) */}
+      {showFees || fees > 0 ? (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Transport (facultatif)">
+            <Input inputMode="numeric" value={draft.transportCost} onChange={setField("transportCost")} />
           </Field>
-        )}
-        <Field label="Manutention">
-          <Input inputMode="numeric" value={draft.handlingCost} onChange={setField("handlingCost")} />
-        </Field>
-        <Field label="Autres frais">
-          <Input inputMode="numeric" value={draft.otherCosts} onChange={setField("otherCosts")} />
-        </Field>
-      </div>
+          <Field label="Manutention (facultatif)">
+            <Input inputMode="numeric" value={draft.handlingCost} onChange={setField("handlingCost")} />
+          </Field>
+        </div>
+      ) : (
+        <button className="text-sm text-blue-600 hover:underline" onClick={() => setShowFees(true)}>
+          + Frais de transport ou de manutention
+        </button>
+      )}
 
-      {missingExpiry && <Alert tone="amber">Indiquez la date de péremption des articles marqués « * » avant de valider.</Alert>}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-gray-100 pt-4">
         <p className="text-sm text-gray-700">
-          Marchandise <Money value={goods} currency={currency} /> + frais <Money value={fees} currency={currency} /> ={" "}
-          <strong><Money value={goods + fees} currency={currency} /></strong>
+          Total payé : <strong><Money value={goods + fees} currency={currency} /></strong>
+          {fees > 0 && <span className="text-gray-500"> (dont frais <Money value={fees} currency={currency} />)</span>}
         </p>
         <div className="flex flex-wrap gap-2">
           <Button variant="ghost" onClick={onCancel}>
-            Fermer (le brouillon reste sur l&apos;appareil)
+            Fermer
           </Button>
-          <Button variant="secondary" onClick={() => save(false)} loading={busy} disabled={!online || validLines.length === 0}>
-            Enregistrer en brouillon
-          </Button>
-          <Button variant="success" onClick={() => save(true)} loading={busy} disabled={!online || validLines.length === 0 || missingExpiry}>
-            Enregistrer et valider
+          <Button variant="success" onClick={save} loading={busy} disabled={!online || busy}>
+            Enregistrer l&apos;arrivage
           </Button>
         </div>
       </div>
+      {tried && !canSave && filled.length > 0 && <Alert tone="amber">Complétez les champs en rouge pour enregistrer.</Alert>}
+      {tried && filled.length === 0 && <Alert tone="amber">Ajoutez au moins un article.</Alert>}
     </Card>
   );
 }
