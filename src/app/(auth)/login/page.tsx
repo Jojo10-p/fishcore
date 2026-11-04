@@ -5,7 +5,8 @@ import { applyBrand, readBrand } from "@/lib/client/brand";
 import { useForm } from "react-hook-form";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { APP_NAME, REGISTRATION_OPEN } from "@/lib/app-config";
+import { APP_NAME } from "@/lib/app-config";
+import { AUTH_ERRORS, GoogleButton } from "@/components/auth/google-button";
 
 interface LoginForm {
   email: string;
@@ -20,7 +21,7 @@ function LoginForm() {
   const deleted = searchParams.get("compte") === "supprime";
   const redirect = requested && requested.startsWith("/") && !requested.startsWith("//") ? requested : "/dashboard";
 
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(AUTH_ERRORS[searchParams.get("erreur") ?? ""] ?? null);
   const [isLoading, setIsLoading] = useState(false);
   // Application installée par une entreprise : on garde son nom et son logo
   useEffect(() => {
@@ -95,6 +96,8 @@ function LoginForm() {
           </div>
         )}
 
+        <GoogleButton />
+
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           {/* Email */}
           <div>
@@ -166,17 +169,14 @@ function LoginForm() {
           </button>
         </form>
 
-        {/* Lien inscription */}
+        {/* Créer un compte : avec le lien d'invitation de la direction */}
         <div className="mt-6 text-center">
-          {REGISTRATION_OPEN && (<p className="text-sm text-gray-500">
-            Première connexion ?{" "}
-            <Link
-              href="/register"
-              className="text-blue-600 font-medium hover:underline"
-            >
-              Créer mon espace
+          <p className="text-sm text-gray-500">
+            Pas encore de compte ?{" "}
+            <Link href="/rejoindre" className="text-blue-600 font-medium hover:underline">
+              Créer mon compte
             </Link>
-          </p>)}
+          </p>
         </div>
       </div>
     </div>

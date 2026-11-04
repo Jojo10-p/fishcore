@@ -24,6 +24,7 @@ const STATEMENTS: Array<[string, string]> = [
   ["alertes de stock", `DELETE FROM "stock_alerts" WHERE "companyId" = ${C}`],
   ["suivi du stock", `DELETE FROM "stock_watches" WHERE "companyId" = ${C}`],
   ["téléphones abonnés", `DELETE FROM "push_subscriptions" WHERE "companyId" = ${C}`],
+  ["invitations", `DELETE FROM "invitations" WHERE "companyId" = ${C}`],
   ["synchronisations", `DELETE FROM "sync_operations" WHERE "companyId" = ${C}`],
   ["liens d'installation", `DELETE FROM "agency_install_links" WHERE "companyId" = ${C}`],
   ["numéros de facture", `DELETE FROM "invoice_number_blocks" WHERE "companyId" = ${C}`],

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BUSINESS_PROFILES, BUSINESS_TYPE_ORDER } from "@/lib/business-profiles";
 import { applyBrand } from "@/lib/client/brand";
-import { APP_NAME, REGISTRATION_OPEN } from "@/lib/app-config";
+import { REGISTRATION_OPEN } from "@/lib/app-config";
 
 // ─────────────────────────────────────────────
 // Types
@@ -73,19 +73,10 @@ export default function RegisterPage() {
 }
 
 function RegistrationClosed() {
-  return (
-    <div className="min-h-dvh flex items-center justify-center bg-gradient-to-br from-blue-50 to-gray-50 p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-gray-100 p-8 text-center">
-        {/* eslint-disable-next-line @next/next/no-img-element -- logo GJH statique */}
-        <img src="/icons/gjh-logo.png" alt="GRACES JUMELLES HOUSE" className="mx-auto mb-4 h-24 w-auto object-contain" />
-        <h1 className="text-xl font-bold text-gray-900">{APP_NAME}</h1>
-        <p className="mt-2 text-sm text-gray-600">Les comptes sont créés par la direction. Demandez votre accès au responsable.</p>
-        <Link href="/login" className="mt-6 inline-block rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white">
-          Se connecter
-        </Link>
-      </div>
-    </div>
-  );
+  // Édition GJH : la création de compte passe par le lien d'invitation
+  const router = useRouter();
+  useEffect(() => router.replace("/rejoindre"), [router]);
+  return null;
 }
 
 function RegisterForm() {

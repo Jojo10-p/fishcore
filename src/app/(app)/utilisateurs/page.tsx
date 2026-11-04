@@ -19,7 +19,7 @@ interface UserRow {
 
 const ROLES: Record<string, string> = {
   COMPANY_OWNER: "Propriétaire",
-  CENTER_MANAGER: "Gérant de centre",
+  CENTER_MANAGER: "Gérant",
   CASHIER: "Caissier",
   ACCOUNTANT: "Comptable",
   STOCK_MANAGER: "Gestionnaire de stock",
@@ -33,6 +33,7 @@ export default function UsersPage() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<UserRow | null>(null);
   const [resetFor, setResetFor] = useState<UserRow | null>(null);
+  const [inviteKey, setInviteKey] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -53,8 +54,8 @@ export default function UsersPage() {
     <>
       <PageHeader
         title="Utilisateurs"
-        description="Chaque employé a son propre compte : les identifiants ne se partagent jamais."
-        actions={can("user:create") && <Button onClick={() => setCreating(true)}>Nouvel utilisateur</Button>}
+        description="Chaque employé crée son propre compte avec le lien d'invitation que vous lui envoyez."
+        actions={can("user:create") && <Button onClick={() => setCreating(true)}>+ Inviter quelqu&apos;un</Button>}
       />
       {error && <Alert>{error}</Alert>}
       <Card>
@@ -107,19 +108,83 @@ export default function UsersPage() {
         />
       )}
       {resetFor && <ResetLinkModal user={resetFor} onClose={() => setResetFor(null)} />}
+      <PendingInvites refreshKey={inviteKey} canRevoke={can("user:create")} />
       {creating && session && (
-        <CreateUserModal
+        <InviteModal
           centers={session.centers}
           isOwner={session.user.role === "COMPANY_OWNER"}
-          onClose={() => setCreating(false)}
-          onCreated={load}
+          onClose={() => {
+            setCreating(false);
+            void load();
+          }}
+          onCreated={() => setInviteKey((k) => k + 1)}
         />
       )}
     </>
   );
 }
 
-function CreateUserModal({
+interface PendingInvite {
+  id: string;
+  role: string;
+  label: string | null;
+  createdAt: string;
+  expiresAt: string;
+  center: { name: string } | null;
+  createdBy: { firstName: string } | null;
+}
+
+/** Liens d'invitation pas encore utilisés. */
+function PendingInvites({ refreshKey, canRevoke }: { refreshKey: number; canRevoke: boolean }) {
+  const [list, setList] = useState<PendingInvite[] | null>(null);
+  const load = useCallback(async () => {
+    try {
+      setList((await apiGet<{ data: PendingInvite[] }>("/api/invitations")).data);
+    } catch {
+      setList([]);
+    }
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
+  }, [load, refreshKey]);
+  if (!list || list.length === 0) return null;
+  return (
+    <Card className="mt-6">
+      <div className="px-4 sm:px-6 py-4 border-b border-gray-100">
+        <h2 className="font-semibold text-gray-900">Invitations en attente</h2>
+        <p className="text-sm text-gray-500">Liens envoyés, pas encore utilisés pour créer un compte.</p>
+      </div>
+      <Table head={["Pour", "Poste", "Boutique", "Expire le", ""]}>
+        {list.map((i) => (
+          <tr key={i.id}>
+            <Td>{i.label || "—"}</Td>
+            <Td>{ROLES[i.role] ?? i.role}</Td>
+            <Td>{i.center?.name ?? "Toutes"}</Td>
+            <Td>{new Date(i.expiresAt).toLocaleDateString("fr-FR")}</Td>
+            <Td className="text-right">
+              {canRevoke && (
+                <Button
+                  variant="ghost"
+                  className="px-2 py-1.5 text-xs text-red-600"
+                  onClick={async () => {
+                    if (!window.confirm("Annuler ce lien ? Il ne pourra plus servir.")) return;
+                    await apiSend(`/api/invitations/${i.id}`, {}, "DELETE").catch(() => undefined);
+                    await load();
+                  }}
+                >
+                  Annuler le lien
+                </Button>
+              )}
+            </Td>
+          </tr>
+        ))}
+      </Table>
+    </Card>
+  );
+}
+
+function InviteModal({
   centers,
   isOwner,
   onClose,
@@ -128,88 +193,92 @@ function CreateUserModal({
   centers: Array<{ id: string; name: string }>;
   isOwner: boolean;
   onClose: () => void;
-  onCreated: () => Promise<void>;
+  onCreated: () => void;
 }) {
-  const [form, setForm] = useState({ firstName: "", lastName: "", email: "", phone: "", role: "CASHIER", password: "" });
-  const [centerIds, setCenterIds] = useState<string[]>(centers.length === 1 ? [centers[0].id] : []);
+  const [role, setRole] = useState("CASHIER");
+  const [centerId, setCenterId] = useState(centers[0]?.id ?? "");
+  const [label, setLabel] = useState("");
+  const [phone, setPhone] = useState("");
+  const [link, setLink] = useState<{ url: string; expiresAt: string } | null>(null);
+  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const submit = async () => {
+  const create = async () => {
     setBusy(true);
     setError(null);
     try {
-      await apiSend("/api/users", { ...form, phone: form.phone || undefined, centerIds });
-      await onCreated();
-      onClose();
+      const res = await apiSend<{ data: { url: string; expiresAt: string } }>("/api/invitations", { role, centerId: role === "COMPANY_OWNER" ? undefined : centerId, label: label || undefined });
+      setLink(res.data);
+      onCreated();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
   };
+  const roleName = (ROLES[role] ?? role).toLowerCase();
+  const message = link ? `Bonjour${label ? ` ${label}` : ""}, voici votre lien pour créer votre compte GJH Gestion (${roleName}) : ${link.url}\nOuvrez-le, puis créez votre compte avec Google ou avec votre e-mail. Valable 7 jours, une seule fois.` : "";
+  const digits = phone.replace(/[^0-9]/g, "");
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title="Nouvel utilisateur"
-      footer={
+    <Modal open onClose={onClose} title="Inviter quelqu'un" footer={<Button variant="secondary" onClick={onClose}>Fermer</Button>}>
+      {error && <Alert>{error}</Alert>}
+      {!link ? (
         <>
-          <Button variant="secondary" onClick={onClose}>
-            Annuler
-          </Button>
-          <Button onClick={submit} loading={busy} disabled={!form.firstName || !form.email || !form.password || centerIds.length === 0}>
-            Créer le compte
+          <p className="text-sm text-gray-700">
+            Choisissez le poste : vous recevez un lien à envoyer par WhatsApp. La personne l&apos;ouvre et crée elle-même son compte (avec Google ou un mot de passe) ; vous ne connaissez jamais son mot de passe.
+          </p>
+          <Field label="Poste">
+            <Select value={role} onChange={(e) => setRole(e.target.value)}>
+              {["CASHIER", "CENTER_MANAGER", "STOCK_MANAGER", "ACCOUNTANT", ...(isOwner ? ["COMPANY_OWNER"] : [])].map((k) => (
+                <option key={k} value={k}>
+                  {ROLES[k]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          {role !== "COMPANY_OWNER" && centers.length > 1 && (
+            <Field label="Boutique">
+              <Select value={centerId} onChange={(e) => setCenterId(e.target.value)}>
+                {centers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+          <Field label="Prénom de la personne (facultatif)" hint="Pour vous y retrouver et pré-remplir son compte.">
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="ex. Rachidi" />
+          </Field>
+          <Field label="Son numéro WhatsApp (facultatif)" hint="Pour ouvrir WhatsApp directement sur sa conversation.">
+            <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="ex. 22997000000" />
+          </Field>
+          <Button onClick={create} loading={busy} disabled={role !== "COMPANY_OWNER" && !centerId}>
+            Créer le lien d&apos;invitation
           </Button>
         </>
-      }
-    >
-      {error && <Alert>{error}</Alert>}
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Prénom">
-          <Input value={form.firstName} onChange={set("firstName")} />
-        </Field>
-        <Field label="Nom">
-          <Input value={form.lastName} onChange={set("lastName")} />
-        </Field>
-      </div>
-      <Field label="Email (identifiant de connexion)">
-        <Input type="email" value={form.email} onChange={set("email")} />
-      </Field>
-      <Field label="Téléphone">
-        <Input value={form.phone} onChange={set("phone")} />
-      </Field>
-      <Field label="Rôle">
-        <Select value={form.role} onChange={set("role")}>
-          {Object.entries(ROLES)
-            .filter(([k]) => k !== "COMPANY_OWNER" || isOwner)
-            .map(([k, v]) => (
-              <option key={k} value={k}>
-                {v}
-              </option>
-            ))}
-        </Select>
-      </Field>
-      <fieldset>
-        <legend className="text-sm font-medium text-gray-700 mb-1">Centres autorisés</legend>
-        <div className="flex flex-wrap gap-3">
-          {centers.map((c) => (
-            <label key={c.id} className="inline-flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={centerIds.includes(c.id)}
-                onChange={(e) => setCenterIds((ids) => (e.target.checked ? [...ids, c.id] : ids.filter((x) => x !== c.id)))}
-              />
-              {c.name}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      <Field label="Mot de passe provisoire" hint="8 caractères minimum, dont une majuscule et un chiffre. À transmettre en main propre.">
-        <Input type="password" autoComplete="new-password" value={form.password} onChange={set("password")} />
-      </Field>
+      ) : (
+        <>
+          <Alert tone="green">Lien prêt. Envoyez-le à {label || "la personne"} : il sert une seule fois et expire dans 7 jours.</Alert>
+          <Input readOnly value={link.url} onFocus={(e) => e.target.select()} />
+          <div className="flex flex-wrap gap-2">
+            <a href={`https://wa.me/${digits}?text=${encodeURIComponent(message)}`} target="_blank" rel="noreferrer">
+              <Button variant="success">Envoyer par WhatsApp</Button>
+            </a>
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                await navigator.clipboard.writeText(message).catch(() => undefined);
+                setCopied(true);
+              }}
+            >
+              {copied ? "✓ Copié" : "Copier le message"}
+            </Button>
+          </div>
+        </>
+      )}
     </Modal>
   );
 }

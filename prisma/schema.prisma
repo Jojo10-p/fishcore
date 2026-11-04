@@ -151,6 +151,10 @@ enum AuditEventType {
   LOGIN_FAILED
   PASSWORD_CHANGED
   PASSWORD_RESET_LINK_CREATED
+  INVITATION_CREATED
+  INVITATION_ACCEPTED
+  INVITATION_REVOKED
+  GOOGLE_LOGIN
   COMPANY_SUSPENDED
   COMPANY_REACTIVATED
   USER_UPDATED
@@ -282,6 +286,7 @@ model Company {
   notifications Notification[]
 
   stockAlerts StockAlert[]
+  invitations Invitation[]
   pushSubscriptions PushSubscription[]
   stockWatches StockWatch[]
 
@@ -324,6 +329,7 @@ model Center {
   installLinks      AgencyInstallLink[]
 
   stockAlerts StockAlert[]
+  invitations Invitation[]
   stockWatches StockWatch[]
 
   @@unique([companyId, code])
@@ -377,6 +383,9 @@ model User {
   lockedUntil   DateTime?
 
   // Relations
+  invitationsSent       Invitation[] @relation("InvitationCreator")
+  invitationUsed        Invitation?  @relation("InvitationUser")
+  googleSub             String?      @unique // identifiant Google (connexion avec Google)
   pushSubscriptions     PushSubscription[]
   centers               UserCenter[] // Centres autorisés
   cashSessions          CashSession[]
@@ -1497,4 +1506,28 @@ model StockWatch {
   @@unique([centerId, productId])
   @@index([companyId])
   @@map("stock_watches")
+}
+
+// Lien d'invitation : la direction choisit le rôle et la boutique, l'employé crée
+// lui-même son compte en ouvrant le lien (WhatsApp, SMS…). Usage unique.
+model Invitation {
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  centerId    String?
+  center      Center?   @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  role        UserRole
+  label       String? // nom prévu (« Rachidi »), pour s'y retrouver
+  tokenHash   String    @unique
+  createdById String?
+  createdBy   User?     @relation("InvitationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  usedAt      DateTime?
+  usedById    String?   @unique
+  usedBy      User?     @relation("InvitationUser", fields: [usedById], references: [id], onDelete: SetNull)
+  revokedAt   DateTime?
+
+  @@index([companyId, usedAt])
+  @@map("invitations")
 }
