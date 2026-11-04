@@ -15,6 +15,7 @@ import {
   requireCompany,
   requirePermission,
 } from "@/lib/auth";
+import { scheduleStockAlerts } from "@/lib/stock-alerts";
 
 const D = Prisma.Decimal;
 
@@ -161,6 +162,7 @@ export async function POST(req: NextRequest) {
       { timeout: 60_000, maxWait: 10_000 }
     );
 
+    scheduleStockAlerts(companyId);
     return NextResponse.json({ success: true, data: transfer }, { status: 201 });
   } catch (error) {
     return handleApiError(error, "TRANSFERS");

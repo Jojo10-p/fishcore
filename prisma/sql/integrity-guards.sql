@@ -107,3 +107,9 @@ ALTER TABLE "stock_transfer_lines" ADD CONSTRAINT "stock_transfer_lines_quantiti
   CHECK ("quantity" > 0 AND ("receivedQty" IS NULL OR ("receivedQty" >= 0 AND "receivedQty" <= "quantity")));
 ALTER TABLE "stock_transfers" DROP CONSTRAINT IF EXISTS "stock_transfers_distinct_centers";
 ALTER TABLE "stock_transfers" ADD CONSTRAINT "stock_transfers_distinct_centers" CHECK ("fromCenterId" <> "toCenterId");
+
+-- ─────────────────────────────────────────────
+-- Alertes de stock : une seule alerte OUVERTE par (centre, article)
+-- ─────────────────────────────────────────────
+CREATE UNIQUE INDEX IF NOT EXISTS "stock_alerts_one_open"
+  ON "stock_alerts" ("centerId", "productId") WHERE "resolvedAt" IS NULL;

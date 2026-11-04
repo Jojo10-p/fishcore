@@ -27,6 +27,8 @@
 | `NEXT_PUBLIC_APP_NAME` | nom affiché, ex. `fishcore` |
 | `DATABASE_CA_CERT` | facultatif, voir plus haut |
 | `NEXT_PUBLIC_SUPPORT_CONTACT` | facultatif : contact de l'assistance affiché aux propriétaires (« Mot de passe oublié »), ex. `WhatsApp +229 01 00 00 00 00` |
+| `RESEND_API_KEY` | facultatif : clé [Resend](https://resend.com) pour envoyer les alertes de stock par e-mail au propriétaire (gratuit jusqu'à 3 000 e-mails/mois) |
+| `EMAIL_FROM` | adresse d'expédition d'un domaine vérifié chez Resend, ex. `alertes@mondomaine.com` (sans ces deux variables, les alertes restent visibles dans le logiciel) |
 
    L'application refuse de démarrer en production sans `JWT_SECRET` et `INSTALL_LINK_SECRET`.
 3. *Deploy*. Le build :

@@ -15,6 +15,7 @@ import {
 } from "@/lib/auth";
 import { attributesSchema, packagingSchema } from "@/lib/validations";
 import { assertBarcodeFree, assertReferenceFree, productClientSelect, replacePackagings } from "@/lib/catalog";
+import { scheduleStockAlerts } from "@/lib/stock-alerts";
 
 const updateSchema = z
   .object({
@@ -107,6 +108,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return tx.product.findUniqueOrThrow({ where: { id }, select: productClientSelect });
     });
 
+    scheduleStockAlerts(companyId);
     return NextResponse.json({ success: true, data: product });
   } catch (error) {
     if (isUniqueViolation(error)) {

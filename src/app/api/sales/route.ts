@@ -18,6 +18,7 @@ import { hasPermission } from "@/lib/rbac";
 import { priceLines, settlePayments } from "@/lib/sales";
 import { consumeStockForSale, type BatchAllocation } from "@/lib/stock";
 import { nextCompanyNumber, resolveSessionNumber } from "@/lib/invoice-numbers";
+import { scheduleStockAlerts } from "@/lib/stock-alerts";
 
 
 // Lignes dans l'ordre de saisie (identifiants croissants)
@@ -326,6 +327,7 @@ export async function POST(req: NextRequest) {
       return newSale;
     });
 
+    scheduleStockAlerts(companyId);
     return NextResponse.json({ success: true, data: sale }, { status: 201 });
   } catch (error) {
     // Deux envois simultanés de la même vente : la seconde échoue sur la clé

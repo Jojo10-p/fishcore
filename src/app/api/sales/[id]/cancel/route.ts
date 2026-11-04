@@ -15,6 +15,7 @@ import {
 } from "@/lib/auth";
 import { hasPermission } from "@/lib/rbac";
 import { restoreBatch } from "@/lib/stock";
+import { scheduleStockAlerts } from "@/lib/stock-alerts";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -253,6 +254,8 @@ export async function POST(req: NextRequest, { params }: Params) {
           tx
         );
       });
+
+      scheduleStockAlerts(sale.companyId);
 
       return NextResponse.json({ success: true, message: "Annulation approuvée. Stock restauré et remboursement enregistré." });
     }

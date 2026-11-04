@@ -15,6 +15,7 @@ import {
 } from "@/lib/auth";
 import type { Permission } from "@/lib/rbac";
 import { restoreBatch } from "@/lib/stock";
+import { scheduleStockAlerts } from "@/lib/stock-alerts";
 
 const D = Prisma.Decimal;
 
@@ -207,6 +208,7 @@ export async function POST(req: NextRequest) {
       return { stock, movement };
     });
 
+    scheduleStockAlerts(companyId);
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     return handleApiError(error, "STOCK");

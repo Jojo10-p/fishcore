@@ -14,6 +14,7 @@ import {
   requireCompany,
   requirePermission,
 } from "@/lib/auth";
+import { scheduleStockAlerts } from "@/lib/stock-alerts";
 
 const D = Prisma.Decimal;
 type Ctx = { params: Promise<{ id: string }> };
@@ -137,6 +138,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       { timeout: 60_000, maxWait: 10_000 }
     );
 
+    scheduleStockAlerts(companyId);
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     return handleApiError(error, "INVENTORIES");

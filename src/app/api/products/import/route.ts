@@ -14,6 +14,7 @@ import {
   requirePermission,
 } from "@/lib/auth";
 import { getBusinessProfile } from "@/lib/business-profiles";
+import { scheduleStockAlerts } from "@/lib/stock-alerts";
 
 // ─────────────────────────────────────────────
 // POST /api/products/import — Reprise du catalogue d'un autre logiciel
@@ -288,6 +289,7 @@ export async function POST(req: NextRequest) {
       if (!(e instanceof DryRunRollback)) throw e;
     }
 
+    if (!data.dryRun) scheduleStockAlerts(companyId);
     return NextResponse.json({ success: true, data: { ...report, dryRun: data.dryRun } }, { status: data.dryRun ? 200 : 201 });
   } catch (error) {
     return handleApiError(error, "PRODUCTS");

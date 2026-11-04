@@ -6,6 +6,7 @@ import { cancelReasonSchema } from "@/lib/validations";
 import { applyStockChange } from "@/lib/stock-ops";
 import { ApiError, getCurrentUser, handleApiError, parseBody, readJson, requireCenterAccess, requireCompany, requirePermission } from "@/lib/auth";
 import { batchesOf, loadTransferFor } from "@/lib/transfers";
+import { scheduleStockAlerts } from "@/lib/stock-alerts";
 
 const D = Prisma.Decimal;
 type Ctx = { params: Promise<{ id: string }> };
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       },
       { timeout: 60_000, maxWait: 10_000 }
     );
+    scheduleStockAlerts(companyId);
     return NextResponse.json({ success: true, data: done });
   } catch (error) {
     return handleApiError(error, "TRANSFERS");

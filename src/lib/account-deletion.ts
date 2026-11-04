@@ -21,6 +21,7 @@ const USERS = `SELECT "id" FROM "users" WHERE "companyId" = ${C}`;
 const STATEMENTS: Array<[string, string]> = [
   ["journal d'audit", `DELETE FROM "audit_logs" WHERE "companyId" = ${C}`],
   ["notifications", `DELETE FROM "notifications" WHERE "companyId" = ${C}`],
+  ["alertes de stock", `DELETE FROM "stock_alerts" WHERE "companyId" = ${C}`],
   ["synchronisations", `DELETE FROM "sync_operations" WHERE "companyId" = ${C}`],
   ["liens d'installation", `DELETE FROM "agency_install_links" WHERE "companyId" = ${C}`],
   ["numéros de facture", `DELETE FROM "invoice_number_blocks" WHERE "companyId" = ${C}`],

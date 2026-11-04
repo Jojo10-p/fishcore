@@ -281,6 +281,8 @@ model Company {
   installLinks  AgencyInstallLink[]
   notifications Notification[]
 
+  stockAlerts StockAlert[]
+
   @@map("companies")
 }
 
@@ -318,6 +320,8 @@ model Center {
   inventories       Inventory[]
   auditLogs         AuditLog[]
   installLinks      AgencyInstallLink[]
+
+  stockAlerts StockAlert[]
 
   @@unique([companyId, code])
   @@map("centers")
@@ -522,6 +526,8 @@ model Product {
   batches         Batch[]
   inventoryLines  InventoryLine[]
   transferLines   StockTransferLine[]
+
+  stockAlerts StockAlert[]
 
   @@unique([companyId, barcode])
   @@index([companyId, name])
@@ -1338,6 +1344,31 @@ model Document {
 // ─────────────────────────────────────────────
 // NOTIFICATIONS
 // ─────────────────────────────────────────────
+
+/// Alerte de stock bas : ouverte quand un article descend à son seuil dans un
+/// centre, fermée d'elle-même quand le stock remonte au-dessus (réception…).
+/// Une seule alerte ouverte par (centre, article) — index partiel dans integrity-guards.sql.
+model StockAlert {
+  id         String    @id @default(cuid())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  companyId  String
+  company    Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  centerId   String
+  center     Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity   Decimal   @db.Decimal(12, 3) // stock restant (mis à jour tant que l'alerte est ouverte)
+  threshold  Decimal   @db.Decimal(12, 3) // seuil d'alerte au moment de l'alerte
+  readAt     DateTime? // vue par le propriétaire
+  emailedAt  DateTime? // e-mail envoyé au(x) propriétaire(s)
+  emailError String?
+  resolvedAt DateTime? // stock remonté au-dessus du seuil
+
+  @@index([companyId, resolvedAt])
+  @@index([centerId, productId])
+  @@map("stock_alerts")
+}
 
 model Notification {
   id        String    @id @default(cuid())

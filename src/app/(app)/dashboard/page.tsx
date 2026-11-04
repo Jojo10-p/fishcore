@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { InstallInvite } from "@/components/app/install-app";
+import { useStockAlertCount } from "@/components/app/stock-alerts";
 import { Alert, Badge, Card, Input, Money, PageHeader, Spinner, Table, Td } from "@/components/ui";
 import { apiGet, errorMessage } from "@/lib/client/api";
 
@@ -37,6 +38,7 @@ const STATUS: Record<string, { label: string; tone: "green" | "red" | "amber" | 
 
 export default function DashboardPage() {
   const { can, centerId, currency, session } = useSession();
+  const newAlerts = useStockAlertCount();
   const router = useRouter();
   const isOwner = session?.user.role === "COMPANY_OWNER";
   const [consolidated, setConsolidated] = useState(isOwner);
@@ -93,6 +95,13 @@ export default function DashboardPage() {
         }
       />
 
+      {newAlerts > 0 && (
+        <Link href="/alertes" className="mb-4 block">
+          <Alert tone="amber">
+            🔔 <strong>{newAlerts} nouvelle{newAlerts > 1 ? "s" : ""} alerte{newAlerts > 1 ? "s" : ""} de stock</strong> : des articles sont descendus à leur seuil. Voir les articles à recommander →
+          </Alert>
+        </Link>
+      )}
       {session?.company && <InstallInvite appName={session.company.appName || session.company.tradeName} logoUrl={`/api/brand/${session.company.id}/icon-192.png`} />}
       {error && <Alert>{error}</Alert>}
       {!data && !error && <Spinner />}

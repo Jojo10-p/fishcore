@@ -11,6 +11,7 @@ import {
   requireCompany,
   requirePermission,
 } from "@/lib/auth";
+import { scheduleStockAlerts } from "@/lib/stock-alerts";
 
 // POST /api/goods-receipts/[id]/validate — Valider une réception : c'est ici, et
 // seulement ici, que le stock augmente (cahier §8.3). Chaque ligne crée un lot
@@ -161,6 +162,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     });
 
+    scheduleStockAlerts(companyId);
     return NextResponse.json({ success: true, message: "Réception validée. Stock mis à jour." });
   } catch (error) {
     return handleApiError(error, "GOODS_RECEIPTS");
