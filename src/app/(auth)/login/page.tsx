@@ -1,10 +1,11 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { applyBrand, readBrand, type Brand } from "@/lib/client/brand";
+import { applyBrand, readBrand } from "@/lib/client/brand";
 import { useForm } from "react-hook-form";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { APP_NAME, REGISTRATION_OPEN } from "@/lib/app-config";
 
 interface LoginForm {
   email: string;
@@ -21,11 +22,9 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   // Application installée par une entreprise : on garde son nom et son logo
-  const [brand, setBrand] = useState<Brand | null>(null);
   useEffect(() => {
     const t = setTimeout(() => {
       const b = readBrand();
-      setBrand(b);
       if (b) applyBrand(b);
     }, 0);
     return () => clearTimeout(t);
@@ -75,19 +74,10 @@ function LoginForm() {
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
         {/* Logo / En-tête */}
         <div className="text-center mb-8">
-          {brand?.logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element -- logo de l'entreprise servi par l'API
-            <img src={`/api/brand/${brand.companyId}/icon-192.png?v=${new URLSearchParams(brand.logoUrl.split("?")[1] ?? "").get("v") ?? ""}`} alt="" className="mx-auto mb-4 h-16 w-16 rounded-2xl object-contain shadow" />
-          ) : (
-            <div className="inline-flex items-center justify-center w-14 h-14 bg-blue-600 rounded-2xl mb-4 shadow-lg">
-              {/* eslint-disable-next-line @next/next/no-img-element -- icône statique */}
-              <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
-            </div>
-          )}
-          <h1 className="text-2xl font-bold text-gray-900">{brand ? brand.name : "Connexion"}</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            {brand ? "Connectez-vous à votre espace" : "Accédez à votre espace de gestion"}
-          </p>
+          {/* eslint-disable-next-line @next/next/no-img-element -- logo GJH statique */}
+          <img src="/icons/gjh-logo.png" alt="GRACES JUMELLES HOUSE" className="mx-auto mb-4 h-28 w-auto object-contain" />
+          <h1 className="text-2xl font-bold text-gray-900">{APP_NAME}</h1>
+          <p className="text-sm text-gray-500 mt-1">Connectez-vous à votre espace</p>
         </div>
 
         {/* Erreur globale */}
@@ -171,7 +161,7 @@ function LoginForm() {
 
         {/* Lien inscription */}
         <div className="mt-6 text-center">
-          <p className="text-sm text-gray-500">
+          {REGISTRATION_OPEN && (<p className="text-sm text-gray-500">
             Première connexion ?{" "}
             <Link
               href="/register"
@@ -179,7 +169,7 @@ function LoginForm() {
             >
               Créer mon espace
             </Link>
-          </p>
+          </p>)}
         </div>
       </div>
     </div>

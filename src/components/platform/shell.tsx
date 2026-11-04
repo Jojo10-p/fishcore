@@ -68,7 +68,7 @@ export function PlatformShell({ children }: { children: React.ReactNode }) {
             className="flex items-center gap-2 font-bold text-gray-900"
           >
             {/* eslint-disable-next-line @next/next/no-img-element -- icône statique */}
-            <img src="/icons/icon.svg" alt="" className="h-7 w-7" />
+            <img src="/icons/icon-192.png" alt="" className="h-7 w-7" />
             {APP_NAME}{" "}
             <span className="rounded bg-gray-900 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white">
               console

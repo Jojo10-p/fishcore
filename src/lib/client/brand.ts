@@ -1,7 +1,5 @@
 "use client";
 
-import { APP_NAME } from "@/lib/app-config";
-
 // Marque blanche côté navigateur : l'application installée et l'onglet portent
 // le nom et le logo de l'entreprise connectée.
 
@@ -22,62 +20,18 @@ export function readBrand(): Brand | null {
   }
 }
 
-function setLink(rel: string, href: string) {
-  let el = document.head.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`);
-  if (!el) {
-    el = document.createElement("link");
-    el.rel = rel;
-    document.head.appendChild(el);
-  }
-  if (el.getAttribute("href") !== href) el.href = href;
-}
-
-let titleObserver: MutationObserver | null = null;
-
-/** Remplace le nom du logiciel par celui de l'entreprise dans le titre de l'onglet. */
-function brandTitle(name: string) {
-  const fix = () => {
-    const t = document.title;
-    if (!t || t.includes(name)) return;
-    document.title = t.includes(APP_NAME) ? t.replaceAll(APP_NAME, name) : `${t} · ${name}`;
-  };
-  fix();
-  titleObserver?.disconnect();
-  const titleEl = document.head.querySelector("title");
-  if (titleEl) {
-    titleObserver = new MutationObserver(fix);
-    titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
-  }
-}
-
+/**
+ * Édition GJH : le nom et le logo sont fixes (manifeste et icônes statiques du
+ * site), on garde seulement la dernière entreprise connectée en mémoire.
+ */
 export function applyBrand(brand: Brand | null) {
   if (typeof document === "undefined") return;
-  if (!brand) {
-    titleObserver?.disconnect();
-    try {
-      localStorage.removeItem(BRAND_KEY);
-    } catch {
-      /* ignore */
-    }
-    return;
-  }
   try {
-    localStorage.setItem(BRAND_KEY, JSON.stringify(brand));
+    if (brand) localStorage.setItem(BRAND_KEY, JSON.stringify(brand));
+    else localStorage.removeItem(BRAND_KEY);
   } catch {
     /* ignore */
   }
-  setLink("manifest", `/api/brand/${brand.companyId}/manifest.webmanifest`);
-  const v = brand.logoUrl ? (new URL(brand.logoUrl, location.origin).searchParams.get("v") ?? "") : "";
-  if (brand.logoUrl) {
-    setLink("icon", `/api/brand/${brand.companyId}/icon-192.png?v=${v}`);
-    setLink("apple-touch-icon", `/api/brand/${brand.companyId}/icon-192.png?v=${v}`);
-  } else {
-    setLink("icon", "/icons/icon.svg");
-    setLink("apple-touch-icon", "/icons/icon-192.png");
-  }
-  document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute("content", brand.name);
-  document.querySelector('meta[name="application-name"]')?.setAttribute("content", brand.name);
-  brandTitle(brand.name);
 }
 
 // ── Préparation du logo (dans le navigateur, sans service externe) ─────────

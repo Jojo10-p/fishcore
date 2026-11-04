@@ -26,6 +26,7 @@ const PUBLIC_PATHS = [
   // Fichiers de l'application installable (doivent rester accessibles hors session)
   "/sw.js",
   "/offline.html",
+  "/manifest.webmanifest",
   "/icons",
 ];
 

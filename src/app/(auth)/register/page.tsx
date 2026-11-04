@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BUSINESS_PROFILES, BUSINESS_TYPE_ORDER } from "@/lib/business-profiles";
 import { applyBrand } from "@/lib/client/brand";
+import { APP_NAME, REGISTRATION_OPEN } from "@/lib/app-config";
 
 // ─────────────────────────────────────────────
 // Types
@@ -67,6 +68,27 @@ function ProgressBar({ step }: { step: number }) {
 // Page principale
 // ─────────────────────────────────────────────
 export default function RegisterPage() {
+  if (!REGISTRATION_OPEN) return <RegistrationClosed />;
+  return <RegisterForm />;
+}
+
+function RegistrationClosed() {
+  return (
+    <div className="min-h-dvh flex items-center justify-center bg-gradient-to-br from-blue-50 to-gray-50 p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-gray-100 p-8 text-center">
+        {/* eslint-disable-next-line @next/next/no-img-element -- logo GJH statique */}
+        <img src="/icons/gjh-logo.png" alt="GRACES JUMELLES HOUSE" className="mx-auto mb-4 h-24 w-auto object-contain" />
+        <h1 className="text-xl font-bold text-gray-900">{APP_NAME}</h1>
+        <p className="mt-2 text-sm text-gray-600">Les comptes sont créés par la direction. Demandez votre accès au responsable.</p>
+        <Link href="/login" className="mt-6 inline-block rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white">
+          Se connecter
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function RegisterForm() {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [step1Data, setStep1Data] = useState<StepOneData | null>(null);
@@ -405,7 +427,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
         <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-12 h-12 bg-blue-600 rounded-2xl mb-3 shadow-lg">
-            <img src="/icons/icon.svg" alt="" className="h-7 w-7" />
+            <img src="/icons/icon-192.png" alt="" className="h-7 w-7" />
           </div>
           <h1 className="text-xl font-bold text-gray-900">Créer mon espace</h1>
           <p className="text-sm text-gray-500 mt-0.5">Configuration initiale de votre entreprise</p>

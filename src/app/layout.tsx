@@ -20,11 +20,12 @@ export const metadata: Metadata = {
   description: APP_TAGLINE,
   applicationName: APP_NAME,
   appleWebApp: { capable: true, title: APP_NAME, statusBarStyle: "default" },
-  icons: { icon: "/icons/icon.svg", apple: "/icons/icon-192.png" },
+  icons: { icon: "/icons/favicon-48.png", apple: "/icons/icon-192.png" },
+  manifest: "/manifest.webmanifest",
 };
 
 export const viewport: Viewport = {
-  themeColor: "#1d4ed8",
+  themeColor: "#0b1f4b",
   width: "device-width",
   initialScale: 1,
 };

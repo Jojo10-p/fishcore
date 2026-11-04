@@ -59,16 +59,18 @@ export async function GET(req: NextRequest) {
 
       prisma.sale.findMany({ where: saleWhere, select: { createdAt: true, totalAmount: true } }),
 
-      // Stocks au niveau ou sous le seuil d'alerte
-      prisma.$queryRaw<{ count: bigint }[]>`
-        SELECT COUNT(*)::bigint AS count
+      // Stocks au niveau ou sous le seuil d'alerte (du plus bas au plus haut)
+      prisma.$queryRaw<{ productId: string; name: string; quantity: Prisma.Decimal; unit: string; center: string }[]>`
+        SELECT p."id" AS "productId", p."name", s."quantity", u."symbol" AS unit, c."name" AS center
           FROM "stocks" s
           JOIN "products" p ON p."id" = s."productId"
+          JOIN "units" u ON u."id" = p."baseUnitId"
           JOIN "centers" c ON c."id" = s."centerId"
          WHERE c."companyId" = ${companyId}
            AND p."isActive" = TRUE
            AND s."quantity" <= p."stockAlertQty"
-           ${centerSql}`,
+           ${centerSql}
+         ORDER BY s."quantity" ASC, p."name" ASC`,
 
       prisma.cashSession.count({
         where: { closedAt: null, cashRegister: { center: { companyId }, ...centerWhere } },
@@ -110,7 +112,8 @@ export async function GET(req: NextRequest) {
           salesCount: salesStats._count.id,
           revenue: Number(salesStats._sum.totalAmount ?? 0),
         },
-        lowStockCount: Number(lowStockRows[0]?.count ?? 0),
+        lowStockCount: lowStockRows.length,
+        lowStock: lowStockRows.slice(0, 10).map((r) => ({ ...r, quantity: Number(r.quantity) })),
         expiredBatches,
         expiringBatches,
         openSessions,

@@ -1,178 +1,142 @@
 import { after } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { emailConfigured, sendEmail } from "@/lib/email";
+import { LOW_STOCK_THRESHOLD } from "@/lib/app-config";
+import { managerDevices, sendPush, type PushPayload } from "@/lib/push";
 
 // ─────────────────────────────────────────────
-// Alertes de stock bas
+// Alertes de stock → notifications sur le téléphone du gérant et du patron
 // ─────────────────────────────────────────────
-// Un article dont le stock d'un centre descend à son seuil (« seuil d'alerte »
-// de la fiche article) ouvre UNE alerte pour ce centre. Elle reste ouverte tant
-// que le stock est bas (sa quantité suit les ventes) et se ferme d'elle-même
-// quand le stock remonte au-dessus du seuil (réception, transfert, inventaire…).
-// Chaque nouvelle alerte est signalée au propriétaire : cloche dans le
-// logiciel et e-mail (si l'envoi d'e-mails est configuré).
+// Pour chaque article de chaque boutique :
+//  • « Moitié vendue » : une seule fois quand le stock descend à la moitié de ce
+//    qu'il y avait juste après le dernier ajout. Simple information, elle disparaît seule.
+//  • « Presque épuisé » : dès que le stock descend à 7 (seuil fixe), puis à CHAQUE
+//    nouvelle baisse (6, 5, 4…) tant que du stock n'a pas été rajouté. Elle reste
+//    affichée jusqu'à « Bien reçu ».
+// Un ajout de stock (réception, transfert, inventaire, annulation de vente)
+// remet le suivi à zéro à partir du nouveau niveau.
 
 const D = Prisma.Decimal;
 
-export interface NewStockAlert {
-  id: string;
+export interface StockEvent {
+  kind: "low" | "half";
+  companyId: string;
+  centerId: string;
+  productId: string;
   productName: string;
-  reference: string | null;
   unit: string;
   centerName: string;
+  quantity: number;
+  refQty: number;
+}
+
+interface Row {
+  centerId: string;
+  productId: string;
   quantity: Prisma.Decimal;
-  threshold: Prisma.Decimal;
+  productName: string;
+  unit: string;
+  centerName: string;
+  watchId: string | null;
+  lastQty: Prisma.Decimal | null;
+  refQty: Prisma.Decimal | null;
+  halfNotifiedAt: Date | null;
+  lowNotifiedQty: Prisma.Decimal | null;
 }
 
-/** Compare tout le stock de l'entreprise aux seuils : ouvre, met à jour et ferme les alertes. */
-export async function syncStockAlerts(companyId: string): Promise<NewStockAlert[]> {
-  const low = await prisma.$queryRaw<Array<{ centerId: string; productId: string; quantity: Prisma.Decimal; threshold: Prisma.Decimal }>>`
-    SELECT s."centerId", s."productId", s."quantity", p."stockAlertQty" AS threshold
-      FROM "stocks" s
-      JOIN "products" p ON p."id" = s."productId"
-      JOIN "centers" c ON c."id" = s."centerId"
-     WHERE p."companyId" = ${companyId}
-       AND p."isActive" = true
-       AND p."stockAlertQty" > 0
-       AND s."quantity" <= p."stockAlertQty"`;
-  const open = await prisma.stockAlert.findMany({
-    where: { companyId, resolvedAt: null },
-    select: { id: true, centerId: true, productId: true, quantity: true },
-  });
-  const key = (c: string, p: string) => `${c}:${p}`;
-  const lowMap = new Map(low.map((l) => [key(l.centerId, l.productId), l]));
-  const openMap = new Map(open.map((o) => [key(o.centerId, o.productId), o]));
+/** Compare le stock au dernier état connu et renvoie les notifications à envoyer. */
+export async function syncStockWatches(companyId: string): Promise<StockEvent[]> {
+  const threshold = new D(LOW_STOCK_THRESHOLD);
+  return prisma.$transaction(async (tx) => {
+    // Une seule vérification à la fois par entreprise (deux ventes simultanées)
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stock-watch:" + companyId}))`;
+    const rows = await tx.$queryRaw<Row[]>`
+      SELECT s."centerId", s."productId", s."quantity", p."name" AS "productName", u."symbol" AS unit, c."name" AS "centerName",
+             w."id" AS "watchId", w."lastQty", w."refQty", w."halfNotifiedAt", w."lowNotifiedQty"
+        FROM "stocks" s
+        JOIN "products" p ON p."id" = s."productId"
+        JOIN "units" u ON u."id" = p."baseUnitId"
+        JOIN "centers" c ON c."id" = s."centerId"
+        LEFT JOIN "stock_watches" w ON w."centerId" = s."centerId" AND w."productId" = s."productId"
+       WHERE p."companyId" = ${companyId} AND p."isActive" = TRUE`;
 
-  const createdIds: string[] = [];
-  for (const [k, l] of lowMap) {
-    const existing = openMap.get(k);
-    if (existing) {
-      if (!new D(existing.quantity).equals(l.quantity)) {
-        await prisma.stockAlert.update({ where: { id: existing.id }, data: { quantity: l.quantity } });
+    const events: StockEvent[] = [];
+    for (const r of rows) {
+      const q = new D(r.quantity);
+      const base = { companyId, centerId: r.centerId, productId: r.productId, productName: r.productName, unit: r.unit, centerName: r.centerName };
+      if (!r.watchId) {
+        // Premier passage : on enregistre le niveau actuel, sans notifier
+        await tx.stockWatch.create({ data: { companyId, centerId: r.centerId, productId: r.productId, lastQty: q, refQty: q } });
+        continue;
       }
-      continue;
+      const last = new D(r.lastQty!);
+      if (q.equals(last)) continue;
+      if (q.greaterThan(last)) {
+        // Du stock a été rajouté : nouveau point de départ
+        await tx.stockWatch.update({ where: { id: r.watchId }, data: { lastQty: q, refQty: q, halfNotifiedAt: null, lowNotifiedQty: null } });
+        continue;
+      }
+      // Le stock a baissé
+      const ref = new D(r.refQty!);
+      const data: Prisma.StockWatchUpdateInput = { lastQty: q };
+      if (q.lessThanOrEqualTo(threshold)) {
+        if (r.lowNotifiedQty === null || q.lessThan(r.lowNotifiedQty)) {
+          events.push({ kind: "low", ...base, quantity: Number(q), refQty: Number(ref) });
+          data.lowNotifiedQty = q;
+        }
+        if (!r.halfNotifiedAt) data.halfNotifiedAt = new Date(); // l'alerte « presque épuisé » suffit
+      } else if (!r.halfNotifiedAt && ref.greaterThan(0) && q.lessThanOrEqualTo(ref.dividedBy(2))) {
+        events.push({ kind: "half", ...base, quantity: Number(q), refQty: Number(ref) });
+        data.halfNotifiedAt = new Date();
+      }
+      await tx.stockWatch.update({ where: { id: r.watchId }, data });
     }
-    // L'index partiel « une alerte ouverte par centre et article » évite les doublons
-    // si deux ventes simultanées font passer le seuil en même temps.
-    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-      INSERT INTO "stock_alerts" ("id", "companyId", "centerId", "productId", "quantity", "threshold", "createdAt", "updatedAt")
-      VALUES (${"sa_" + crypto.randomUUID().replace(/-/g, "")}, ${companyId}, ${l.centerId}, ${l.productId}, ${l.quantity}, ${l.threshold}, NOW(), NOW())
-      ON CONFLICT ("centerId", "productId") WHERE "resolvedAt" IS NULL DO NOTHING
-      RETURNING "id"`;
-    if (rows[0]) createdIds.push(rows[0].id);
-  }
-  const resolved = open.filter((o) => !lowMap.has(key(o.centerId, o.productId))).map((o) => o.id);
-  if (resolved.length) {
-    await prisma.stockAlert.updateMany({ where: { id: { in: resolved }, resolvedAt: null }, data: { resolvedAt: new Date() } });
-  }
-  if (!createdIds.length) return [];
-  const created = await prisma.stockAlert.findMany({
-    where: { id: { in: createdIds } },
-    select: {
-      id: true,
-      quantity: true,
-      threshold: true,
-      center: { select: { name: true } },
-      product: { select: { name: true, internalCode: true, baseUnit: { select: { symbol: true } } } },
-    },
-    orderBy: { quantity: "asc" },
+    return events;
   });
-  return created.map((a) => ({
-    id: a.id,
-    productName: a.product.name,
-    reference: a.product.internalCode,
-    unit: a.product.baseUnit.symbol,
-    centerName: a.center.name,
-    quantity: a.quantity,
-    threshold: a.threshold,
-  }));
 }
 
-const qty = (d: Prisma.Decimal) => Number(d).toLocaleString("fr-FR", { maximumFractionDigits: 3 });
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const PLURALS: Record<string, string> = { bidon: "bidons", seau: "seaux", "fût": "fûts", fut: "futs", carton: "cartons", bouteille: "bouteilles", sachet: "sachets", boite: "boites", "boîte": "boîtes" };
+const n = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 3 });
+const unitLabel = (unit: string, q: number) => (Math.abs(q) > 1 ? (PLURALS[unit.toLowerCase()] ?? unit) : unit);
 
-/** E-mail envoyé au propriétaire : liste des articles passés sous leur seuil. */
-export function lowStockEmail(params: { appName: string; tradeName: string; alerts: NewStockAlert[]; link: string; logoUrl?: string | null }) {
-  const { appName, tradeName, alerts, link, logoUrl } = params;
-  const n = alerts.length;
-  const subject = n === 1 ? `Stock bas : ${alerts[0].productName} (${alerts[0].centerName})` : `Stock bas : ${n} articles à recommander`;
-  const rows = alerts
-    .map(
-      (a) => `<tr>
-        <td style="padding:12px 14px;border-bottom:1px solid #eef1f6">
-          <div style="font-weight:600;color:#0b1f4b">${esc(a.productName)}</div>
-          <div style="font-size:12px;color:#6b7280">${a.reference ? `Réf. ${esc(a.reference)} · ` : ""}${esc(a.centerName)}</div>
-        </td>
-        <td style="padding:12px 14px;border-bottom:1px solid #eef1f6;text-align:right;white-space:nowrap">
-          <span style="display:inline-block;padding:3px 10px;border-radius:999px;font-weight:700;font-size:13px;${Number(a.quantity) <= 0 ? "background:#fee2e2;color:#b91c1c" : "background:#fef3c7;color:#92400e"}">${qty(a.quantity)} ${esc(a.unit)}</span>
-        </td>
-        <td style="padding:12px 14px;border-bottom:1px solid #eef1f6;text-align:right;color:#6b7280;white-space:nowrap">${qty(a.threshold)} ${esc(a.unit)}</td>
-      </tr>`
-    )
-    .join("");
-  const html = `<!doctype html><html lang="fr"><body style="margin:0;background:#f3f5fa;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f5fa;padding:28px 12px"><tr><td align="center">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(11,31,75,.08)">
-    <tr><td style="background:#0b1f4b;padding:22px 26px">
-      <table role="presentation" width="100%"><tr>
-        ${logoUrl ? `<td width="56"><img src="${esc(logoUrl)}" width="48" height="48" alt="" style="border-radius:10px;background:#fff;display:block"></td>` : ""}
-        <td style="color:#ffffff"><div style="font-size:18px;font-weight:700">${esc(appName)}</div><div style="font-size:13px;color:#f5c451">${esc(tradeName)}</div></td>
-      </tr></table>
-    </td></tr>
-    <tr><td style="padding:26px 26px 6px">
-      <div style="font-size:12px;font-weight:700;letter-spacing:.08em;color:#e3a82b;text-transform:uppercase">Alerte de stock</div>
-      <h1 style="margin:6px 0 8px;font-size:22px;color:#0b1f4b">${n === 1 ? "Un article arrive en rupture" : `${n} articles arrivent en rupture`}</h1>
-      <p style="margin:0;color:#374151;font-size:14px;line-height:1.55">${n === 1 ? "Cet article est descendu" : "Ces articles sont descendus"} à leur seuil d'alerte. Pensez à recommander avant la rupture.</p>
-    </td></tr>
-    <tr><td style="padding:14px 26px 4px">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #eef1f6;border-radius:10px;border-collapse:separate;font-size:14px">
-        <tr style="background:#f8fafc"><th align="left" style="padding:10px 14px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em">Article · boutique</th><th align="right" style="padding:10px 14px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em">Reste</th><th align="right" style="padding:10px 14px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em">Seuil</th></tr>
-        ${rows}
-      </table>
-    </td></tr>
-    <tr><td style="padding:22px 26px 28px" align="left">
-      <a href="${esc(link)}" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:10px;font-size:14px">Voir les alertes de stock</a>
-      <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;line-height:1.5">L'alerte disparaît d'elle-même quand la marchandise est réceptionnée. Message automatique de ${esc(appName)}.</p>
-    </td></tr>
-  </table></td></tr></table></body></html>`;
-  const text = [
-    `${appName} — ${tradeName}`,
-    "",
-    n === 1 ? "Un article arrive en rupture :" : `${n} articles arrivent en rupture :`,
-    ...alerts.map((a) => `- ${a.productName} (${a.centerName}) : reste ${qty(a.quantity)} ${a.unit}, seuil ${qty(a.threshold)} ${a.unit}`),
-    "",
-    `Voir les alertes : ${link}`,
-  ].join("\n");
-  return { subject, html, text };
+/** Texte de la notification. */
+export function stockNotification(e: StockEvent, multiCenter = false): PushPayload {
+  const where = multiCenter ? ` (${e.centerName})` : "";
+  if (e.kind === "half") {
+    return {
+      title: "Moitié du stock vendue",
+      body: `${e.productName}${where} : il reste ${n(e.quantity)} ${unitLabel(e.unit, e.quantity)} sur ${n(e.refQty)}.`,
+      tag: `half-${e.centerId}-${e.productId}`,
+      url: "/stock",
+      requireAck: false,
+    };
+  }
+  if (e.quantity <= 0) {
+    return {
+      title: "Rupture de stock",
+      body: `${e.productName}${where} est épuisé. Pensez à recommander.`,
+      tag: `low-${e.centerId}-${e.productId}`,
+      url: "/stock?alerte=1",
+      requireAck: true,
+    };
+  }
+  return {
+    title: "Stock presque épuisé",
+    body: `Plus que ${n(e.quantity)} ${unitLabel(e.unit, e.quantity)} de ${e.productName}${where}.`,
+    tag: `low-${e.centerId}-${e.productId}`,
+    url: "/stock?alerte=1",
+    requireAck: true,
+  };
 }
 
-/** Prévient le(s) propriétaire(s) par e-mail des nouvelles alertes. */
-export async function emailNewAlerts(companyId: string, alerts: NewStockAlert[]): Promise<void> {
-  if (!alerts.length) return;
-  const ids = alerts.map((a) => a.id);
-  if (!emailConfigured()) {
-    await prisma.stockAlert.updateMany({ where: { id: { in: ids } }, data: { emailError: "Envoi d'e-mails non configuré" } });
-    return;
-  }
-  const [company, owners] = await Promise.all([
-    prisma.company.findUniqueOrThrow({ where: { id: companyId }, select: { tradeName: true, appName: true, logoUrl: true } }),
-    prisma.user.findMany({ where: { companyId, role: "COMPANY_OWNER", isActive: true }, select: { email: true } }),
-  ]);
-  const origin = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const appName = company.appName || company.tradeName;
-  const mail = lowStockEmail({
-    appName,
-    tradeName: company.tradeName,
-    alerts,
-    link: `${origin}/alertes`,
-    logoUrl: company.logoUrl && origin ? `${origin}/api/brand/${companyId}/icon-192.png` : null,
-  });
-  try {
-    await sendEmail({ to: owners.map((o) => o.email), fromName: appName, ...mail });
-    await prisma.stockAlert.updateMany({ where: { id: { in: ids } }, data: { emailedAt: new Date(), emailError: null } });
-  } catch (e) {
-    await prisma.stockAlert.updateMany({ where: { id: { in: ids } }, data: { emailError: String((e as Error).message ?? e).slice(0, 300) } });
+/** Envoie les notifications au(x) gérant(s) de la boutique et au patron. */
+export async function notifyStockEvents(events: StockEvent[]): Promise<void> {
+  if (!events.length) return;
+  const companyId = events[0].companyId;
+  const centers = await prisma.center.count({ where: { companyId } });
+  for (const e of events) {
+    const devices = await managerDevices(companyId, e.centerId);
+    await sendPush(devices, stockNotification(e, centers > 1));
   }
 }
 
@@ -180,14 +144,13 @@ const pending = new Set<Promise<void>>();
 
 /**
  * À appeler après toute opération qui change le stock : la vérification tourne
- * après l'envoi de la réponse (la caisse n'attend pas l'e-mail).
+ * après l'envoi de la réponse (la caisse n'attend pas les notifications).
  */
 export function scheduleStockAlerts(companyId: string | null | undefined): void {
   if (!companyId) return;
   const job = async () => {
     try {
-      const created = await syncStockAlerts(companyId);
-      await emailNewAlerts(companyId, created);
+      await notifyStockEvents(await syncStockWatches(companyId));
     } catch (e) {
       console.error("[stock-alerts]", e);
     }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { LOW_STOCK_THRESHOLD } from "@/lib/app-config";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -158,7 +159,7 @@ export async function POST(req: NextRequest) {
                   baseUnitId: unitId,
                   purchasePrice,
                   sellingPrice: row.sellingPrice,
-                  stockAlertQty: 0,
+                  stockAlertQty: LOW_STOCK_THRESHOLD,
                   trackBatches: profile.productDefaults.trackBatches || profile.productDefaults.requiresExpiry,
                   requiresExpiry: profile.productDefaults.requiresExpiry,
                   requiresPrescription: profile.productDefaults.requiresPrescription,

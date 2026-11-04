@@ -6,10 +6,15 @@ import { writeAuditLog } from "@/lib/audit";
 import { seedCompanyCatalog } from "@/lib/catalog";
 import { getBusinessProfile } from "@/lib/business-profiles";
 import { handleApiError, isUniqueViolation, requestMeta } from "@/lib/auth";
+import { registrationOpen } from "@/lib/app-config";
 
 // POST /api/auth/register — Inscription d'une nouvelle entreprise
 export async function POST(req: NextRequest) {
   try {
+    // Logiciel réservé à GJH : pas de création d'autres entreprises
+    if (!registrationOpen()) {
+      return NextResponse.json({ success: false, error: "Les inscriptions sont fermées. Demandez un accès au responsable." }, { status: 403 });
+    }
     const body = await req.json().catch(() => ({}));
     const parsed = companySchema.safeParse(body);
 

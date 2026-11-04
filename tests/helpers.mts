@@ -15,6 +15,8 @@ if (!DB_URL) {
 process.env.DATABASE_URL = DB_URL;
 process.env.JWT_SECRET ??= "test-secret-test-secret-test-secret-0123";
 process.env.INSTALL_LINK_SECRET ??= "test-install-secret-test-install-secret-01";
+// Les tests créent leurs entreprises par l'inscription (fermée en production pour GJH)
+process.env.NEXT_PUBLIC_REGISTRATION_OPEN ??= "1";
 
 export const { prisma } = await import("@/lib/prisma");
 const loginRoute = await import("@/app/api/auth/login/route");

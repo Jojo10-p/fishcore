@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LOW_STOCK_THRESHOLD } from "@/lib/app-config";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, Money, PageHeader, Select, Spinner, Table, Td } from "@/components/ui";
@@ -296,7 +297,7 @@ function ProductModal({
       barcode: form.barcode,
       purchasePrice: num(form.purchasePrice),
       sellingPrice: num(form.sellingPrice),
-      stockAlertQty: num(form.stockAlertQty),
+      stockAlertQty: LOW_STOCK_THRESHOLD,
       ...(form.taxRate !== "" ? { taxRate: num(form.taxRate) } : {}),
       attributes: Object.fromEntries(attributes.filter((a) => a.key.trim() && a.value.trim()).map((a) => [a.key.trim(), a.value.trim()])),
       packagings: packagings
@@ -387,8 +388,8 @@ function ProductModal({
         <Field label="TVA %" hint={vatEnabled ? "Incluse dans le prix" : "Entreprise non assujettie"}>
           <Input inputMode="decimal" value={form.taxRate} onChange={set("taxRate")} placeholder={vatEnabled ? "défaut" : "0"} />
         </Field>
-        <Field label="Seuil d'alerte">
-          <Input inputMode="decimal" value={form.stockAlertQty} onChange={set("stockAlertQty")} />
+        <Field label="Alerte stock" hint="Fixe pour tous les articles">
+          <Input value={`à ${LOW_STOCK_THRESHOLD} ${baseUnit?.symbol ?? "u"}`} disabled readOnly />
         </Field>
       </div>
 

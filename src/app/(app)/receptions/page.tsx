@@ -113,9 +113,9 @@ export default function ReceptionsPage() {
   return (
     <>
       <PageHeader
-        title="Réceptions de marchandises"
-        description="Le stock n'augmente qu'à la validation de la réception."
-        actions={!creating && <Button onClick={() => setCreating(true)}>Nouvelle réception</Button>}
+        title="Ajouter du stock"
+        description="Marchandise reçue du fournisseur : le stock augmente dès que vous validez."
+        actions={!creating && <Button onClick={() => setCreating(true)}>+ Ajouter du stock</Button>}
       />
       {error && <Alert>{error}</Alert>}
       {creating && centerId && (
@@ -262,7 +262,7 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
   return (
     <Card className="p-4 sm:p-6 space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-semibold text-gray-900">Nouvelle réception</h2>
+        <h2 className="font-semibold text-gray-900">Nouvel arrivage</h2>
         <span className="text-xs text-gray-500">
           {autosave.status === "saving" && "Enregistrement…"}
           {autosave.status === "saved" && autosave.savedAt && `Brouillon enregistré sur cet appareil à ${autosave.savedAt.toLocaleTimeString("fr-FR")}`}

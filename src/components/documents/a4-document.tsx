@@ -110,10 +110,8 @@ export function DocumentHeader({
     <header className="flex items-start justify-between gap-6 border-b-2 border-gray-900 pb-4">
       <div className="min-w-0">
         <div className="flex items-center gap-3">
-          {company.logoUrl && (
-            // eslint-disable-next-line @next/next/no-img-element -- logo externe (Cloudinary), imprimé tel quel
-            <img src={company.logoUrl} alt="" className="h-14 w-auto object-contain" />
-          )}
+          {/* eslint-disable-next-line @next/next/no-img-element -- logo GJH statique */}
+          <img src="/icons/gjh-logo.png" alt="" className="h-16 w-auto object-contain" />
           <div>
             <p className="text-xl font-bold uppercase tracking-wide">{company.tradeName}</p>
             {company.legalName && company.legalName !== company.tradeName && <p className="text-[11px] text-gray-600">{company.legalName}</p>}

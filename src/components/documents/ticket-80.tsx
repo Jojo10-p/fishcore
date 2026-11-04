@@ -63,6 +63,8 @@ export function Ticket80({ t }: { t: TicketData }) {
   return (
     <div className="w-[72mm] bg-white px-[2mm] py-3 font-sans text-[11.5px] leading-tight text-black">
       <header className="text-center">
+        {/* eslint-disable-next-line @next/next/no-img-element -- logo GJH (mis en cache pour l'impression hors ligne) */}
+        <img src="/icons/gjh-ticket.png" alt="" className="mx-auto mb-1 h-[22mm] w-auto object-contain" />
         <p className="text-[17px] font-black uppercase tracking-wide">{c.tradeName}</p>
         {c.legalName && c.legalName !== c.tradeName && <p>{c.legalName}</p>}
         {place && <p>{place}</p>}

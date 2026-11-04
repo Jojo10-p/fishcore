@@ -12,7 +12,6 @@ import { getPendingSyncCount } from "@/lib/offline/sync";
 import { APP_NAME } from "@/lib/app-config";
 import { InstallAppButton } from "@/components/app/install-app";
 import { ChangePasswordButton } from "@/components/app/change-password";
-import { StockAlertBell, useStockAlertCount } from "@/components/app/stock-alerts";
 
 interface NavItem {
   href: string;
@@ -27,42 +26,38 @@ interface NavItem {
 // Chaque rôle ne voit que ce qui sert à son travail (cahier §2.1, §20)
 // Menu regroupé par domaine, comme dans les logiciels de gestion commerciale
 // (Gestion des ventes, des achats, des articles et stocks…)
+// Édition GJH : menu réduit à l'essentiel (vendre, ajouter du stock, suivre).
+// Les autres écrans existent toujours mais ne sont plus dans le menu.
 const NAV: Array<{ group: string | null; items: NavItem[] }> = [
   { group: null, items: [{ href: "/dashboard", label: "Tableau de bord", icon: "📊", any: ["report:view"] }] },
   {
     group: "Ventes",
     items: [
-      { href: "/caisse", label: "Caisse", icon: "🛒", any: ["sale:create"] },
-      { href: "/ventes", label: "Factures & ventes", icon: "🧾", any: ["sale:view"] },
-      { href: "/devis", label: "Devis", icon: "📝", any: ["quote:view"] },
-      { href: "/retraits", label: "Retraits magasin", icon: "📤", any: ["sale:deliver"], pickupOnly: true },
+      { href: "/caisse", label: "Nouvelle vente", icon: "🛒", any: ["sale:create"] },
+      { href: "/ventes", label: "Ventes & tickets", icon: "🧾", any: ["sale:view"] },
       { href: "/annulations", label: "Annulations", icon: "↩️", any: ["sale:cancel_request", "sale:cancel_approve"] },
-      { href: "/clients", label: "Clients", icon: "👤", any: ["customer:view"] },
     ],
   },
   {
     group: "Achats",
     items: [
-      { href: "/receptions", label: "Réceptions fournisseurs", icon: "🚚", any: ["stock:receive"] },
-      { href: "/fournisseurs", label: "Fournisseurs & dettes", icon: "🏭", any: ["purchase:view"] },
+      { href: "/receptions", label: "Ajouter du stock", icon: "🚚", any: ["stock:receive"] },
+      { href: "/fournisseurs", label: "Fournisseurs", icon: "🏭", any: ["purchase:view"] },
     ],
   },
   {
-    group: "Articles & stocks",
+    group: "Stock",
     items: [
-      { href: "/produits", label: "Articles", icon: "🏷️", any: ["product:create", "product:edit"] },
       { href: "/stock", label: "Stock", icon: "📦", any: ["stock:view"] },
-      { href: "/alertes", label: "Alertes de stock", icon: "🔔", any: ["stock:view"] },
-      { href: "/inventaires", label: "Inventaires", icon: "📋", any: ["inventory:start", "inventory:validate"] },
-      { href: "/transferts", label: "Transferts", icon: "🔁", any: ["stock:transfer"] },
+      { href: "/produits", label: "Articles & prix", icon: "🏷️", any: ["product:create", "product:edit"] },
     ],
   },
   {
-    group: "Trésorerie",
+    group: "Argent",
     items: [
-      { href: "/caisses", label: "Caisses & clôtures", icon: "💰", any: ["cash:view_all_sessions"] },
+      { href: "/caisses", label: "Clôtures de caisse", icon: "💰", any: ["cash:view_all_sessions"] },
       { href: "/depenses", label: "Dépenses", icon: "💸", any: ["expense:view"] },
-      { href: "/finances", label: "Finances", icon: "📈", any: ["report:view"] },
+      { href: "/finances", label: "Bénéfices", icon: "📈", any: ["report:view"] },
     ],
   },
   {
@@ -70,8 +65,6 @@ const NAV: Array<{ group: string | null; items: NavItem[] }> = [
     items: [
       { href: "/utilisateurs", label: "Utilisateurs", icon: "👥", any: ["user:view"] },
       { href: "/parametres", label: "Paramètres", icon: "⚙️", any: ["company:edit"] },
-      { href: "/journal", label: "Journal d'audit", icon: "🗂️", any: ["audit:view"] },
-      { href: "/synchronisation", label: "Synchronisation", icon: "🔄", any: [] },
     ],
   },
 ];
@@ -83,7 +76,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const alertCount = useStockAlertCount();
 
   const pickup = !!session?.company?.requiresPickup;
   const visible = (n: NavItem) => (!n.pickupOnly || pickup) && (n.any.length === 0 || n.any.some((p) => can(p)));
@@ -117,8 +109,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   // Marque blanche : nom et logo de l'entreprise
-  const appName = session.company?.appName || session.company?.tradeName || APP_NAME;
-  const brandIcon = session.company?.logoUrl ? `/api/brand/${session.company.id}/icon-192.png?v=${new URLSearchParams(session.company.logoUrl.split("?")[1] ?? "").get("v") ?? ""}` : "/icons/icon.svg";
+  // Édition GJH : nom et logo fixes
+  const appName = APP_NAME;
+  const brandIcon = "/icons/icon-192.png";
 
   const nav = (
     <nav className="flex flex-col gap-3">
@@ -141,9 +134,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 >
                   <span aria-hidden>{item.icon}</span>
                   {item.label}
-                  {item.href === "/alertes" && alertCount > 0 && (
-                    <span className="ml-auto rounded-full bg-red-600 px-1.5 text-[11px] font-bold leading-5 text-white">{alertCount}</span>
-                  )}
                 </Link>
               );
             })}
@@ -185,14 +175,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-dvh bg-gray-50 lg:flex">
       {/* Barre latérale (ordinateur) */}
-      <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-white border-r border-gray-200 p-4">
+      <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:fixed lg:inset-y-0 bg-white border-r border-gray-200 p-4 overflow-y-auto">
         <Link href="/dashboard" className="flex items-center gap-2 px-1 mb-4 min-w-0">
           {/* eslint-disable-next-line @next/next/no-img-element -- logo de l'entreprise servi par l'API */}
           <img src={brandIcon} alt="" className="h-8 w-8 rounded object-contain" />
           <span className="font-bold text-gray-900 truncate">{appName}</span>
         </Link>
         <div className="mb-4">{centerPicker}</div>
-        <div className="flex-1 overflow-y-auto">{nav}</div>
+        <div className="flex-1">{nav}</div>
         {userBox}
       </aside>
 
@@ -203,7 +193,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </button>
         <span className="font-bold text-gray-900 truncate">{appName}</span>
         <div className="flex items-center gap-2">
-          <StockAlertBell className="h-8 w-8 text-base" />
           <ConnectionBadge compact />
         </div>
       </header>
@@ -220,7 +209,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <main className="flex-1 lg:pl-64 min-w-0">
         <div className="hidden lg:flex items-center justify-end gap-3 px-8 pt-4">
-          <StockAlertBell />
           <ConnectionBadge />
         </div>
         {fromCache && (

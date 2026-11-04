@@ -124,7 +124,7 @@ function InstallClientPage() {
                 <img src={config.logoUrl} alt={config.companyName} className="w-16 h-16 rounded-xl mx-auto mb-3 object-contain shadow" />
               ) : (
                 <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-2xl mb-3 shadow-lg">
-                  <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
+                  <img src="/icons/icon-192.png" alt="" className="h-8 w-8" />
                 </div>
               )}
               <h1 className="text-xl font-bold text-gray-900">{config.companyName}</h1>

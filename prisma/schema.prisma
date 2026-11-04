@@ -282,6 +282,8 @@ model Company {
   notifications Notification[]
 
   stockAlerts StockAlert[]
+  pushSubscriptions PushSubscription[]
+  stockWatches StockWatch[]
 
   @@map("companies")
 }
@@ -322,6 +324,7 @@ model Center {
   installLinks      AgencyInstallLink[]
 
   stockAlerts StockAlert[]
+  stockWatches StockWatch[]
 
   @@unique([companyId, code])
   @@map("centers")
@@ -374,6 +377,7 @@ model User {
   lockedUntil   DateTime?
 
   // Relations
+  pushSubscriptions     PushSubscription[]
   centers               UserCenter[] // Centres autorisés
   cashSessions          CashSession[]
   sales                 Sale[]
@@ -528,6 +532,7 @@ model Product {
   transferLines   StockTransferLine[]
 
   stockAlerts StockAlert[]
+  stockWatches StockWatch[]
 
   @@unique([companyId, barcode])
   @@index([companyId, name])
@@ -1453,4 +1458,43 @@ model AuditLog {
 
   @@index([companyId, serverTimestamp])
   @@map("audit_logs")
+}
+
+// Téléphones (ou ordinateurs) abonnés aux notifications : gérant et patron
+model PushSubscription {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+
+  @@index([companyId])
+  @@map("push_subscriptions")
+}
+
+// Suivi du stock de chaque article (par boutique) pour les notifications :
+// « moitié vendue » depuis le dernier ajout, puis « presque épuisé » à chaque vente sous le seuil.
+model StockWatch {
+  id             String    @id @default(cuid())
+  updatedAt      DateTime  @updatedAt
+  companyId      String
+  company        Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  centerId       String
+  center         Center    @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  lastQty        Decimal   @db.Decimal(12, 3) // stock vu à la dernière vérification
+  refQty         Decimal   @db.Decimal(12, 3) // stock juste après le dernier ajout
+  halfNotifiedAt DateTime? // notification « moitié vendue » déjà envoyée
+  lowNotifiedQty Decimal?  @db.Decimal(12, 3) // dernière quantité signalée sous le seuil
+
+  @@unique([centerId, productId])
+  @@index([companyId])
+  @@map("stock_watches")
 }

@@ -4,10 +4,6 @@ import { useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Button, Card, Field, Input, PageHeader, Spinner, Textarea } from "@/components/ui";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
-import { BUSINESS_PROFILES, BUSINESS_TYPE_ORDER } from "@/lib/business-profiles";
-import { cn } from "@/lib/utils";
-import { BrandCard } from "@/components/app/brand-settings";
-import { DeleteAccountCard } from "@/components/app/delete-account";
 
 interface CompanySettings {
   tradeName: string;
@@ -102,46 +98,6 @@ export default function SettingsPage() {
         {error && <Alert>{error}</Alert>}
         {saved && <Alert tone="green">Paramètres enregistrés.</Alert>}
 
-        <BrandCard editable={editable} />
-
-        <Card className="p-4 sm:p-6 space-y-4">
-          <h2 className="font-semibold text-gray-900">Métier</h2>
-          <p className="text-sm text-gray-500">
-            Le métier pré-remplit les unités, catégories et options des nouveaux articles. En changer ajoute les unités et catégories du
-            nouveau métier sans rien supprimer ; les articles existants ne changent pas.
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {BUSINESS_TYPE_ORDER.map((type) => {
-              const p = BUSINESS_PROFILES[type];
-              const selected = data.businessType === type;
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  disabled={!editable}
-                  onClick={() => {
-                    setSaved(false);
-                    setData({ ...data, businessType: type });
-                  }}
-                  className={cn(
-                    "flex items-start gap-2 rounded-xl border p-3 text-left text-sm",
-                    selected ? "border-blue-600 bg-blue-50" : "border-gray-200 hover:border-gray-300",
-                    !editable && "cursor-not-allowed"
-                  )}
-                >
-                  <span className="text-xl leading-none" aria-hidden>
-                    {p.icon}
-                  </span>
-                  <span>
-                    <span className="block font-medium text-gray-900">{p.label}</span>
-                    <span className="block text-xs text-gray-500">{p.description}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </Card>
-
         <Card className="p-4 sm:p-6 space-y-4">
           <h2 className="font-semibold text-gray-900">Fiscalité</h2>
           <label className="flex items-start gap-2 text-sm">
@@ -171,26 +127,7 @@ export default function SettingsPage() {
         </Card>
 
         <Card className="p-4 sm:p-6 space-y-4">
-          <h2 className="font-semibold text-gray-900">Factures, devis et retrait de la marchandise</h2>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={data.requiresPickup}
-              disabled={!editable}
-              onChange={(e) => {
-                setSaved(false);
-                setData({ ...data, requiresPickup: e.target.checked });
-              }}
-            />
-            <span>
-              Le client se fait servir au magasin sur présentation de sa facture
-              <span className="block text-xs text-gray-500">
-                Dépôt de matériaux, ciment, fer, huile en gros… Le client paie à la caisse, puis le magasinier scanne la facture et enregistre ce
-                qu&apos;il remet (tout ou partie). Une facture ne peut pas servir deux fois. Menu « Retraits magasin ».
-              </span>
-            </span>
-          </label>
+          <h2 className="font-semibold text-gray-900">Tickets et factures</h2>
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium text-gray-700">Facture imprimée à la caisse</legend>
             {(
@@ -293,7 +230,6 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <DeleteAccountCard />
       </div>
     </>
   );

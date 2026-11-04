@@ -567,11 +567,7 @@ export default function POSInterface({
             {quote ? `Devis ${quote.number}` : "Panier"}
             {!quote && cartCount > 0 && <span className="ml-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">{cartCount}</span>}
           </h2>
-          {isOnline && !quote && cart.length === 0 && quoteInput === null && (
-            <button className="ml-auto mr-2 text-xs text-blue-600 hover:underline" onClick={() => setQuoteInput("")}>
-              Encaisser un devis
-            </button>
-          )}
+          {/* Édition GJH : pas de devis à la caisse */}
           <button className="md:hidden text-gray-500 text-xl leading-none" onClick={() => setShowCartMobile(false)} aria-label="Fermer le panier">
             ×
           </button>

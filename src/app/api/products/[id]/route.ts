@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { LOW_STOCK_THRESHOLD } from "@/lib/app-config";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -74,6 +75,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           ...(data.barcode !== undefined ? { barcode: data.barcode || null } : {}),
           ...(data.internalCode !== undefined ? { internalCode: data.internalCode || null } : {}),
           ...(attributes !== undefined ? { attributes } : {}),
+          stockAlertQty: LOW_STOCK_THRESHOLD, // seuil fixe GJH
         },
       });
 

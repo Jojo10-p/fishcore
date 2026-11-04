@@ -1,4 +1,4 @@
-/* fishcore — Service worker (cahier §11, §19)
+/* GJH Gestion — Service worker (cahier §11, §19)
  *
  * Objectif : après une coupure d'Internet ou un redémarrage sans réseau,
  * l'application (et surtout la caisse) doit encore s'ouvrir.
@@ -18,6 +18,7 @@ const VERSION = `fishcore-${new URL(self.location.href).searchParams.get("v") ||
 const PAGES_CACHE = `${VERSION}-pages`;
 const STATIC_CACHE = `${VERSION}-static`;
 const PRECACHE_PAGES = ["/caisse", "/offline.html"];
+const PRECACHE_FILES = ["/icons/gjh-ticket.png", "/icons/icon-192.png", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(precache().then(() => self.skipWaiting()));
@@ -26,6 +27,7 @@ self.addEventListener("install", (event) => {
 async function precache() {
   const pages = await caches.open(PAGES_CACHE);
   const statics = await caches.open(STATIC_CACHE);
+  await Promise.allSettled(PRECACHE_FILES.map((f) => statics.add(f)));
   await Promise.allSettled(
     PRECACHE_PAGES.map(async (url) => {
       const response = await fetch(url, { credentials: "include" });
@@ -92,3 +94,57 @@ async function networkFirstPage(request) {
     return cached || new Response("Hors connexion", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   }
 }
+
+// ── Notifications (alertes de stock pour le gérant et le patron) ──────────
+// « Presque épuisé » : vibre, reste affichée jusqu'à « Bien reçu ».
+// « Moitié vendue »  : vibre brièvement et disparaît d'elle-même.
+self.addEventListener("push", (event) => {
+  let d = {};
+  try {
+    d = event.data ? event.data.json() : {};
+  } catch {
+    d = { title: "GJH Gestion", body: event.data ? event.data.text() : "" };
+  }
+  const ack = !!d.requireAck;
+  const options = {
+    body: d.body || "",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/badge-96.png",
+    tag: d.tag || undefined,
+    renotify: !!d.tag,
+    vibrate: ack ? [500, 200, 500, 200, 500] : [250, 120, 250],
+    requireInteraction: ack,
+    actions: ack ? [{ action: "ack", title: "Bien reçu" }] : [],
+    data: { url: d.url || "/dashboard" },
+    timestamp: Date.now(),
+  };
+  const show = self.registration.showNotification(d.title || "GJH Gestion", options);
+  if (ack || !d.tag) {
+    event.waitUntil(show);
+    return;
+  }
+  // Simple information : retirée au bout de quelques secondes
+  event.waitUntil(
+    show
+      .then(() => new Promise((r) => setTimeout(r, 15000)))
+      .then(() => self.registration.getNotifications({ tag: d.tag }))
+      .then((list) => list.forEach((n) => n.close()))
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  if (event.action === "ack") return; // « Bien reçu » : la notification part, c'est tout
+  const url = (event.notification.data && event.notification.data.url) || "/dashboard";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ("focus" in c) {
+          if ("navigate" in c) c.navigate(url).catch(() => undefined);
+          return c.focus();
+        }
+      }
+      return self.clients.openWindow(url);
+    })
+  );
+});

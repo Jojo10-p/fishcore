@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { LOW_STOCK_THRESHOLD } from "@/lib/app-config";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { productSchema } from "@/lib/validations";
@@ -114,7 +115,7 @@ export async function POST(req: NextRequest) {
           attributes: attributes ?? undefined,
           purchasePrice: data.purchasePrice,
           sellingPrice: data.sellingPrice,
-          stockAlertQty: data.stockAlertQty,
+          stockAlertQty: LOW_STOCK_THRESHOLD, // seuil fixe GJH
           // Une date de péremption n'a de sens que si le stock est suivi par lot
           trackBatches: trackBatches || requiresExpiry,
           requiresExpiry,
