@@ -11,6 +11,7 @@ export interface SessionData {
   company: {
     id: string;
     tradeName: string;
+    appName?: string | null;
     logoUrl?: string | null;
     currency: string;
     timezone: string;
@@ -93,7 +94,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   // L'application porte le nom et le logo de l'entreprise connectée
   const company = session?.company;
   useEffect(() => {
-    if (company) applyBrand({ companyId: company.id, name: company.tradeName, logoUrl: company.logoUrl ?? null });
+    if (company) applyBrand({ companyId: company.id, name: company.appName || company.tradeName, logoUrl: company.logoUrl ?? null });
   }, [company]);
 
   const setCenterId = useCallback((id: string) => {

@@ -403,9 +403,11 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
         <Field label="Transport">
           <Input inputMode="numeric" value={draft.transportCost} onChange={setField("transportCost")} />
         </Field>
-        <Field label="Glace">
-          <Input inputMode="numeric" value={draft.iceCost} onChange={setField("iceCost")} />
-        </Field>
+        {session?.company?.businessType === "FISHMONGER" && (
+          <Field label="Glace">
+            <Input inputMode="numeric" value={draft.iceCost} onChange={setField("iceCost")} />
+          </Field>
+        )}
         <Field label="Manutention">
           <Input inputMode="numeric" value={draft.handlingCost} onChange={setField("handlingCost")} />
         </Field>

@@ -23,6 +23,7 @@ const transfersRoute = await import("@/app/api/transfers/route");
 const logoRoute = await import("@/app/api/company/logo/route");
 const brandRoute = await import("@/app/api/brand/[companyId]/[file]/route");
 const deleteRoute = await import("@/app/api/company/delete/route");
+const companyRoute = await import("@/app/api/company/route");
 const meRoute = await import("@/app/api/auth/me/route");
 const { verifyAuditChain } = await import("@/lib/audit");
 
@@ -145,6 +146,16 @@ test("marque blanche : l'application porte le nom et le logo de l'entreprise", a
   assert.equal(bad.status, 400);
   const cashier = await call(logoRoute.POST, { path: "/api/company/logo", cookie: ctx.roger.cashier, body: { logo512: await png(512), logo192: await png(192), maskable512: await png(512) } });
   assert.equal(cashier.status, 403);
+
+  // Nom de l'application distinct du nom commercial (icône et fenêtre), puis retour au nom commercial
+  const named = await call(companyRoute.PATCH, { path: "/api/company", method: "PATCH", cookie: ctx.roger.owner, body: { appName: "RD Gestion" } });
+  assert.equal(named.status, 200, JSON.stringify(named.json));
+  const m2 = await call(brandRoute.GET, { path: `/api/brand/${ctx.roger.companyId}/manifest.webmanifest`, params: { companyId: ctx.roger.companyId, file: "manifest.webmanifest" } });
+  assert.equal(m2.json.name, "RD Gestion");
+  assert.match(m2.json.description, /Roger Doks/);
+  await call(companyRoute.PATCH, { path: "/api/company", method: "PATCH", cookie: ctx.roger.owner, body: { appName: "" } });
+  const m3 = await call(brandRoute.GET, { path: `/api/brand/${ctx.roger.companyId}/manifest.webmanifest`, params: { companyId: ctx.roger.companyId, file: "manifest.webmanifest" } });
+  assert.equal(m3.json.name, "Roger Doks");
 });
 
 test("suppression : refusée sans le bon mot de passe, le bon nom ou le bon rôle", async () => {

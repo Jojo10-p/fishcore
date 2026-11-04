@@ -22,16 +22,17 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   if (file === "manifest.webmanifest") {
     const company = await prisma.company.findUnique({
       where: { id: companyId },
-      select: { tradeName: true, logoUrl: true, updatedAt: true },
+      select: { tradeName: true, appName: true, logoUrl: true, updatedAt: true },
     });
     if (!company) return new NextResponse("Not found", { status: 404 });
     const v = company.logoUrl ? new URL(company.logoUrl, req.nextUrl.origin).searchParams.get("v") ?? "1" : "0";
+    const appName = company.appName || company.tradeName;
     const icon = (name: string) => (company.logoUrl ? `/api/brand/${companyId}/${name}?v=${v}` : DEFAULT_ICONS[name]);
     const manifest = {
       id: `/?app=${companyId}`,
-      name: company.tradeName,
-      short_name: company.tradeName.length > 18 ? company.tradeName.slice(0, 18).trim() : company.tradeName,
-      description: `${company.tradeName} — ${APP_TAGLINE} (${APP_NAME})`,
+      name: appName,
+      short_name: appName.length > 18 ? appName.slice(0, 18).trim() : appName,
+      description: `${appName} — ${company.tradeName} — ${APP_TAGLINE} (${APP_NAME})`,
       start_url: "/",
       scope: "/",
       display: "standalone",

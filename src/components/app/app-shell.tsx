@@ -114,7 +114,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   // Marque blanche : nom et logo de l'entreprise
-  const appName = session.company?.tradeName ?? APP_NAME;
+  const appName = session.company?.appName || session.company?.tradeName || APP_NAME;
   const brandIcon = session.company?.logoUrl ? `/api/brand/${session.company.id}/icon-192.png?v=${new URLSearchParams(session.company.logoUrl.split("?")[1] ?? "").get("v") ?? ""}` : "/icons/icon.svg";
 
   const nav = (

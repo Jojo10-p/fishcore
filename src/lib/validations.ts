@@ -45,7 +45,7 @@ export const companySchema = z.object({
   timezone: z.string().default("Africa/Porto-Novo"),
   invoicePrefix: z.string().default("FACT"),
   businessType: z
-    .enum(["GENERAL", "FISHMONGER", "HARDWARE", "BUILDING_MATERIALS", "OIL_DISTRIBUTION", "SUPERMARKET", "PHARMACY", "WHOLESALE"])
+    .enum(["GENERAL", "FISHMONGER", "HARDWARE", "BUILDING_MATERIALS", "OIL_DISTRIBUTION", "LUBRICANTS", "SUPERMARKET", "PHARMACY", "WHOLESALE"])
     .default("GENERAL"),
   password: z
     .string()

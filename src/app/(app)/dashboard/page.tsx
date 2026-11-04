@@ -93,7 +93,7 @@ export default function DashboardPage() {
         }
       />
 
-      {session?.company && <InstallInvite appName={session.company.tradeName} logoUrl={`/api/brand/${session.company.id}/icon-192.png`} />}
+      {session?.company && <InstallInvite appName={session.company.appName || session.company.tradeName} logoUrl={`/api/brand/${session.company.id}/icon-192.png`} />}
       {error && <Alert>{error}</Alert>}
       {!data && !error && <Spinner />}
 

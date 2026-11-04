@@ -163,7 +163,7 @@ export default function FinancesPage() {
                 <Row label="= Résultat estimé" value={r.netResult} currency={currency} bold />
               </dl>
               <p className="text-[11px] text-gray-500 mt-3">
-                Coût de revient = prix d&apos;achat + frais d&apos;approche (transport, glace, manutention…), au coût moyen pondéré ou par lot.
+                Coût de revient = prix d&apos;achat + frais d&apos;approche (transport, manutention…), au coût moyen pondéré ou par lot.
               </p>
             </Card>
           </div>

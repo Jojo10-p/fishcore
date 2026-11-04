@@ -57,7 +57,7 @@ function LoginForm() {
 
       // L'application prend le nom et le logo de l'entreprise
       if (result.data?.company?.id) {
-        applyBrand({ companyId: result.data.company.id, name: result.data.company.tradeName, logoUrl: result.data.company.logoUrl ?? null });
+        applyBrand({ companyId: result.data.company.id, name: result.data.company.appName || result.data.company.tradeName, logoUrl: result.data.company.logoUrl ?? null });
       }
 
       // Administrateur de la plateforme : son propre espace

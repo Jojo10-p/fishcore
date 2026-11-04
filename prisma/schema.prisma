@@ -50,6 +50,7 @@ enum BusinessType {
   HARDWARE // Quincaillerie
   BUILDING_MATERIALS // Matériaux de construction (maçonnerie)
   OIL_DISTRIBUTION // Vente d'huile / produits liquides
+  LUBRICANTS // Huiles moteur & lubrifiants (moto, voiture, poids lourds)
   SUPERMARKET // Supermarché / alimentation générale
   PHARMACY // Pharmacie
   WHOLESALE // Grossiste / dépôt
@@ -267,6 +268,7 @@ model Company {
   suspendedAt     DateTime?
   suspendedReason String?
   platformNotes   String? // Notes internes du créateur (jamais montrées au client)
+  appName         String? // Nom de l'application installée (icône, fenêtre) ; vide = nom commercial
 
   // Relations
   centers       Center[]

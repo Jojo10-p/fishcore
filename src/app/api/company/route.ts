@@ -16,6 +16,7 @@ import { seedCompanyCatalog } from "@/lib/catalog";
 const companySelect = {
   id: true,
   tradeName: true,
+  appName: true,
   legalName: true,
   logoUrl: true,
   ownerName: true,
@@ -45,6 +46,7 @@ const companySelect = {
 const settingsSchema = z
   .object({
     tradeName: z.string().trim().min(2).optional(),
+    appName: z.string().trim().max(30, "30 caractères au plus").nullable().optional().transform((v) => (v === undefined ? undefined : v || null)),
     legalName: z.string().trim().optional(),
     phone: z.string().trim().min(8).optional(),
     address: z.string().trim().optional(),
@@ -54,7 +56,7 @@ const settingsSchema = z
     taxId: z.string().trim().optional(),
     tradeRegNumber: z.string().trim().optional(),
     businessType: z
-      .enum(["GENERAL", "FISHMONGER", "HARDWARE", "BUILDING_MATERIALS", "OIL_DISTRIBUTION", "SUPERMARKET", "PHARMACY", "WHOLESALE"])
+      .enum(["GENERAL", "FISHMONGER", "HARDWARE", "BUILDING_MATERIALS", "OIL_DISTRIBUTION", "LUBRICANTS", "SUPERMARKET", "PHARMACY", "WHOLESALE"])
       .optional(),
     vatEnabled: z.boolean().optional(),
     defaultTaxRate: z.coerce.number().min(0).max(100).optional(),

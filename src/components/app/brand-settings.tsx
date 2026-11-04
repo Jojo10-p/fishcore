@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { InstallAppButton } from "@/components/app/install-app";
-import { Alert, Button, Card } from "@/components/ui";
+import { Alert, Button, Card, Input } from "@/components/ui";
 import { apiSend, errorMessage } from "@/lib/client/api";
 import { prepareLogo } from "@/lib/client/brand";
 
@@ -16,8 +16,27 @@ export function BrandCard({ editable }: { editable: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [name, setName] = useState<string | null>(null);
 
   if (!company) return null;
+  const appName = company.appName || company.tradeName;
+  const nameValue = name ?? company.appName ?? "";
+
+  const saveName = async () => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      await apiSend("/api/company", { appName: nameValue.trim() || null }, "PATCH");
+      await refresh();
+      setName(null);
+      setDone("Nom de l'application enregistré.");
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const current = company.logoUrl ? `/api/brand/${company.id}/logo.png?v=${new URLSearchParams(company.logoUrl.split("?")[1] ?? "").get("v") ?? ""}` : null;
 
   const pick = async (file: File | undefined) => {
@@ -68,12 +87,28 @@ export function BrandCard({ editable }: { editable: boolean }) {
       <div>
         <h2 className="font-semibold text-gray-900">Votre application</h2>
         <p className="text-sm text-gray-500">
-          L&apos;application porte le nom <strong>{company.tradeName}</strong>. Votre logo devient son icône (bureau, menu Démarrer, téléphone) et
+          L&apos;application porte le nom <strong>{appName}</strong>. Votre logo devient son icône (bureau, menu Démarrer, téléphone) et
           l&apos;en-tête de vos factures, devis et bons.
         </p>
       </div>
       {error && <Alert>{error}</Alert>}
       {done && <Alert tone="green">{done}</Alert>}
+      {editable && (
+        <div className="max-w-md space-y-1">
+          <label htmlFor="app-name" className="text-sm font-medium text-gray-700">
+            Nom de l&apos;application
+          </label>
+          <div className="flex gap-2">
+            <Input id="app-name" value={nameValue} maxLength={30} placeholder={company.tradeName} onChange={(e) => setName(e.target.value)} />
+            <Button variant="secondary" onClick={saveName} disabled={busy || name === null}>
+              Enregistrer
+            </Button>
+          </div>
+          <p className="text-xs text-gray-500">
+            Nom de l&apos;icône et de la fenêtre (ex. « GJH Gestion »). Vos tickets et factures gardent le nom commercial : {company.tradeName}.
+          </p>
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row items-start gap-5">
         <div className="flex items-end gap-4">
           <div className="h-28 w-28 rounded-2xl border border-gray-200 bg-white flex items-center justify-center overflow-hidden">
@@ -117,7 +152,7 @@ export function BrandCard({ editable }: { editable: boolean }) {
             <p className="text-gray-500">Seul le propriétaire peut changer le logo.</p>
           )}
           <div className="pt-2">
-            <InstallAppButton appName={company.tradeName} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100" />
+            <InstallAppButton appName={appName} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100" />
           </div>
           <p className="text-xs text-gray-500">
             Après un changement de logo, une application déjà installée met à jour son icône d&apos;elle-même (quelques heures à un jour selon

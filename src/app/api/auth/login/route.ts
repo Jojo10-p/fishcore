@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
           select: {
             id: true,
             tradeName: true,
+            appName: true,
             logoUrl: true,
             currency: true,
             timezone: true,
