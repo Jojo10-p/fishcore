@@ -2,7 +2,6 @@ import { after } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { emailConfigured, sendEmail } from "@/lib/email";
-import { APP_NAME } from "@/lib/app-config";
 
 // ─────────────────────────────────────────────
 // Alertes de stock bas
@@ -134,7 +133,7 @@ export function lowStockEmail(params: { appName: string; tradeName: string; aler
     </td></tr>
     <tr><td style="padding:22px 26px 28px" align="left">
       <a href="${esc(link)}" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:10px;font-size:14px">Voir les alertes de stock</a>
-      <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;line-height:1.5">L'alerte disparaît d'elle-même quand la marchandise est réceptionnée. Message automatique de ${esc(appName)} (${APP_NAME}).</p>
+      <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;line-height:1.5">L'alerte disparaît d'elle-même quand la marchandise est réceptionnée. Message automatique de ${esc(appName)}.</p>
     </td></tr>
   </table></td></tr></table></body></html>`;
   const text = [
