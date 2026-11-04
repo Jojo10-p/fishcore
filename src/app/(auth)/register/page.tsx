@@ -401,53 +401,55 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
-      <div className="text-center mb-6">
-        <div className="inline-flex items-center justify-center w-12 h-12 bg-blue-600 rounded-2xl mb-3 shadow-lg">
-          <img src="/icons/icon.svg" alt="" className="h-7 w-7" />
-        </div>
-        <h1 className="text-xl font-bold text-gray-900">Créer mon espace</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Configuration initiale de votre entreprise</p>
-      </div>
-      {deleted && (
-        <div className="mb-5 rounded-xl border border-green-200 bg-green-50 p-3.5 text-sm text-green-800">
-          Votre compte et toutes ses données ont été supprimés. Vous pouvez créer un nouvel espace, avec la même adresse e-mail si vous le souhaitez.
-        </div>
-      )}
-
-      <ProgressBar step={step} />
-
-      {globalError && (
-        <div className="mb-5 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
-          ⚠️ {globalError}
-        </div>
-      )}
-
-      {step === 0 && <Step1 />}
-      {step === 1 && <Step2 />}
-      {step === 2 && (
-        <div className="text-center py-8">
-          <div className="text-4xl mb-4">
-            {isSubmitting ? "⏳" : "✅"}
+    <div className="min-h-dvh flex items-center justify-center bg-gradient-to-br from-blue-50 to-gray-50 p-4">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-12 h-12 bg-blue-600 rounded-2xl mb-3 shadow-lg">
+            <img src="/icons/icon.svg" alt="" className="h-7 w-7" />
           </div>
-          <h3 className="text-lg font-semibold text-gray-900">
-            {isSubmitting ? "Création en cours…" : "Compte créé !"}
-          </h3>
-          <p className="text-sm text-gray-500 mt-2">
-            {isSubmitting
-              ? "Veuillez patienter quelques secondes."
-              : "Redirection vers la configuration initiale…"}
+          <h1 className="text-xl font-bold text-gray-900">Créer mon espace</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Configuration initiale de votre entreprise</p>
+        </div>
+        {deleted && (
+          <div className="mb-5 rounded-xl border border-green-200 bg-green-50 p-3.5 text-sm text-green-800">
+            Votre compte et toutes ses données ont été supprimés. Vous pouvez créer un nouvel espace, avec la même adresse e-mail si vous le souhaitez.
+          </div>
+        )}
+
+        <ProgressBar step={step} />
+
+        {globalError && (
+          <div className="mb-5 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+            ⚠️ {globalError}
+          </div>
+        )}
+
+        {step === 0 && <Step1 />}
+        {step === 1 && <Step2 />}
+        {step === 2 && (
+          <div className="text-center py-8">
+            <div className="text-4xl mb-4">
+              {isSubmitting ? "⏳" : "✅"}
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900">
+              {isSubmitting ? "Création en cours…" : "Compte créé !"}
+            </h3>
+            <p className="text-sm text-gray-500 mt-2">
+              {isSubmitting
+                ? "Veuillez patienter quelques secondes."
+                : "Redirection vers la configuration initiale…"}
+            </p>
+          </div>
+        )}
+
+        <div className="mt-6 text-center">
+          <p className="text-sm text-gray-500">
+            Déjà un compte ?{" "}
+            <Link href="/login" className="text-blue-600 font-medium hover:underline">
+              Se connecter
+            </Link>
           </p>
         </div>
-      )}
-
-      <div className="mt-6 text-center">
-        <p className="text-sm text-gray-500">
-          Déjà un compte ?{" "}
-          <Link href="/login" className="text-blue-600 font-medium hover:underline">
-            Se connecter
-          </Link>
-        </p>
       </div>
     </div>
   );

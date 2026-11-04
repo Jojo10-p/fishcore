@@ -71,114 +71,116 @@ function LoginForm() {
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
-      {/* Logo / En-tête */}
-      <div className="text-center mb-8">
-        {brand?.logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element -- logo de l'entreprise servi par l'API
-          <img src={`/api/brand/${brand.companyId}/icon-192.png?v=${new URLSearchParams(brand.logoUrl.split("?")[1] ?? "").get("v") ?? ""}`} alt="" className="mx-auto mb-4 h-16 w-16 rounded-2xl object-contain shadow" />
-        ) : (
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-blue-600 rounded-2xl mb-4 shadow-lg">
-            {/* eslint-disable-next-line @next/next/no-img-element -- icône statique */}
-            <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
+    <div className="min-h-dvh flex items-center justify-center bg-gradient-to-br from-blue-50 to-gray-50 p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
+        {/* Logo / En-tête */}
+        <div className="text-center mb-8">
+          {brand?.logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- logo de l'entreprise servi par l'API
+            <img src={`/api/brand/${brand.companyId}/icon-192.png?v=${new URLSearchParams(brand.logoUrl.split("?")[1] ?? "").get("v") ?? ""}`} alt="" className="mx-auto mb-4 h-16 w-16 rounded-2xl object-contain shadow" />
+          ) : (
+            <div className="inline-flex items-center justify-center w-14 h-14 bg-blue-600 rounded-2xl mb-4 shadow-lg">
+              {/* eslint-disable-next-line @next/next/no-img-element -- icône statique */}
+              <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
+            </div>
+          )}
+          <h1 className="text-2xl font-bold text-gray-900">{brand ? brand.name : "Connexion"}</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            {brand ? "Connectez-vous à votre espace" : "Accédez à votre espace de gestion"}
+          </p>
+        </div>
+
+        {/* Erreur globale */}
+        {error && (
+          <div className="mb-5 p-3.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-start gap-2">
+            <span className="shrink-0 mt-0.5">⚠️</span>
+            <span>{error}</span>
           </div>
         )}
-        <h1 className="text-2xl font-bold text-gray-900">{brand ? brand.name : "Connexion"}</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          {brand ? "Connectez-vous à votre espace" : "Accédez à votre espace de gestion"}
-        </p>
-      </div>
 
-      {/* Erreur globale */}
-      {error && (
-        <div className="mb-5 p-3.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-start gap-2">
-          <span className="shrink-0 mt-0.5">⚠️</span>
-          <span>{error}</span>
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-        {/* Email */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            Adresse email
-          </label>
-          <input
-            type="email"
-            autoComplete="email"
-            placeholder="vous@entreprise.com"
-            className={`w-full px-4 py-2.5 border rounded-xl text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              errors.email
-                ? "border-red-300 bg-red-50"
-                : "border-gray-300 bg-white hover:border-gray-400"
-            }`}
-            {...register("email", {
-              required: "Email requis",
-              pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: "Email invalide" },
-            })}
-          />
-          {errors.email && (
-            <p className="mt-1.5 text-xs text-red-600">{errors.email.message}</p>
-          )}
-        </div>
-
-        {/* Mot de passe */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            Mot de passe
-          </label>
-          <input
-            type="password"
-            autoComplete="current-password"
-            placeholder="••••••••"
-            className={`w-full px-4 py-2.5 border rounded-xl text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              errors.password
-                ? "border-red-300 bg-red-50"
-                : "border-gray-300 bg-white hover:border-gray-400"
-            }`}
-            {...register("password", { required: "Mot de passe requis" })}
-          />
-          {errors.password && (
-            <p className="mt-1.5 text-xs text-red-600">{errors.password.message}</p>
-          )}
-          <div className="mt-1.5 text-right">
-            <Link href="/mot-de-passe-oublie" className="text-xs text-blue-600 hover:underline">
-              Mot de passe oublié ?
-            </Link>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+          {/* Email */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Adresse email
+            </label>
+            <input
+              type="email"
+              autoComplete="email"
+              placeholder="vous@entreprise.com"
+              className={`w-full px-4 py-2.5 border rounded-xl text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                errors.email
+                  ? "border-red-300 bg-red-50"
+                  : "border-gray-300 bg-white hover:border-gray-400"
+              }`}
+              {...register("email", {
+                required: "Email requis",
+                pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: "Email invalide" },
+              })}
+            />
+            {errors.email && (
+              <p className="mt-1.5 text-xs text-red-600">{errors.email.message}</p>
+            )}
           </div>
-        </div>
 
-        {/* Bouton connexion */}
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm"
-        >
-          {isLoading ? (
-            <span className="flex items-center justify-center gap-2">
-              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-              </svg>
-              Connexion en cours…
-            </span>
-          ) : (
-            "Se connecter"
-          )}
-        </button>
-      </form>
+          {/* Mot de passe */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Mot de passe
+            </label>
+            <input
+              type="password"
+              autoComplete="current-password"
+              placeholder="••••••••"
+              className={`w-full px-4 py-2.5 border rounded-xl text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                errors.password
+                  ? "border-red-300 bg-red-50"
+                  : "border-gray-300 bg-white hover:border-gray-400"
+              }`}
+              {...register("password", { required: "Mot de passe requis" })}
+            />
+            {errors.password && (
+              <p className="mt-1.5 text-xs text-red-600">{errors.password.message}</p>
+            )}
+            <div className="mt-1.5 text-right">
+              <Link href="/mot-de-passe-oublie" className="text-xs text-blue-600 hover:underline">
+                Mot de passe oublié ?
+              </Link>
+            </div>
+          </div>
 
-      {/* Lien inscription */}
-      <div className="mt-6 text-center">
-        <p className="text-sm text-gray-500">
-          Première connexion ?{" "}
-          <Link
-            href="/register"
-            className="text-blue-600 font-medium hover:underline"
+          {/* Bouton connexion */}
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm"
           >
-            Créer mon espace
-          </Link>
-        </p>
+            {isLoading ? (
+              <span className="flex items-center justify-center gap-2">
+                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                </svg>
+                Connexion en cours…
+              </span>
+            ) : (
+              "Se connecter"
+            )}
+          </button>
+        </form>
+
+        {/* Lien inscription */}
+        <div className="mt-6 text-center">
+          <p className="text-sm text-gray-500">
+            Première connexion ?{" "}
+            <Link
+              href="/register"
+              className="text-blue-600 font-medium hover:underline"
+            >
+              Créer mon espace
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   );
