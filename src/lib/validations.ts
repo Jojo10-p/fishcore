@@ -170,6 +170,8 @@ export const saleLineSchema = z.object({
 export const createSaleSchema = z.object({
   sessionId: z.string().min(1),
   customerId: z.string().optional(),
+  // Nom du client tapé à la caisse (facultatif) : personne ou entreprise
+  customerName: z.string().trim().max(80).optional(),
   // Vente issue d'un devis : les lignes et les prix sont repris du devis par le serveur
   quoteId: z.string().optional(),
   // Numéro attribué par la caisse dans sa plage (imprimé avant même l'envoi au serveur)

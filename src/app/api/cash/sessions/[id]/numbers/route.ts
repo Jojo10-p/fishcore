@@ -24,7 +24,7 @@ async function loadOwnSession(req: NextRequest, params: Params["params"]) {
       id: true,
       cashierId: true,
       closedAt: true,
-      cashier: { select: { firstName: true, lastName: true } },
+      cashier: { select: { firstName: true, lastName: true, role: true } },
       cashRegister: { select: { name: true, center: { select: { id: true, name: true, address: true, city: true, phone: true } } } },
     },
   });
@@ -67,6 +67,7 @@ export async function GET(req: NextRequest, { params }: Params) {
           center: session.cashRegister.center,
           registerName: session.cashRegister.name,
           cashierFirstName: session.cashier.firstName,
+          cashierRole: session.cashier.role,
         },
       },
     });

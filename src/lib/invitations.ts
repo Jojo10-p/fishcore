@@ -29,7 +29,7 @@ export const ROLE_NAMES: Record<UserRole, string> = {
   CENTER_MANAGER: "Gérant",
   CASHIER: "Caissier",
   ACCOUNTANT: "Comptable",
-  STOCK_MANAGER: "Gestionnaire de stock",
+  STOCK_MANAGER: "Magasinier",
   SALES_EMPLOYEE: "Vendeur",
 };
 

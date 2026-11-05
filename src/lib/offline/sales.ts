@@ -12,6 +12,7 @@ interface CreateOfflineSaleParams {
   centerId: string;
   companyId: string;
   customerId?: string;
+  customerName?: string;
   lines: OfflineSaleLine[];
   payments: OfflinePayment[];
   notes?: string;
@@ -80,6 +81,7 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
         centerId: params.centerId,
         companyId: params.companyId,
         customerId: params.customerId,
+        customerName: params.customerName,
         lines: params.lines,
         payments: params.payments,
         subtotal,
@@ -100,6 +102,7 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
         idempotencyKey,
         sessionId: params.sessionId,
         customerId: params.customerId,
+        customerName: params.customerName,
         lines: params.lines.map((l) => ({
           productId: l.productId,
           quantity: l.quantity,

@@ -50,10 +50,17 @@ interface Unit {
 // prix du lot, prix de vente ». Un article qui n'existe pas encore est créé.
 interface DraftLine {
   name: string;
-  quantity: string;
   liters: string;
+  buyMode: "carton" | "unit";
+  cartons: string;
+  perCarton: string;
+  cartonPrice: string;
+  quantity: string;
   lotPrice: string;
   sellingPrice: string;
+  cartonSellingPrice: string;
+  lotSize: string;
+  lotPrice2: string;
 }
 interface ReceiptDraft {
   supplierId: string;
@@ -64,7 +71,20 @@ interface ReceiptDraft {
   lines: DraftLine[];
 }
 
-const emptyLine = (): DraftLine => ({ name: "", quantity: "", liters: "", lotPrice: "", sellingPrice: "" });
+const emptyLine = (): DraftLine => ({
+  name: "",
+  liters: "",
+  buyMode: "carton",
+  cartons: "",
+  perCarton: "",
+  cartonPrice: "",
+  quantity: "",
+  lotPrice: "",
+  sellingPrice: "",
+  cartonSellingPrice: "",
+  lotSize: "",
+  lotPrice2: "",
+});
 const emptyDraft = (): ReceiptDraft => ({
   supplierId: "",
   reference: "",
@@ -180,7 +200,10 @@ export default function ReceptionsPage() {
   );
 }
 
-// ── Nouvel arrivage (saisie simple GJH, brouillon sauvegardé sur l'appareil) ─────
+// ── Nouvel arrivage (saisie GJH, brouillon sauvegardé sur l'appareil) ─────────
+// Chaque ligne : l'article (suggestions en tapant), sa contenance, l'achat au
+// carton (nombre de cartons × bidons par carton, prix d'un carton) ou à l'unité,
+// puis les prix de vente : le bidon, le carton, un lot (ex. lot de 3).
 const PLURAL: Record<string, string> = { btl: "bouteilles", bidon: "bidons", seau: "seaux", "fût": "fûts", carton: "cartons", pce: "pièces", L: "litres" };
 const unitWord = (symbol?: string) => (symbol ? (PLURAL[symbol] ?? symbol) : "bidons");
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
@@ -193,46 +216,89 @@ function litersFromName(name: string): number | null {
 }
 const fmtL = (n: number) => `${n.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} L`;
 
+interface Suggestion {
+  id: string;
+  name: string;
+  liters: number | null;
+  unitsPerCarton: number | null;
+}
+interface ProductFull extends ProductOption {
+  baseUnitId: string;
+  unitConversions?: Array<{ fromUnitId: string; factor: string; sellingPrice: string | null; barcode: string | null }>;
+}
+
 function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: string; currency: string; onCancel: () => void; onSaved: () => Promise<void> }) {
   const online = useOnline();
   const [draft, setDraft] = useState<ReceiptDraft>(emptyDraft);
-  const [products, setProducts] = useState<ProductOption[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [products, setProducts] = useState<ProductFull[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [suppliers, setSuppliers] = useState<Array<Supplier & { phone?: string | null }>>([]);
   const [units, setUnits] = useState<Unit[]>([]);
-  const [newSupplier, setNewSupplier] = useState("");
+  const [newSupplier, setNewSupplier] = useState<{ name: string; phone: string } | null>(null);
+  const [focus, setFocus] = useState<number | null>(null);
   const [showFees, setShowFees] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tried, setTried] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const touched = useMemo(() => draft.supplierId !== "" || draft.reference !== "" || draft.lines.some((l) => l.name || l.quantity || l.lotPrice), [draft]);
-  const autosave = useAutosaveDraft(`goods-receipt:v3:${centerId}`, draft, { enabled: touched });
+  const autosave = useAutosaveDraft(`goods-receipt:v4:${centerId}`, draft, { enabled: touched });
 
-  useEffect(() => {
-    apiGet<{ data: ProductOption[] }>(`/api/products?centerId=${centerId}`).then((r) => setProducts(r.data)).catch(() => undefined);
-    apiGet<{ data: Supplier[] }>("/api/suppliers").then((r) => setSuppliers(r.data)).catch(() => undefined);
-    apiGet<{ data: Unit[] }>("/api/units").then((r) => setUnits(r.data)).catch(() => undefined);
+  const loadProducts = useCallback(() => {
+    apiGet<{ data: ProductFull[] }>(`/api/products?centerId=${centerId}`).then((r) => setProducts(r.data)).catch(() => undefined);
   }, [centerId]);
+  useEffect(() => {
+    loadProducts();
+    apiGet<{ data: Array<Supplier & { phone?: string | null }> }>("/api/suppliers").then((r) => setSuppliers(r.data)).catch(() => undefined);
+    apiGet<{ data: Unit[] }>("/api/units").then((r) => setUnits(r.data)).catch(() => undefined);
+    apiGet<{ data: Suggestion[] }>("/api/product-suggestions").then((r) => setSuggestions(r.data)).catch(() => undefined);
+  }, [loadProducts]);
 
   const byName = useMemo(() => new Map(products.map((p) => [norm(p.name), p])), [products]);
+  const sugByName = useMemo(() => new Map(suggestions.map((s) => [norm(s.name), s])), [suggestions]);
+  const supplier = suppliers.find((s) => s.id === draft.supplierId);
   const setField = (k: keyof Omit<ReceiptDraft, "lines">) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setDraft((d) => ({ ...d, [k]: e.target.value }));
   const setLine = (i: number, patch: Partial<DraftLine>) => setDraft((d) => ({ ...d, lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) }));
 
+  // Choisir un nom (article existant ou suggestion) : pré-remplit ce qu'on connaît
+  const pickName = (i: number, name: string) => {
+    const p = byName.get(norm(name));
+    const sug = sugByName.get(norm(name));
+    const l = draft.lines[i];
+    const cartonId = units.find((u) => u.symbol === "carton")?.id;
+    const carton = p?.unitConversions?.find((u) => u.fromUnitId === cartonId);
+    setLine(i, {
+      name,
+      liters: l.liters || (sug?.liters ? String(sug.liters) : ""),
+      perCarton: l.perCarton || (carton ? String(Number(carton.factor)) : sug?.unitsPerCarton ? String(sug.unitsPerCarton) : ""),
+      sellingPrice: l.sellingPrice || (p ? String(Number(p.sellingPrice)) : ""),
+      cartonSellingPrice: l.cartonSellingPrice || (carton?.sellingPrice ? String(Number(carton.sellingPrice)) : ""),
+    });
+    setFocus(null);
+  };
+
   const rows = draft.lines.map((l) => {
     const product = byName.get(norm(l.name)) ?? null;
-    const qty = num(l.quantity);
-    const lot = num(l.lotPrice);
+    const byCarton = l.buyMode === "carton";
+    const cartons = num(l.cartons);
+    const perCarton = num(l.perCarton);
+    const qty = byCarton ? cartons * perCarton : num(l.quantity);
+    const lot = byCarton ? cartons * num(l.cartonPrice) : num(l.lotPrice);
     const sell = num(l.sellingPrice);
-    const liters = product ? litersFromName(product.name) : num(l.liters) || null;
+    const liters = product ? (litersFromName(product.name) ?? (num(l.liters) || null)) : num(l.liters) || null;
     const errors = {
       name: !l.name.trim() ? "Nom de l'article requis" : undefined,
-      quantity: !(qty > 0) ? "Combien ?" : undefined,
-      liters: !product && !(num(l.liters) > 0) ? "Litres par bidon requis" : undefined,
-      lotPrice: !(lot > 0) ? "Prix du lot requis" : undefined,
+      cartons: byCarton && !(cartons > 0) ? "Combien de cartons ?" : undefined,
+      perCarton: byCarton && !(perCarton > 0) ? "Combien par carton ?" : undefined,
+      cartonPrice: byCarton && !(num(l.cartonPrice) > 0) ? "Prix d'un carton requis" : undefined,
+      quantity: !byCarton && !(qty > 0) ? "Combien ?" : undefined,
+      lotPrice: !byCarton && !(lot > 0) ? "Prix total requis" : undefined,
+      liters: !product && !(num(l.liters) > 0) ? "Contenance requise" : undefined,
       sellingPrice: !(sell > 0) ? "Prix de vente requis" : undefined,
+      lotSize: l.lotPrice2 && !(num(l.lotSize) >= 2) ? "Combien dans le lot ?" : undefined,
     };
-    const blank = !l.name.trim() && !l.quantity && !l.lotPrice;
-    return { l, product, qty, lot, sell, liters, errors, ok: !Object.values(errors).some(Boolean), blank };
+    const blank = !l.name.trim() && !l.cartons && !l.quantity && !l.cartonPrice && !l.lotPrice;
+    return { l, product, qty, lot, sell, liters, byCarton, perCarton, errors, ok: !Object.values(errors).some(Boolean), blank };
   });
   const filled = rows.filter((r) => !r.blank);
   const goods = filled.reduce((s, r) => s + r.lot, 0);
@@ -240,15 +306,25 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
   const canSave = online && filled.length > 0 && filled.every((r) => r.ok);
 
   const addSupplier = async () => {
-    if (!newSupplier.trim()) return;
+    if (!newSupplier?.name.trim()) return;
     try {
-      const res = await apiSend<{ data: Supplier }>("/api/suppliers", { name: newSupplier.trim() });
+      const res = await apiSend<{ data: Supplier & { phone?: string | null } }>("/api/suppliers", { name: newSupplier.name.trim(), phone: newSupplier.phone.trim() || undefined });
       setSuppliers((s) => [...s, res.data].sort((a, b) => a.name.localeCompare(b.name)));
       setDraft((d) => ({ ...d, supplierId: res.data.id }));
-      setNewSupplier("");
+      setNewSupplier(null);
     } catch (e) {
       setError(errorMessage(e));
     }
+  };
+
+  /** Unité « Lot de N » (créée au besoin). */
+  const lotUnit = async (n: number): Promise<string> => {
+    const symbol = `lot${n}`;
+    const found = units.find((u) => u.symbol === symbol);
+    if (found) return found.id;
+    const created = await apiSend<{ data: Unit }>("/api/units", { name: `Lot de ${n}`, symbol, kind: "PACKAGING" });
+    setUnits((u) => [...u, created.data]);
+    return created.data.id;
   };
 
   const save = async () => {
@@ -258,12 +334,16 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
     setError(null);
     try {
       const bidon = units.find((u) => u.symbol === "bidon") ?? units[0];
+      const carton = units.find((u) => u.symbol === "carton");
       const lines: Array<{ productId: string; quantity: number; unitPrice: number; totalPrice: number }> = [];
       for (const r of filled) {
         const cost = Math.round((r.lot / r.qty) * 100) / 100;
+        // Prix de vente du carton et du lot : conditionnements de l'article
+        const packagings: Array<{ unitId: string; factor: number; sellingPrice: number }> = [];
+        if (carton && r.perCarton > 0 && num(r.l.cartonSellingPrice) > 0) packagings.push({ unitId: carton.id, factor: r.perCarton, sellingPrice: num(r.l.cartonSellingPrice) });
+        if (num(r.l.lotPrice2) > 0 && num(r.l.lotSize) >= 2) packagings.push({ unitId: await lotUnit(num(r.l.lotSize)), factor: num(r.l.lotSize), sellingPrice: num(r.l.lotPrice2) });
         let id = r.product?.id;
         if (!id) {
-          // Nouvel article : le nom porte la contenance (« Huile nationale 1 L »)
           if (!bidon) throw new Error("Aucune unité disponible pour créer l'article");
           const base = r.l.name.trim();
           const name = litersFromName(base) ? base : `${base} ${fmtL(num(r.l.liters))}`;
@@ -274,10 +354,18 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
             sellingPrice: r.sell,
             stockAlertQty: 7,
             attributes: { contenance: fmtL(num(r.l.liters)) },
+            ...(packagings.length ? { packagings } : {}),
           });
           id = created.data.id;
-        } else if (Number(r.product!.sellingPrice) !== r.sell) {
-          await apiSend(`/api/products/${id}`, { sellingPrice: r.sell }, "PATCH");
+        } else {
+          // Prix de vente revus avant l'enregistrement : on garde les autres conditionnements
+          const keep = (r.product!.unitConversions ?? [])
+            .filter((u) => !packagings.some((p) => p.unitId === u.fromUnitId))
+            .map((u) => ({ unitId: u.fromUnitId, factor: Number(u.factor), sellingPrice: u.sellingPrice != null ? Number(u.sellingPrice) : null, barcode: u.barcode }));
+          const priceChanged = Number(r.product!.sellingPrice) !== r.sell;
+          if (priceChanged || packagings.length) {
+            await apiSend(`/api/products/${id}`, { sellingPrice: r.sell, ...(packagings.length ? { packagings: [...keep, ...packagings] } : {}) }, "PATCH");
+          }
         }
         lines.push({ productId: id, quantity: r.qty, unitPrice: cost, totalPrice: Math.round(r.lot) });
       }
@@ -295,14 +383,19 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
       await onSaved();
     } catch (e) {
       setError(errorMessage(e)); // le brouillon local est conservé
-      // Les articles créés sont repris par leur nom au prochain essai
-      apiGet<{ data: ProductOption[] }>(`/api/products?centerId=${centerId}`).then((r) => setProducts(r.data)).catch(() => undefined);
+      loadProducts(); // les articles déjà créés sont repris par leur nom au prochain essai
     } finally {
       setBusy(false);
     }
   };
 
   const err = (msg?: string) => (tried ? msg : undefined);
+  const names = useMemo(() => {
+    const all = new Map<string, { name: string; kind: "stock" | "suggestion" }>();
+    for (const p of products) all.set(norm(p.name), { name: p.name, kind: "stock" });
+    for (const s of suggestions) if (!all.has(norm(s.name))) all.set(norm(s.name), { name: s.name, kind: "suggestion" });
+    return [...all.values()];
+  }, [products, suggestions]);
 
   return (
     <Card className="p-4 sm:p-6 space-y-5">
@@ -339,54 +432,67 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
       {error && <Alert>{error}</Alert>}
 
       {/* 1. Fournisseur */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Field label="Fournisseur">
-          <Select value={draft.supplierId} onChange={setField("supplierId")}>
-            <option value="">— Choisir —</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Référence (n° du bon ou de la facture)">
-          <Input value={draft.reference} onChange={setField("reference")} placeholder="ex. BL-0412" />
-        </Field>
-        <Field label="Date d'arrivée">
-          <Input type="date" value={draft.receivedAt} onChange={setField("receivedAt")} />
-        </Field>
-      </div>
-      <div className="flex gap-2 items-end">
-        <div className="flex-1">
-          <Field label="Nouveau fournisseur">
-            <Input value={newSupplier} onChange={(e) => setNewSupplier(e.target.value)} placeholder="Nom du fournisseur" />
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-gray-700">1. Fournisseur</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Field label="Fournisseur">
+            <Select value={draft.supplierId} onChange={setField("supplierId")}>
+              <option value="">— Choisir —</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Référence (n° du bon ou de la facture)">
+            <Input value={draft.reference} onChange={setField("reference")} placeholder="ex. BL-0412" />
+          </Field>
+          <Field label="Date d'arrivée">
+            <Input type="date" value={draft.receivedAt} onChange={setField("receivedAt")} />
           </Field>
         </div>
-        <Button variant="secondary" onClick={addSupplier} disabled={!newSupplier.trim() || !online}>
-          Ajouter
-        </Button>
-      </div>
+        {supplier && <p className="text-sm text-gray-600">📞 Contact du fournisseur : {supplier.phone ? <strong>{supplier.phone}</strong> : <span className="text-gray-400">non renseigné</span>}</p>}
+        {newSupplier ? (
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end rounded-xl bg-gray-50 p-3">
+            <Field label="Nom du nouveau fournisseur">
+              <Input value={newSupplier.name} onChange={(e) => setNewSupplier({ ...newSupplier, name: e.target.value })} placeholder="ex. Distrilub Cotonou" />
+            </Field>
+            <Field label="Contact (téléphone)" hint="Servira dans les alertes de stock">
+              <Input type="tel" value={newSupplier.phone} onChange={(e) => setNewSupplier({ ...newSupplier, phone: e.target.value })} placeholder="+229 …" />
+            </Field>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={addSupplier} disabled={!newSupplier.name.trim() || !online}>
+                Ajouter
+              </Button>
+              <Button variant="ghost" onClick={() => setNewSupplier(null)}>
+                ✕
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <button className="text-sm text-blue-600 hover:underline" onClick={() => setNewSupplier({ name: "", phone: "" })}>
+            + Nouveau fournisseur
+          </button>
+        )}
+      </section>
 
       {/* 2. Articles */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-gray-700">Articles reçus</h3>
-        <datalist id="gjh-articles">
-          {products.map((p) => (
-            <option key={p.id} value={p.name} />
-          ))}
-        </datalist>
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-gray-700">2. Articles reçus</h3>
         {rows.map((r, i) => {
           const word = unitWord(r.product?.baseUnit.symbol);
           const one = r.product?.baseUnit.symbol === "btl" ? "bouteille" : word === "seaux" ? "seau" : word.replace(/s$/, "");
           const costPer = r.qty > 0 && r.lot > 0 ? r.lot / r.qty : 0;
           const stock = r.product?.stocks?.[0] ? Number(r.product.stocks[0].quantity) : null;
+          const typed = norm(r.l.name);
+          const matches = focus === i && typed.length >= 2 ? names.filter((n) => norm(n.name).includes(typed) && norm(n.name) !== typed).slice(0, 8) : [];
           return (
             <div key={i} className="rounded-xl border border-gray-200 p-3 sm:p-4 space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Article {i + 1}</span>
                 <span className="flex items-center gap-3">
-                  {r.l.name.trim() && (r.product ? <Badge tone="green">Article existant</Badge> : <Badge tone="blue">Nouvel article</Badge>)}
+                  {r.l.name.trim() && (r.product ? <Badge tone="green">Déjà en stock</Badge> : <Badge tone="blue">Nouvel article</Badge>)}
                   {draft.lines.length > 1 && (
                     <button className="text-sm text-red-600 hover:underline" onClick={() => setDraft((d) => ({ ...d, lines: d.lines.filter((_, j) => j !== i) }))}>
                       Retirer
@@ -394,48 +500,114 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
                   )}
                 </span>
               </div>
-              <Field label="Nom de l'article" error={err(r.errors.name)} hint={r.product ? `En stock : ${stock ?? 0} ${word}${r.liters ? ` · ${fmtL(r.liters)} par ${r.product.baseUnit.symbol}` : ""}` : "Tapez le nom : choisissez dans la liste ou écrivez un nouvel article"}>
-                <Input
-                  list="gjh-articles"
-                  value={r.l.name}
-                  placeholder="ex. Huile nationale"
-                  onChange={(e) => {
-                    const p = byName.get(norm(e.target.value));
-                    setLine(i, { name: e.target.value, ...(p && !r.l.sellingPrice ? { sellingPrice: String(Number(p.sellingPrice)) } : {}) });
-                  }}
-                />
-              </Field>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <Field label={`Nombre de ${word}`} error={err(r.errors.quantity)}>
-                  <Input inputMode="numeric" value={r.l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} placeholder="ex. 30" />
+
+              <div className="relative">
+                <Field
+                  label="Nom de l'article"
+                  error={err(r.errors.name)}
+                  hint={r.product ? `En stock : ${stock ?? 0} ${word}${r.liters ? ` · ${fmtL(r.liters)} par ${one}` : ""}` : "Tapez quelques lettres : les suggestions s'affichent"}
+                >
+                  <Input
+                    value={r.l.name}
+                    placeholder="ex. Huile moto Oryx"
+                    autoComplete="off"
+                    onFocus={() => setFocus(i)}
+                    onBlur={() => setTimeout(() => setFocus((f) => (f === i ? null : f)), 150)}
+                    onChange={(e) => {
+                      setLine(i, { name: e.target.value });
+                      setFocus(i);
+                    }}
+                  />
                 </Field>
+                {matches.length > 0 && (
+                  <ul className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg">
+                    {matches.map((m) => (
+                      <li key={m.name}>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => pickName(i, m.name)}
+                          className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-blue-50"
+                        >
+                          <span>{m.name}</span>
+                          <span className="text-xs text-gray-400">{m.kind === "stock" ? "en stock" : "suggestion"}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {r.product ? (
-                  <Field label={`Litres par ${one}`}>
+                  <Field label={`Contenance (par ${one})`}>
                     <Input value={r.liters ? fmtL(r.liters) : "—"} disabled readOnly />
                   </Field>
                 ) : (
-                  <Field label="Litres par bidon" error={err(r.errors.liters)}>
+                  <Field label="Contenance (litres par bidon)" error={err(r.errors.liters)}>
                     <Input inputMode="decimal" value={r.l.liters} onChange={(e) => setLine(i, { liters: e.target.value })} placeholder="ex. 1" />
                   </Field>
                 )}
-                <Field label="Prix du lot (total payé)" error={err(r.errors.lotPrice)}>
-                  <Input inputMode="numeric" value={r.l.lotPrice} onChange={(e) => setLine(i, { lotPrice: e.target.value })} placeholder="ex. 28 200" />
-                </Field>
-                <Field label={`Prix de vente (1 ${one})`} error={err(r.errors.sellingPrice)}>
-                  <Input inputMode="numeric" value={r.l.sellingPrice} onChange={(e) => setLine(i, { sellingPrice: e.target.value })} placeholder="ex. 1 500" />
+                <Field label="Acheté">
+                  <Select value={r.l.buyMode} onChange={(e) => setLine(i, { buyMode: e.target.value as DraftLine["buyMode"] })}>
+                    <option value="carton">Au carton</option>
+                    <option value="unit">À l&apos;unité / en vrac</option>
+                  </Select>
                 </Field>
               </div>
-              {costPer > 0 && (
+
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Achat</p>
+              {r.byCarton ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <Field label="Nombre de cartons" error={err(r.errors.cartons)}>
+                    <Input inputMode="numeric" value={r.l.cartons} onChange={(e) => setLine(i, { cartons: e.target.value })} placeholder="ex. 5" />
+                  </Field>
+                  <Field label={`${word[0].toUpperCase()}${word.slice(1)} par carton`} error={err(r.errors.perCarton)}>
+                    <Input inputMode="numeric" value={r.l.perCarton} onChange={(e) => setLine(i, { perCarton: e.target.value })} placeholder="ex. 12" />
+                  </Field>
+                  <Field label="Prix d'un carton (achat)" error={err(r.errors.cartonPrice)}>
+                    <Input inputMode="numeric" value={r.l.cartonPrice} onChange={(e) => setLine(i, { cartonPrice: e.target.value })} placeholder="ex. 30 000" />
+                  </Field>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label={`Nombre de ${word}`} error={err(r.errors.quantity)}>
+                    <Input inputMode="numeric" value={r.l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} placeholder="ex. 30" />
+                  </Field>
+                  <Field label="Prix total payé" error={err(r.errors.lotPrice)}>
+                    <Input inputMode="numeric" value={r.l.lotPrice} onChange={(e) => setLine(i, { lotPrice: e.target.value })} placeholder="ex. 28 200" />
+                  </Field>
+                </div>
+              )}
+              {r.qty > 0 && (
                 <p className="text-sm text-gray-600">
-                  Revient à <strong><Money value={costPer} currency={currency} /></strong> l&apos;unité
-                  {r.sell > 0 && (
+                  Total reçu : <strong>{r.qty.toLocaleString("fr-FR")} {word}</strong>
+                  {r.lot > 0 && (
                     <>
-                      {" "}· vendu <Money value={r.sell} currency={currency} /> ›{" "}
-                      <strong className={r.sell - costPer > 0 ? "text-green-700" : "text-red-700"}>
-                        {r.sell - costPer >= 0 ? "bénéfice" : "perte"} <Money value={Math.abs(r.sell - costPer)} currency={currency} /> par unité
-                      </strong>
+                      {" "}pour <Money value={r.lot} currency={currency} /> · revient à <strong><Money value={costPer} currency={currency} /></strong> le {one}
                     </>
                   )}
+                </p>
+              )}
+
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Prix de vente</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <Field label={`1 ${one}`} error={err(r.errors.sellingPrice)}>
+                  <Input inputMode="numeric" value={r.l.sellingPrice} onChange={(e) => setLine(i, { sellingPrice: e.target.value })} placeholder="ex. 3 500" />
+                </Field>
+                <Field label={r.perCarton > 0 ? `Le carton (${r.perCarton})` : "Le carton"} hint="Facultatif">
+                  <Input inputMode="numeric" value={r.l.cartonSellingPrice} onChange={(e) => setLine(i, { cartonSellingPrice: e.target.value })} disabled={!(r.perCarton > 0)} placeholder={r.perCarton > 0 ? "ex. 40 000" : "indiquez le nb par carton"} />
+                </Field>
+                <Field label="Lot de…" error={err(r.errors.lotSize)} hint="Facultatif">
+                  <Input inputMode="numeric" value={r.l.lotSize} onChange={(e) => setLine(i, { lotSize: e.target.value })} placeholder="ex. 3" />
+                </Field>
+                <Field label={num(r.l.lotSize) >= 2 ? `Prix du lot de ${num(r.l.lotSize)}` : "Prix du lot"} hint="Facultatif">
+                  <Input inputMode="numeric" value={r.l.lotPrice2} onChange={(e) => setLine(i, { lotPrice2: e.target.value })} placeholder="ex. 10 000" />
+                </Field>
+              </div>
+              {costPer > 0 && r.sell > 0 && (
+                <p className={`text-sm font-medium ${r.sell - costPer > 0 ? "text-green-700" : "text-red-700"}`}>
+                  {r.sell - costPer >= 0 ? "Bénéfice" : "Perte"} : <Money value={Math.abs(r.sell - costPer)} currency={currency} /> par {one}
                 </p>
               )}
             </div>
@@ -444,7 +616,7 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
         <Button variant="secondary" onClick={() => setDraft((d) => ({ ...d, lines: [...d.lines, emptyLine()] }))}>
           + Ajouter un autre article
         </Button>
-      </div>
+      </section>
 
       {/* 3. Frais (facultatif) */}
       {showFees || fees > 0 ? (

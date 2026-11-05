@@ -237,6 +237,16 @@ export async function POST(req: NextRequest) {
         return { ...totals, declaredBalance: declared, discrepancy };
       });
 
+      // Journal de caisse : de quoi imprimer le récapitulatif de la journée
+      const [journalSession, expenses, salesCount] = await Promise.all([
+        prisma.cashSession.findUniqueOrThrow({
+          where: { id: sessionId },
+          select: { openedAt: true, closedAt: true, openingBalance: true, cashier: { select: { firstName: true, lastName: true, role: true } }, cashRegister: { select: { name: true } } },
+        }),
+        prisma.expense.findMany({ where: { sessionId }, select: { category: true, description: true, amount: true, date: true }, orderBy: { date: "asc" } }),
+        prisma.sale.count({ where: { sessionId, status: { not: "CANCELLED" } } }),
+      ]);
+
       return NextResponse.json({
         success: true,
         data: {
@@ -246,6 +256,20 @@ export async function POST(req: NextRequest) {
           discrepancy: result.discrepancy,
           totalSales: result.totalSales,
           totalRefunds: result.totalRefunds,
+          journal: {
+            openedAt: journalSession.openedAt,
+            closedAt: journalSession.closedAt,
+            registerName: journalSession.cashRegister.name,
+            cashier: journalSession.cashier,
+            openingBalance: journalSession.openingBalance,
+            salesCount,
+            totalCash: result.totalCash,
+            totalMobileMoney: result.totalMobileMoney,
+            totalCard: result.totalCard,
+            totalOther: result.totalOther,
+            totalCashOut: result.totalCashOut,
+            expenses,
+          },
         },
       });
     }

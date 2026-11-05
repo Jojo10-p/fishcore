@@ -28,6 +28,8 @@ export interface StockEvent {
   centerName: string;
   quantity: number;
   refQty: number;
+  /** Dernier fournisseur de cet article (pour le recommander). */
+  supplier?: { name: string; phone: string | null } | null;
 }
 
 interface Row {
@@ -102,6 +104,7 @@ const unitLabel = (unit: string, q: number) => (Math.abs(q) > 1 ? (PLURALS[unit.
 /** Texte de la notification. */
 export function stockNotification(e: StockEvent, multiCenter = false): PushPayload {
   const where = multiCenter ? ` (${e.centerName})` : "";
+  const from = e.supplier ? ` Acheté chez ${e.supplier.name}${e.supplier.phone ? ` : contactez-le au ${e.supplier.phone}` : ""}.` : "";
   if (e.kind === "half") {
     return {
       title: "Moitié du stock vendue",
@@ -114,7 +117,7 @@ export function stockNotification(e: StockEvent, multiCenter = false): PushPaylo
   if (e.quantity <= 0) {
     return {
       title: "Rupture de stock",
-      body: `${e.productName}${where} est épuisé. Pensez à recommander.`,
+      body: `${e.productName}${where} est épuisé.${from || " Pensez à recommander."}`,
       tag: `low-${e.centerId}-${e.productId}`,
       url: "/stock?alerte=1",
       requireAck: true,
@@ -122,7 +125,7 @@ export function stockNotification(e: StockEvent, multiCenter = false): PushPaylo
   }
   return {
     title: "Stock presque épuisé",
-    body: `Plus que ${n(e.quantity)} ${unitLabel(e.unit, e.quantity)} de ${e.productName}${where}.`,
+    body: `Plus que ${n(e.quantity)} ${unitLabel(e.unit, e.quantity)} de ${e.productName}${where}.${from}`,
     tag: `low-${e.centerId}-${e.productId}`,
     url: "/stock?alerte=1",
     requireAck: true,
@@ -135,9 +138,20 @@ export async function notifyStockEvents(events: StockEvent[]): Promise<void> {
   const companyId = events[0].companyId;
   const centers = await prisma.center.count({ where: { companyId } });
   for (const e of events) {
+    if (e.kind === "low" && e.supplier === undefined) e.supplier = await lastSupplier(e.productId, e.centerId);
     const devices = await managerDevices(companyId, e.centerId);
     await sendPush(devices, stockNotification(e, centers > 1));
   }
+}
+
+/** Fournisseur du dernier arrivage validé de cet article dans cette boutique. */
+async function lastSupplier(productId: string, centerId: string): Promise<{ name: string; phone: string | null } | null> {
+  const row = await prisma.goodsReceiptLine.findFirst({
+    where: { productId, receipt: { centerId, validatedAt: { not: null }, supplierId: { not: null } } },
+    orderBy: { receipt: { validatedAt: "desc" } },
+    select: { receipt: { select: { supplier: { select: { name: true, phone: true } } } } },
+  });
+  return row?.receipt.supplier ?? null;
 }
 
 const pending = new Set<Promise<void>>();

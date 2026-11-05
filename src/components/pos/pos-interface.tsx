@@ -5,7 +5,6 @@ import { getOfflineDB, type OfflinePackaging, type OfflineProduct } from "@/lib/
 import { applySaleToLocalStock, createOfflineSale } from "@/lib/offline/sales";
 import { commitNumber, peekNextNumber, refreshNumbering } from "@/lib/offline/numbering";
 import { cn, formatCurrency, generateIdempotencyKey } from "@/lib/utils";
-import { CustomerPicker } from "@/components/app/customer-picker";
 
 // ─────────────────────────────────────────────
 // Caisse — tous métiers (cahier §9.1)
@@ -70,6 +69,8 @@ export interface SaleSnapshot {
   tax: number;
   payments: Array<{ method: string; amount: number; reference?: string | null; notes?: string | null }>;
   change: number;
+  /** Espèces remises par le client. */
+  tendered?: number;
 }
 
 /** Même règle que le serveur : la monnaie rendue est déduite des espèces. */
@@ -127,6 +128,10 @@ export default function POSInterface({
   const [showCartMobile, setShowCartMobile] = useState(false);
   const [payments, setPayments] = useState<PaymentEntry[]>([{ method: "CASH", amount: 0 }]);
   const [customer, setCustomer] = useState<Customer | null>(null);
+  // Nom du client tapé à la caisse (facultatif) : personne ou entreprise
+  const [customerName, setCustomerName] = useState("");
+  // Article touché : on demande la quantité avant de l'ajouter
+  const [askQty, setAskQty] = useState<{ product: OfflineProduct; packaging?: OfflinePackaging } | null>(null);
   const [quote, setQuote] = useState<LoadedQuote | null>(null);
   const [quoteInput, setQuoteInput] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -328,6 +333,7 @@ export default function POSInterface({
     setQuote(null);
     setPayments([{ method: "CASH", amount: 0 }]);
     setCustomer(null);
+    setCustomerName("");
     setShowPayment(false);
     setShowCartMobile(false);
     searchRef.current?.focus();
@@ -375,6 +381,7 @@ export default function POSInterface({
           centerId,
           companyId,
           customerId: customer?.id,
+          customerName: customerName.trim() || undefined,
           lines,
           payments: cleanPayments,
           idempotencyKey,
@@ -394,7 +401,7 @@ export default function POSInterface({
             body: JSON.stringify(
               quote
                 ? { sessionId, quoteId: quote.id, lines: [], payments: cleanPayments, idempotencyKey, invoiceSeq: invoice?.seq, createdOffline: false }
-                : { sessionId, lines, payments: cleanPayments, customerId: customer?.id, idempotencyKey, invoiceSeq: invoice?.seq, createdOffline: false }
+                : { sessionId, lines, payments: cleanPayments, customerId: customer?.id, customerName: customerName.trim() || undefined, idempotencyKey, invoiceSeq: invoice?.seq, createdOffline: false }
             ),
           });
         } catch {
@@ -427,7 +434,7 @@ export default function POSInterface({
       const snapshot: SaleSnapshot = {
         saleNumber,
         date: new Date().toISOString(),
-        customer: quote ? { name: quote.customerName } : customer ? { name: customer.name, phone: customer.phone } : null,
+        customer: quote ? { name: quote.customerName } : customer ? { name: customer.name, phone: customer.phone } : customerName.trim() ? { name: customerName.trim() } : null,
         lines: quote
           ? quote.lines.map((l) => ({ key: l.id, name: l.name, ref: l.ref, quantity: l.quantity, unitSymbol: l.unitSymbol, unitPrice: l.unitPrice, discount: l.discount, lineTotal: l.lineTotal }))
           : cart.map((i) => ({
@@ -445,6 +452,7 @@ export default function POSInterface({
         tax: quote ? quote.tax : round2(cart.reduce((s, i) => s + taxOf(lineTotal(i), i.taxRate), 0)),
         payments: settleLocally(cleanPayments, payTotal),
         change,
+        tendered: round2(cleanPayments.filter((p) => p.method === "CASH").reduce((s, p) => s + p.amount, 0)),
       };
       onSaleRecorded?.({ id: saleId, offline: recordedOffline, snapshot });
       setNotification({
@@ -511,7 +519,7 @@ export default function POSInterface({
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-3">
               {filteredProducts.map((p) => (
                 <div key={p.id} className="bg-white border border-gray-200 rounded-xl p-3 flex flex-col">
-                  <button onClick={() => addToCart(p)} className="text-left flex-1 active:scale-[0.98] transition-transform">
+                  <button onClick={() => setAskQty({ product: p })} className="text-left flex-1 active:scale-[0.98] transition-transform">
                     <p className="font-medium text-gray-900 text-sm leading-tight">
                       {p.internalCode && <span className="mr-1 font-mono text-xs text-gray-400">{p.internalCode}</span>}
                       {p.name}
@@ -530,7 +538,7 @@ export default function POSInterface({
                       {p.packagings.map((pk) => (
                         <button
                           key={pk.unitId}
-                          onClick={() => addToCart(p, pk)}
+                          onClick={() => setAskQty({ product: p, packaging: pk })}
                           className="text-[11px] rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-blue-800 hover:bg-blue-100"
                           title={`1 ${pk.name} = ${fmtQty(pk.factor)} ${p.baseUnitSymbol}`}
                         >
@@ -711,6 +719,18 @@ export default function POSInterface({
         </div>
 
         <div className="border-t border-gray-200 p-4 space-y-3">
+          {!quote && (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-gray-600">Nom du client (facultatif)</span>
+              <input
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                maxLength={80}
+                placeholder="Personne ou entreprise"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+            </label>
+          )}
           <div className="space-y-1 text-sm">
             {totals.discount > 0 && (
               <div className="flex justify-between text-green-700">
@@ -734,7 +754,7 @@ export default function POSInterface({
             <div className="space-y-2">
               <button
                 onClick={() => {
-                  setPayments([{ method: "CASH", amount: payTotal }]);
+                  setPayments([{ method: "CASH", amount: 0 }]);
                   setShowPayment(true);
                 }}
                 disabled={!hasItems}
@@ -766,6 +786,98 @@ export default function POSInterface({
           )}
         </div>
       </aside>
+      {askQty && (
+        <QuantityDialog
+          name={askQty.product.name}
+          unit={askQty.packaging?.symbol ?? askQty.product.baseUnitSymbol}
+          price={askQty.packaging?.sellingPrice ?? askQty.product.sellingPrice}
+          allowsDecimal={askQty.packaging ? false : askQty.product.allowsDecimal}
+          fmt={fmt}
+          onCancel={() => setAskQty(null)}
+          onConfirm={(qty) => {
+            addToCart(askQty.product, askQty.packaging, qty);
+            setAskQty(null);
+            searchRef.current?.focus();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Quantité demandée par le client, avant d'ajouter l'article au panier. */
+function QuantityDialog({
+  name,
+  unit,
+  price,
+  allowsDecimal,
+  fmt,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  unit: string;
+  price: number;
+  allowsDecimal: boolean;
+  fmt: (n: number) => string;
+  onCancel: () => void;
+  onConfirm: (qty: number) => void;
+}) {
+  const [value, setValue] = useState("1");
+  const qty = parseFloat(value.replace(",", ".")) || 0;
+  const valid = qty > 0 && (allowsDecimal || Number.isInteger(qty));
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4" onClick={onCancel}>
+      <form
+        className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (valid) onConfirm(qty);
+        }}
+      >
+        <p className="text-sm text-gray-500">Combien ?</p>
+        <h3 className="font-semibold text-gray-900">{name}</h3>
+        <p className="text-xs text-gray-500">
+          {fmt(price)} / {unit}
+        </p>
+        <div className="mt-4 flex items-center gap-2">
+          <button type="button" onClick={() => setValue(String(Math.max(1, qty - 1)))} className="h-12 w-12 rounded-xl bg-gray-100 text-xl" aria-label="Moins">
+            −
+          </button>
+          <input
+            autoFocus
+            inputMode={allowsDecimal ? "decimal" : "numeric"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onFocus={(e) => e.target.select()}
+            className="h-12 min-w-0 flex-1 rounded-xl border-2 border-blue-500 text-center text-2xl font-bold"
+            aria-label={`Quantité (${unit})`}
+          />
+          <button type="button" onClick={() => setValue(String(qty + 1))} className="h-12 w-12 rounded-xl bg-gray-100 text-xl" aria-label="Plus">
+            +
+          </button>
+        </div>
+        <div className="mt-2 flex gap-1.5">
+          {[1, 2, 3, 5, 10].map((v) => (
+            <button key={v} type="button" onClick={() => setValue(String(v))} className={cn("flex-1 rounded-lg border py-1.5 text-sm", qty === v ? "border-blue-600 bg-blue-50 text-blue-800" : "border-gray-300")}>
+              {v}
+            </button>
+          ))}
+        </div>
+        <p className="mt-4 flex justify-between text-sm">
+          <span className="text-gray-600">Montant</span>
+          <strong className="text-lg text-gray-900">{fmt(valid ? Math.round(qty * price * 100) / 100 : 0)}</strong>
+        </p>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button type="button" onClick={onCancel} className="rounded-xl border border-gray-300 py-3 text-sm">
+            Annuler
+          </button>
+          <button type="submit" disabled={!valid} className="rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white disabled:opacity-40">
+            Ajouter
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -798,77 +910,124 @@ function PaymentPanel({
   onValidate: () => void;
 }) {
   const update = (idx: number, patch: Partial<PaymentEntry>) => setPayments(payments.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
-  const quickCash = [...new Set([total, Math.ceil(total / 500) * 500, Math.ceil(total / 1000) * 1000, Math.ceil(total / 5000) * 5000])].filter((v) => v > 0).slice(0, 4);
+  const single = payments.length === 1;
+  const method = payments[0]?.method ?? "CASH";
+  const tendered = payments[0]?.amount ?? 0;
+  const quickCash = [...new Set([total, Math.ceil(total / 1000) * 1000, Math.ceil(total / 5000) * 5000, Math.ceil(total / 10000) * 10000])].filter((v) => v > 0).slice(0, 4);
+  const choose = (m: PaymentMethod) => setPayments([{ method: m, amount: m === "CASH" ? 0 : total }]);
+  void customer;
+  void setCustomer;
+  void online;
 
   return (
     <div className="space-y-3">
-      {payments.map((p, idx) => (
-        <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
-          <select
-            value={p.method}
-            onChange={(e) => update(idx, { method: e.target.value as PaymentMethod })}
-            className="min-w-0 w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
-            aria-label="Mode de paiement"
-          >
+      <div className="rounded-xl bg-blue-50 px-3 py-2 text-center">
+        <p className="text-xs text-blue-900">Total à payer</p>
+        <p className="text-2xl font-black tabular-nums text-blue-900">{fmt(total)}</p>
+      </div>
+
+      {single ? (
+        <>
+          <div className="grid grid-cols-2 gap-1.5">
             {(Object.keys(METHODS) as PaymentMethod[]).map((m) => (
-              <option key={m} value={m}>
+              <button
+                key={m}
+                onClick={() => choose(m)}
+                className={cn("rounded-lg border py-2 text-sm font-medium", method === m ? "border-blue-600 bg-blue-600 text-white" : "border-gray-300 text-gray-700 hover:bg-gray-50")}
+              >
                 {METHODS[m]}
-              </option>
+              </button>
             ))}
-          </select>
-          <input
-            type="number"
-            inputMode="numeric"
-            value={p.amount || ""}
-            onChange={(e) => update(idx, { amount: parseFloat(e.target.value) || 0 })}
-            className="min-w-0 w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
-            placeholder="Montant"
-            aria-label="Montant"
-          />
-          {payments.length > 1 ? (
+          </div>
+
+          {method === "CASH" ? (
+            <>
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-gray-600">Combien le client a remis ?</span>
+                <input
+                  autoFocus
+                  type="number"
+                  inputMode="numeric"
+                  value={tendered || ""}
+                  onChange={(e) => update(0, { amount: parseFloat(e.target.value) || 0 })}
+                  placeholder="Montant remis"
+                  className="w-full rounded-lg border-2 border-gray-300 px-3 py-2.5 text-right text-lg font-bold tabular-nums focus:border-blue-500 focus:outline-none"
+                  aria-label="Montant remis par le client"
+                />
+              </label>
+              <div className="flex flex-wrap gap-1">
+                {quickCash.map((v) => (
+                  <button key={v} onClick={() => update(0, { amount: v })} className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50">
+                    {v === total ? "Compte exact" : fmt(v)}
+                  </button>
+                ))}
+              </div>
+              <div className={cn("flex items-center justify-between rounded-lg px-3 py-2", tendered >= total ? "bg-green-50 text-green-900" : "bg-gray-50 text-gray-500")}>
+                <span className="text-sm">Monnaie à rendre</span>
+                <strong className="text-xl tabular-nums">{tendered >= total ? fmt(change) : "—"}</strong>
+              </div>
+            </>
+          ) : (
+            <input
+              value={payments[0].reference ?? ""}
+              onChange={(e) => update(0, { reference: e.target.value })}
+              placeholder="Référence de la transaction (facultatif)"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+          )}
+        </>
+      ) : (
+        payments.map((p, idx) => (
+          <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+            <select
+              value={p.method}
+              onChange={(e) => update(idx, { method: e.target.value as PaymentMethod })}
+              className="min-w-0 w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
+              aria-label="Mode de paiement"
+            >
+              {(Object.keys(METHODS) as PaymentMethod[]).map((m) => (
+                <option key={m} value={m}>
+                  {METHODS[m]}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={p.amount || ""}
+              onChange={(e) => update(idx, { amount: parseFloat(e.target.value) || 0 })}
+              className="min-w-0 w-full border border-gray-300 rounded-lg px-2 py-2 text-sm"
+              placeholder="Montant"
+              aria-label="Montant"
+            />
             <button onClick={() => setPayments(payments.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-600 px-1" aria-label="Retirer ce paiement">
               ✕
             </button>
-          ) : (
-            <span />
-          )}
-          {(p.method === "MOBILE_MONEY" || p.method === "TRANSFER" || p.method === "CARD") && (
-            <input
-              value={p.reference ?? ""}
-              onChange={(e) => update(idx, { reference: e.target.value })}
-              placeholder="Référence de transaction"
-              className="col-span-3 border border-gray-300 rounded-lg px-2 py-1.5 text-xs"
-            />
-          )}
-        </div>
-      ))}
-
-      {payments.length === 1 && payments[0].method === "CASH" && (
-        <div className="flex flex-wrap gap-1">
-          {quickCash.map((v) => (
-            <button key={v} onClick={() => update(0, { amount: v })} className="rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50">
-              {fmt(v)}
-            </button>
-          ))}
-        </div>
+            {(p.method === "MOBILE_MONEY" || p.method === "TRANSFER" || p.method === "CARD") && (
+              <input
+                value={p.reference ?? ""}
+                onChange={(e) => update(idx, { reference: e.target.value })}
+                placeholder="Référence de transaction"
+                className="col-span-3 border border-gray-300 rounded-lg px-2 py-1.5 text-xs"
+              />
+            )}
+          </div>
+        ))
       )}
 
       <button
         onClick={() => setPayments([...payments, { method: "MOBILE_MONEY", amount: Math.max(0, total - payments.reduce((s, x) => s + x.amount, 0)) }])}
         className="text-xs text-blue-600 hover:underline"
       >
-        + Paiement mixte (ajouter un mode)
+        + Paiement mixte (espèces + Mobile Money…)
       </button>
 
-      {/* Client facultatif : la facture est alors établie à son nom (nécessite le réseau) */}
-      {online && <InvoiceCustomer customer={customer} setCustomer={setCustomer} />}
-
-      {change > 0 && (
+      {!single && change > 0 && (
         <div className="bg-green-50 rounded-lg p-2 text-sm text-green-900">
           Monnaie à rendre : <strong>{fmt(change)}</strong>
         </div>
       )}
-      {error && <p className="text-xs text-red-600">{error}</p>}
+      {error && tendered > 0 && <p className="text-xs text-red-600">{error}</p>}
 
       <div className="grid grid-cols-2 gap-2">
         <button onClick={onBack} className="py-2.5 border border-gray-300 text-gray-700 rounded-xl text-sm hover:bg-gray-50">
@@ -886,14 +1045,3 @@ function PaymentPanel({
   );
 }
 
-function InvoiceCustomer({ customer, setCustomer }: { customer: Customer | null; setCustomer: (c: Customer | null) => void }) {
-  const [open, setOpen] = useState(false);
-  if (!customer && !open) {
-    return (
-      <button className="text-xs text-blue-600 hover:underline block" onClick={() => setOpen(true)}>
-        + Facture au nom d&apos;un client (facultatif)
-      </button>
-    );
-  }
-  return <CustomerPicker customer={customer} setCustomer={setCustomer} />;
-}

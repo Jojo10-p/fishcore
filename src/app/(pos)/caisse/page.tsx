@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import POSInterface, { type SaleSnapshot } from "@/components/pos/pos-interface";
 import { PrintArea, printInFrame, snapshotToTicket, useAutoPrint } from "@/components/pos/printing";
 import type { TicketData } from "@/components/documents/ticket-80";
@@ -33,6 +34,8 @@ interface Register {
   name: string;
   centerId: string;
   openSession: { id: string; cashierId: string; cashier: { firstName: string; lastName: string } } | null;
+  /** Montant compté à la dernière clôture : c'est le fond du matin. */
+  lastClosing: { amount: string | null; closedAt: string | null } | null;
 }
 
 const SESSION_KEY = "fishcore-open-cash-session";
@@ -178,7 +181,10 @@ function OpenSessionScreen({
     apiGet<{ data: Register[] }>(`/api/cash/registers?centerId=${centerId}`)
       .then((r) => {
         setRegisters(r.data);
-        setRegisterId(r.data.find((x) => !x.openSession)?.id ?? "");
+        const free = r.data.find((x) => !x.openSession);
+        setRegisterId(free?.id ?? "");
+        // Ouverture = clôture de la veille
+        if (free?.lastClosing?.amount != null) setOpeningBalance(String(Math.round(Number(free.lastClosing.amount))));
       })
       .catch((e) => setError(errorMessage(e)));
   }, [centerId, online]);
@@ -247,7 +253,14 @@ function OpenSessionScreen({
           )}
         </Field>
 
-        <Field label={`Fond de caisse (${currencyLabel(currency)})`} hint="Montant en espèces présent dans le tiroir au début du service.">
+        <Field
+          label={`Fond de caisse (${currencyLabel(currency)})`}
+          hint={
+            registers?.find((r) => r.id === registerId)?.lastClosing?.closedAt
+              ? `Repris de la clôture du ${new Date(registers.find((r) => r.id === registerId)!.lastClosing!.closedAt!).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}. Corrigez si le tiroir contient autre chose.`
+              : "Montant en espèces présent dans le tiroir au début du service."
+          }
+        >
           <Input inputMode="numeric" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" />
         </Field>
 
@@ -337,6 +350,7 @@ function ActiveRegister({
         center: { id: cashSession.centerId, name: session?.centers.find((c) => c.id === cashSession.centerId)?.name ?? "", address: null, city: null, phone: null },
         registerName: cashSession.registerName,
         cashierFirstName: session?.user.firstName ?? "",
+        cashierRole: session?.user.role,
       };
       setPrintJob({ ticket: snapshotToTicket(sale.snapshot, h), nonce: Date.now() });
     },
@@ -352,6 +366,8 @@ function ActiveRegister({
     [autoPrint, printLast, cashSession.id]
   );
   const [showClose, setShowClose] = useState(false);
+  const [showExpense, setShowExpense] = useState(false);
+  const online = useOnline();
 
   // Après chaque synchro : catalogue rechargé, réserve de numéros complétée si besoin
   const onSyncComplete = useCallback(() => {
@@ -406,6 +422,9 @@ function ActiveRegister({
             )}
           </span>
         )}
+        <Button variant="secondary" className="px-3 py-1.5" onClick={() => setShowExpense(true)} disabled={!online}>
+          💸 Dépense
+        </Button>
         <Button variant="danger" className="px-3 py-1.5" onClick={() => setShowClose(true)}>
           Clôturer
         </Button>
@@ -423,6 +442,14 @@ function ActiveRegister({
         />
       </div>
 
+      {showExpense && (
+        <ExpenseModal
+          sessionId={cashSession.id}
+          centerId={cashSession.centerId}
+          currency={currency}
+          onClose={() => setShowExpense(false)}
+        />
+      )}
       <CloseModal
         open={showClose}
         onClose={() => setShowClose(false)}
@@ -458,7 +485,7 @@ function CloseModal({
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ theoreticalBalance: string; declaredBalance: string; discrepancy: string; totalSales: string } | null>(null);
+  const [result, setResult] = useState<CloseResult | null>(null);
 
   const close = async () => {
     setBusy(true);
@@ -469,7 +496,7 @@ function CloseModal({
       if (await hasUnsyncedSales(sessionId)) {
         throw new Error("Des ventes de cette caisse n'ont pas encore été envoyées au serveur. Réessayez quand la connexion est stable.");
       }
-      const res = await apiSend<{ data: { theoreticalBalance: string; declaredBalance: string; discrepancy: string; totalSales: string } }>(
+      const res = await apiSend<{ data: CloseResult }>(
         "/api/cash/sessions",
         { action: "close", sessionId, declaredBalance: Number(declared || 0), notes: notes || undefined }
       );
@@ -482,22 +509,31 @@ function CloseModal({
   };
 
   if (result) {
-    const gap = Number(result.discrepancy);
     return (
-      <Modal open={open} onClose={onClosed} title="Caisse clôturée" footer={<Button onClick={onClosed}>Terminer</Button>}>
-        <dl className="grid grid-cols-2 gap-y-2 text-sm">
-          <dt className="text-gray-500">Encaissements</dt>
-          <dd className="text-right"><Money value={result.totalSales} currency={currency} /></dd>
-          <dt className="text-gray-500">Solde théorique</dt>
-          <dd className="text-right"><Money value={result.theoreticalBalance} currency={currency} /></dd>
-          <dt className="text-gray-500">Montant compté</dt>
-          <dd className="text-right"><Money value={result.declaredBalance} currency={currency} /></dd>
-          <dt className="font-semibold">Écart</dt>
-          <dd className={`text-right font-semibold ${gap === 0 ? "text-green-700" : "text-red-700"}`}>
-            <Money value={gap} currency={currency} />
-          </dd>
-        </dl>
+      <Modal
+        open={open}
+        onClose={onClosed}
+        title="Caisse clôturée"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => window.print()}>
+              🖨 Imprimer le journal
+            </Button>
+            <Button onClick={onClosed}>Terminer</Button>
+          </>
+        }
+      >
+        <CashJournal r={result} currency={currency} />
         <p className="text-xs text-gray-500">La clôture sera validée par un responsable. Elle ne peut plus être modifiée.</p>
+        {/* Version imprimable (ticket 80 mm), hors de l'interface masquée à l'impression */}
+        {typeof document !== "undefined" &&
+          createPortal(
+            <div className="cash-journal-print hidden w-[72mm] bg-white p-[2mm] text-black print:block">
+              <style>{`@page { margin: 0; } @media print { body > *:not(.cash-journal-print) { display: none !important; } }`}</style>
+              <CashJournal r={result} currency={currency} printable />
+            </div>,
+            document.body
+          )}
       </Modal>
     );
   }
@@ -526,6 +562,162 @@ function CloseModal({
       <Field label="Remarque (facultatif)">
         <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
       </Field>
+    </Modal>
+  );
+}
+
+interface CloseResult {
+  theoreticalBalance: string;
+  declaredBalance: string;
+  discrepancy: string;
+  totalSales: string;
+  journal?: {
+    openedAt: string;
+    closedAt: string | null;
+    registerName: string;
+    cashier: { firstName: string; lastName: string; role: string };
+    openingBalance: string;
+    salesCount: number;
+    totalCash: string;
+    totalMobileMoney: string;
+    totalCard: string;
+    totalOther: string;
+    totalCashOut: string;
+    expenses: Array<{ category: string; description: string | null; amount: string; date: string }>;
+  };
+}
+
+/** Journal de caisse de la journée : ouverture, ventes par mode, dépenses, clôture. */
+function CashJournal({ r, currency, printable = false }: { r: CloseResult; currency: string; printable?: boolean }) {
+  const j = r.journal;
+  const gap = Number(r.discrepancy);
+  const row = (label: string, value: string | number, strong = false, tone = "") => (
+    <div className={`flex justify-between gap-2 ${strong ? "font-semibold" : ""} ${tone}`}>
+      <span className={printable ? "" : "text-gray-600"}>{label}</span>
+      <span className="tabular-nums">
+        <Money value={value} currency={currency} />
+      </span>
+    </div>
+  );
+  return (
+    <div className={printable ? "space-y-1 text-[11.5px]" : "space-y-1.5 text-sm"}>
+      {printable && (
+        <div className="mb-2 text-center">
+          <p className="text-[15px] font-black">JOURNAL DE CAISSE</p>
+          {j && (
+            <p>
+              {j.registerName} — {j.cashier.firstName}
+            </p>
+          )}
+        </div>
+      )}
+      {j && (
+        <p className={printable ? "" : "text-xs text-gray-500"}>
+          Ouverte le {new Date(j.openedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
+          {j.closedAt && ` · clôturée le ${new Date(j.closedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}`}
+        </p>
+      )}
+      {j && row("Fond de caisse (ouverture)", j.openingBalance)}
+      {row(`Ventes${j ? ` (${j.salesCount})` : ""}`, r.totalSales, true)}
+      {j && Number(j.totalCash) > 0 && row("  dont espèces", j.totalCash)}
+      {j && Number(j.totalMobileMoney) > 0 && row("  dont Mobile Money", j.totalMobileMoney)}
+      {j && Number(j.totalCard) > 0 && row("  dont carte", j.totalCard)}
+      {j && Number(j.totalOther) > 0 && row("  dont autres", j.totalOther)}
+      {j && j.expenses.length > 0 && (
+        <div className="border-t border-dashed border-gray-300 pt-1">
+          <p className="font-semibold">Dépenses</p>
+          {j.expenses.map((e, i) => (
+            <div key={i} className="flex justify-between gap-2">
+              <span className="min-w-0 truncate">
+                {e.category}
+                {e.description ? ` — ${e.description}` : ""}
+              </span>
+              <span className="tabular-nums">
+                −<Money value={e.amount} currency={currency} />
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="border-t border-gray-300 pt-1">
+        {row("Espèces attendues", r.theoreticalBalance)}
+        {row("Espèces comptées", r.declaredBalance, true)}
+        {row("Écart", r.discrepancy, true, gap === 0 ? "text-green-700" : "text-red-700")}
+      </div>
+      {printable && (
+        <div className="mt-6 grid grid-cols-2 gap-2 text-[10px]">
+          <div className="h-12 border border-black p-1">Caissier</div>
+          <div className="h-12 border border-black p-1">Responsable</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const EXPENSE_CATEGORIES = ["Transport", "Manutention", "Électricité", "Eau", "Repas", "Petit matériel", "Entretien", "Autre"];
+
+/** Dépense payée avec l'argent de la caisse : sortie d'espèces enregistrée aussitôt. */
+function ExpenseModal({ sessionId, centerId, currency, onClose }: { sessionId: string; centerId: string; currency: string; onClose: () => void }) {
+  const [category, setCategory] = useState("Transport");
+  const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiSend("/api/expenses", { centerId, sessionId, category, amount: Number(amount), description: description || undefined, method: "CASH" });
+      setDone(true);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Dépense payée avec la caisse"
+      footer={
+        done ? (
+          <Button onClick={onClose}>Fermer</Button>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={onClose}>
+              Annuler
+            </Button>
+            <Button onClick={save} loading={busy} disabled={!(Number(amount) > 0) || !description.trim()}>
+              Enregistrer la dépense
+            </Button>
+          </>
+        )
+      }
+    >
+      {error && <Alert>{error}</Alert>}
+      {done ? (
+        <Alert tone="green">
+          Dépense de <Money value={Number(amount)} currency={currency} /> enregistrée : elle est retirée des espèces attendues à la clôture.
+        </Alert>
+      ) : (
+        <>
+          <Field label="Pour quoi ?">
+            <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+              {EXPENSE_CATEGORIES.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={`Montant (${currencyLabel(currency)})`}>
+            <Input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))} autoFocus />
+          </Field>
+          <Field label="Détail (à quoi ça a servi)">
+            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="ex. Zémidjan pour livrer le garage Kpota" />
+          </Field>
+        </>
+      )}
     </Modal>
   );
 }

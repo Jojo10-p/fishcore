@@ -126,6 +126,10 @@ export async function POST(req: NextRequest) {
     // 6. Paiements : la somme doit couvrir le total ; l'excédent n'est admis
     //    que sous forme de rendu monnaie sur les espèces.
     const payments = settlePayments(data.payments, pricing.totalAmount);
+    // Espèces : ce que le client a remis et la monnaie rendue (pour le ticket)
+    const tendered = data.payments.filter((p) => p.method === "CASH").reduce((s, p) => s + Number(p.amount), 0);
+    const paidTotal = data.payments.reduce((s, p) => s + Number(p.amount), 0);
+    const changeGiven = Math.max(0, Math.round((paidTotal - Number(pricing.totalAmount)) * 100) / 100);
 
     // Heure d'une vente hors connexion : acceptée si elle tombe pendant la session
     const soldAt =
@@ -212,6 +216,9 @@ export async function POST(req: NextRequest) {
           sessionId: cashSession.id,
           cashierId: user.id,
           customerId: data.customerId,
+          customerName: data.customerName || null,
+          amountTendered: tendered > 0 ? tendered : null,
+          changeGiven: tendered > 0 ? changeGiven : null,
           saleNumber,
           invoiceSeq,
           subtotal: pricing.subtotal,

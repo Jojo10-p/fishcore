@@ -191,3 +191,67 @@ test("texte : plusieurs boutiques → nom de la boutique ; unités au pluriel", 
   );
   assert.equal(p.body, "Plus que 3 seaux de Total Rubia 15W-40 — seau 20 L (Dépôt Calavi).");
 });
+
+// ── Caisse GJH : nom du client, montant remis, dépense depuis la caisse, fournisseur dans l'alerte ──
+const receiptsRoute = await import("@/app/api/goods-receipts/route");
+const validateRoute = await import("@/app/api/goods-receipts/[id]/validate/route");
+const suppliersRoute = await import("@/app/api/suppliers/route");
+const expensesRoute = await import("@/app/api/expenses/route");
+const saleIdRoute = await import("@/app/api/sales/[id]/route");
+const registersRoute = await import("@/app/api/cash/registers/route");
+
+test("vente : nom du client, montant remis et monnaie rendue enregistrés", async () => {
+  const r = await call(salesRoute.POST, {
+    path: "/api/sales",
+    cookie: ctx.cashier,
+    body: { sessionId: ctx.session, idempotencyKey: idem(), customerName: "Garage Kpota", lines: [{ productId: ctx.product, quantity: 1, unitPrice: 5000 }], payments: [{ method: "CASH", amount: 10000 }] },
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  await waitForStockAlerts();
+  take();
+  const d = await call(saleIdRoute.GET, { path: `/api/sales/${r.json.data.id}`, cookie: ctx.owner, params: { id: r.json.data.id } });
+  assert.equal(d.json.data.customerName, "Garage Kpota");
+  assert.equal(Number(d.json.data.amountTendered), 10000);
+  assert.equal(Number(d.json.data.changeGiven), 5000);
+  assert.equal(d.json.data.cashier.role, "CASHIER");
+});
+
+test("le caissier enregistre une dépense payée avec sa caisse ; la clôture la déduit et sert de fond le lendemain", async () => {
+  const e = await call(expensesRoute.POST, {
+    path: "/api/expenses",
+    cookie: ctx.cashier,
+    body: { centerId: ctx.center, sessionId: ctx.session, category: "Transport", amount: 2000, description: "Zémidjan", method: "CASH" },
+  });
+  assert.equal(e.status, 201, JSON.stringify(e.json));
+  const close = await call(cashRoute.POST, { path: "/api/cash/sessions", cookie: ctx.cashier, body: { action: "close", sessionId: ctx.session, declaredBalance: 1000 } });
+  assert.equal(close.status, 200, JSON.stringify(close.json));
+  const j = close.json.data.journal;
+  assert.equal(j.expenses.length, 1);
+  assert.equal(j.expenses[0].category, "Transport");
+  assert.equal(Number(j.totalCashOut), 2000);
+  assert.ok(j.salesCount > 0);
+  const regs = await call(registersRoute.GET, { path: `/api/cash/registers?centerId=${ctx.center}`, cookie: ctx.cashier });
+  assert.equal(Number(regs.json.data[0].lastClosing.amount), 1000, "fond du matin = clôture de la veille");
+  // nouvelle session pour la suite
+  const register = await prisma.cashRegister.findFirstOrThrow({ where: { centerId: ctx.center } });
+  ctx.session = (await call(cashRoute.POST, { path: "/api/cash/sessions", cookie: ctx.cashier, body: { action: "open", cashRegisterId: register.id, openingBalance: 1000 } })).json.data.id;
+});
+
+test("alerte « presque épuisé » : dit chez quel fournisseur racheter et son numéro", async () => {
+  const sup = await call(suppliersRoute.POST, { path: "/api/suppliers", cookie: ctx.owner, body: { name: "Distrilub Cotonou", phone: "+229 01 97 00 11 22" } });
+  const stock = await prisma.stock.findFirstOrThrow({ where: { centerId: ctx.center, productId: ctx.product } });
+  const add = 20 - Number(stock.quantity);
+  const gr = await call(receiptsRoute.POST, {
+    path: "/api/goods-receipts",
+    cookie: ctx.owner,
+    body: { centerId: ctx.center, supplierId: sup.json.data.id, reference: "BL-1", receivedAt: new Date().toISOString(), lines: [{ productId: ctx.product, quantity: add, unitPrice: 4000, totalPrice: add * 4000 }] },
+  });
+  assert.equal(gr.status, 201, JSON.stringify(gr.json));
+  await call(validateRoute.POST, { path: `/api/goods-receipts/${gr.json.data.id}/validate`, cookie: ctx.owner, params: { id: gr.json.data.id }, body: {} });
+  await waitForStockAlerts();
+  take();
+  await sell(13); // 7
+  const s = take();
+  assert.equal(s[0].payload.title, "Stock presque épuisé");
+  assert.equal(s[0].payload.body, "Plus que 7 bidons de Huile nationale 1 L. Acheté chez Distrilub Cotonou : contactez-le au +229 01 97 00 11 22.");
+});

@@ -15,6 +15,9 @@ interface SaleDetail {
   totalAmount: string;
   taxAmount: string;
   customer: { name: string; phone: string | null; taxId: string | null } | null;
+  customerName: string | null;
+  amountTendered: string | null;
+  changeGiven: string | null;
   lines: Array<{
     id: string;
     quantity: string;
@@ -27,7 +30,7 @@ interface SaleDetail {
   }>;
   payments: Array<{ method: string; amount: string; reference: string | null; notes: string | null }>;
   refunds: Array<{ amount: string }>;
-  cashier: { firstName: string };
+  cashier: { firstName: string; role: string };
   session: { cashRegister: { center: { name: string; address: string | null; city: string | null; phone: string | null } } };
   company: TicketData["company"] & { requiresPickup: boolean };
 }
@@ -38,8 +41,11 @@ function toTicket(s: SaleDetail): TicketData {
     date: s.createdAt,
     company: s.company,
     center: s.session.cashRegister.center,
-    customer: s.customer,
+    customer: s.customer ?? (s.customerName ? { name: s.customerName } : null),
     cashierFirstName: s.cashier.firstName,
+    cashierRole: s.cashier.role,
+    tendered: s.amountTendered != null ? Number(s.amountTendered) : null,
+    change: s.changeGiven != null ? Number(s.changeGiven) : null,
     lines: s.lines.map((l) => ({
       key: l.id,
       name: l.product.name,

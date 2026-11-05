@@ -54,6 +54,7 @@ export interface OfflineSale {
   centerId: string;
   companyId: string;
   customerId?: string;
+  customerName?: string;
   lines: OfflineSaleLine[];
   payments: OfflinePayment[];
   subtotal: number;
@@ -138,6 +139,7 @@ export interface TicketHeader {
   center: { id: string; name: string; address: string | null; city: string | null; phone: string | null };
   registerName: string;
   cashierFirstName: string;
+  cashierRole?: string;
 }
 
 /** Numérotation des factures d'une session : plages confiées et numéros déjà utilisés. */

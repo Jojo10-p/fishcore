@@ -119,6 +119,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "sale:create", "sale:view",
     "sale:cancel_request",
     "cash:open_session", "cash:close_session", "cash:view_session",
+    "expense:create", // dépense payée avec l'argent de sa caisse
     "customer:view", "customer:edit",
     "quote:view", "quote:create",
     "document:create",
@@ -196,6 +197,6 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   CENTER_MANAGER: "Gérant de centre",
   CASHIER: "Caissier",
   ACCOUNTANT: "Comptable",
-  STOCK_MANAGER: "Gestionnaire de stock",
+  STOCK_MANAGER: "Magasinier",
   SALES_EMPLOYEE: "Employé vendeur",
 };

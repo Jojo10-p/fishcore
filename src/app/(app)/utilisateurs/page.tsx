@@ -22,7 +22,7 @@ const ROLES: Record<string, string> = {
   CENTER_MANAGER: "Gérant",
   CASHIER: "Caissier",
   ACCOUNTANT: "Comptable",
-  STOCK_MANAGER: "Gestionnaire de stock",
+  STOCK_MANAGER: "Magasinier",
   SALES_EMPLOYEE: "Employé vendeur",
 };
 

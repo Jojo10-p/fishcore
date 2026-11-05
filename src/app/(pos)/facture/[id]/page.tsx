@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ROLE_LABELS, stamp } from "@/components/documents/ticket-80";
 import { use, useEffect, useState } from "react";
 import { apiGet, errorMessage } from "@/lib/client/api";
 import { formatCurrency } from "@/lib/utils";
@@ -41,8 +42,11 @@ interface InvoiceData {
   }>;
   payments: Array<{ id: string; method: string; amount: string; reference: string | null; notes: string | null }>;
   refunds: Array<{ id: string; amount: string }>;
-  cashier: { firstName: string; lastName: string };
+  cashier: { firstName: string; lastName: string; role: string };
   customer: DocParty | null;
+  customerName: string | null;
+  amountTendered: string | null;
+  changeGiven: string | null;
   quote: { id: string; number: string } | null;
   deliveries: Array<{ id: string; number: number; createdAt: string; deliveredBy: string; lines: Array<{ saleLineId: string; quantity: string }> }>;
   session: { cashRegister: { name: string; center: { name: string; address: string | null; city: string | null; phone: string | null } } };
@@ -101,12 +105,15 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
         meta={[
           ["Date", dateTime(sale.createdAt)],
           ["Caisse", sale.session.cashRegister.name],
-          ["Vendeur", `${sale.cashier.firstName} ${sale.cashier.lastName}`],
+          [ROLE_LABELS[sale.cashier.role] ?? "Caissier", sale.cashier.firstName],
           ...(sale.quote ? ([["Devis", sale.quote.number]] as Array<[string, string]>) : []),
         ]}
       />
 
-      <PartyBlock label="Facturé à" party={sale.customer} />
+      <PartyBlock
+        label="Facturé à"
+        party={sale.customer ?? (sale.customerName ? { name: sale.customerName, phone: null, address: null, taxId: null } : null)}
+      />
 
       {cancelled ? <Stamp text="ANNULÉE" tone="red" /> : <Stamp text="PAYÉE" tone="green" />}
 
@@ -136,9 +143,17 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
               <li key={p.id}>
                 {METHODS[p.method] ?? p.method} : <strong>{money(p.amount)}</strong>
                 {p.reference && <span className="text-gray-600"> (réf. {p.reference})</span>}
-                {p.notes && <span className="block text-gray-500">{p.notes}</span>}
+                {p.notes && sale.amountTendered == null && <span className="block text-gray-500">{p.notes}</span>}
               </li>
             ))}
+            {sale.amountTendered != null && Number(sale.amountTendered) > 0 && (
+              <>
+                <li>
+                  Montant remis : <strong>{money(sale.amountTendered)}</strong>
+                </li>
+                <li className="font-semibold text-[#0b1f4b]">Monnaie rendue : {money(sale.changeGiven ?? 0)}</li>
+              </>
+            )}
             {sale.refunds.length > 0 && (
               <li className="text-red-700">Remboursé : {money(sale.refunds.reduce((s, r) => s + Number(r.amount), 0))}</li>
             )}
@@ -194,7 +209,7 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
       )}
 
       <Signatures labels={pickup ? ["Le client", "La caisse", "Le magasin"] : ["Le client", "La caisse"]} />
-      <DocumentFooter company={sale.company} />
+      <DocumentFooter company={sale.company} note={`${ROLE_LABELS[sale.cashier.role] ?? "Caissier"} : ${sale.cashier.firstName} — ${stamp(new Date(sale.createdAt))}`} />
     </A4Page>
   );
 }

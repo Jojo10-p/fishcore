@@ -41,10 +41,20 @@ export async function GET(req: NextRequest) {
       },
       orderBy: [{ centerId: "asc" }, { name: "asc" }],
     });
+    // Ouverture du matin = clôture de la veille (montant compté à la dernière clôture)
+    const lastClosed = await prisma.cashSession.findMany({
+      where: { cashRegisterId: { in: registers.map((r) => r.id) }, closedAt: { not: null } },
+      orderBy: { closedAt: "desc" },
+      distinct: ["cashRegisterId"],
+      select: { cashRegisterId: true, closingBalance: true, closedAt: true },
+    });
 
     return NextResponse.json({
       success: true,
-      data: registers.map(({ sessions, ...r }) => ({ ...r, openSession: sessions[0] ?? null })),
+      data: registers.map(({ sessions, ...r }) => {
+        const last = lastClosed.find((l) => l.cashRegisterId === r.id);
+        return { ...r, openSession: sessions[0] ?? null, lastClosing: last ? { amount: last.closingBalance, closedAt: last.closedAt } : null };
+      }),
     });
   } catch (error) {
     return handleApiError(error, "REGISTERS");

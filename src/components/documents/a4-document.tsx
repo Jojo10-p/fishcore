@@ -10,7 +10,8 @@ import { formatCurrency } from "@/lib/utils";
 // ─────────────────────────────────────────────
 // Une seule mise en page pour tous les documents : en-tête de l'entreprise
 // (mentions légales IFU / RCCM), bloc client, tableau, totaux, montant en
-// lettres, signatures. Pensée pour l'impression noir et blanc.
+// lettres, signatures. Aux couleurs GJH (bleu nuit et or) ; lisible aussi
+// imprimée en noir et blanc.
 
 export interface DocCompany {
   tradeName: string;
@@ -75,7 +76,7 @@ export function Barcode({ value, height = 38 }: { value: string; height?: number
 export function A4Page({ children, toolbar }: { children: React.ReactNode; toolbar?: React.ReactNode }) {
   return (
     <div className="min-h-dvh bg-gray-100 py-6 print:bg-white print:py-0">
-      <style>{`@page { size: A4; margin: 12mm; } @media print { html, body { background: #fff; } }`}</style>
+      <style>{`@page { size: A4; margin: 12mm; } @media print { html, body { background: #fff; } article { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }`}</style>
       <div className="mx-auto mb-4 flex max-w-[210mm] flex-wrap justify-center gap-2 px-4 print:hidden">
         <button onClick={() => window.print()} className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">
           Imprimer
@@ -107,13 +108,13 @@ export function DocumentHeader({
 }) {
   const place = [center?.address ?? company.address, center?.city ?? company.city].filter(Boolean).join(", ");
   return (
-    <header className="flex items-start justify-between gap-6 border-b-2 border-gray-900 pb-4">
+    <header className="relative flex items-start justify-between gap-6 border-b-4 border-[#0b1f4b] pb-4 after:absolute after:-bottom-[7px] after:left-0 after:h-[3px] after:w-1/3 after:bg-[#e3a82b]">
       <div className="min-w-0">
         <div className="flex items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element -- logo GJH statique */}
           <img src="/icons/gjh-logo.png" alt="" className="h-16 w-auto object-contain" />
           <div>
-            <p className="text-xl font-bold uppercase tracking-wide">{company.tradeName}</p>
+            <p className="text-xl font-bold uppercase tracking-wide text-[#0b1f4b]">{company.tradeName}</p>
             {company.legalName && company.legalName !== company.tradeName && <p className="text-[11px] text-gray-600">{company.legalName}</p>}
           </div>
         </div>
@@ -135,8 +136,8 @@ export function DocumentHeader({
         </div>
       </div>
       <div className="shrink-0 text-right">
-        <p className="text-2xl font-bold tracking-wider">{title}</p>
-        <p className="mt-0.5 text-sm font-semibold">N° {number}</p>
+        <p className="text-2xl font-black tracking-wider text-[#0b1f4b]">{title}</p>
+        <p className="mt-0.5 inline-block rounded bg-[#fdf6e3] px-2 py-0.5 text-sm font-semibold text-[#8a5a00]">N° {number}</p>
         <dl className="mt-2 space-y-0.5 text-[11px]">
           {meta.map(([k, v]) => (
             <div key={k} className="flex justify-end gap-2">
@@ -155,8 +156,8 @@ export function DocumentHeader({
 
 export function PartyBlock({ label, party }: { label: string; party: DocParty | null }) {
   return (
-    <section className="mt-5 ml-auto w-[48%] rounded border border-gray-300 p-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">{label}</p>
+    <section className="mt-5 ml-auto w-[48%] rounded-lg border border-[#e3a82b] border-l-4 bg-[#fffbf0] p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-[#8a5a00]">{label}</p>
       {party ? (
         <div className="mt-1 space-y-0.5">
           <p className="text-sm font-semibold">{party.name}</p>
@@ -177,7 +178,7 @@ export function LinesTable({ lines, currency, showTax }: { lines: DocLine[]; cur
   return (
     <table className="mt-5 w-full border-collapse text-[11.5px]">
       <thead>
-        <tr className="bg-gray-900 text-left text-white print:bg-gray-900">
+        <tr className="bg-[#0b1f4b] text-left text-white">
           <th className="px-2 py-1.5 font-semibold w-8">#</th>
           <th className="px-2 py-1.5 font-semibold">Désignation</th>
           <th className="px-2 py-1.5 font-semibold text-right">Qté</th>
@@ -190,7 +191,7 @@ export function LinesTable({ lines, currency, showTax }: { lines: DocLine[]; cur
       </thead>
       <tbody>
         {lines.map((l, i) => (
-          <tr key={l.id} className="border-b border-gray-200 align-top [break-inside:avoid]">
+          <tr key={l.id} className="border-b border-gray-200 align-top even:bg-[#f6f8fc] [break-inside:avoid]">
             <td className="px-2 py-1.5 text-gray-500">{i + 1}</td>
             <td className="px-2 py-1.5">
               <p className="font-medium">{l.name}</p>
@@ -241,7 +242,7 @@ export function TotalsBlock({
       <table className="w-[48%] text-[12px]">
         <tbody>
           {rows.map(([k, v, strong]) => (
-            <tr key={k} className={strong ? "border-y-2 border-gray-900 text-sm font-bold" : ""}>
+            <tr key={k} className={strong ? "border-y-2 border-[#e3a82b] bg-[#0b1f4b] text-sm font-bold text-white" : ""}>
               <td className="px-2 py-1">{k}</td>
               <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">{v}</td>
             </tr>
@@ -274,7 +275,7 @@ export function Signatures({ labels }: { labels: string[] }) {
 
 export function DocumentFooter({ company, note }: { company: DocCompany; note?: string }) {
   return (
-    <footer className="mt-8 border-t border-gray-300 pt-2 text-center text-[10px] text-gray-500 [break-inside:avoid]">
+    <footer className="mt-8 border-t-2 border-[#e3a82b] pt-2 text-center text-[10px] text-gray-500 [break-inside:avoid]">
       {company.invoiceNotes && <p className="whitespace-pre-line text-gray-700">{company.invoiceNotes}</p>}
       {note && <p className="mt-1">{note}</p>}
       <p className="mt-1">

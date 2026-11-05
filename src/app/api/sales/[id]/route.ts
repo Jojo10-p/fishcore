@@ -26,7 +26,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         lines: { orderBy: { id: "asc" }, include: { product: { select: { name: true, internalCode: true, baseUnit: { select: { symbol: true } } } } } },
         payments: true,
         refunds: true,
-        cashier: { select: { firstName: true, lastName: true } },
+        cashier: { select: { firstName: true, lastName: true, role: true } },
         customer: { select: { name: true, phone: true, email: true, address: true, taxId: true } },
         quote: { select: { id: true, number: true } },
         deliveries: {
