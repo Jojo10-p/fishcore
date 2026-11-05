@@ -20,7 +20,7 @@ const gCallback = await import("@/app/api/auth/google/callback/route");
 
 const ctx: Json = {};
 const tokenOf = (url: string) => url.split("/").pop()!;
-const invite = async (cookie: string, body: Json) => call(invitesRoute.POST, { path: "/api/invitations", cookie, body });
+const invite = async (cookie: string, body: Json) => call(invitesRoute.POST, { path: "/api/invitations", cookie, body: { kind: "link", ...body } });
 
 before(async () => {
   await resetDb();
@@ -172,7 +172,7 @@ test("Google : création du compte avec le lien d'invitation", async () => {
   assert.deepEqual([u.role, u.googleSub, u.firstName, u.lastName], ["STOCK_MANAGER", "g-111", "Mireille", "Agossou"]);
 });
 
-test("Google : connexion d'un compte existant, et refus sans compte ni invitation", async () => {
+test("Google : connexion d'un compte existant, et inscription sans invitation", async () => {
   const again = await googleFlow(null, { sub: "g-111", email: "mireille@gmail.com" });
   assert.match(again.location, /\/dashboard$/);
   assert.ok(again.session);
@@ -180,7 +180,75 @@ test("Google : connexion d'un compte existant, et refus sans compte ni invitatio
   const linked = await googleFlow(null, { sub: "g-222", email: "rachidi@exemple.com" });
   assert.ok(linked.session);
   assert.equal((await prisma.user.findUniqueOrThrow({ where: { email: "rachidi@exemple.com" } })).googleSub, "g-222");
+  // nouveau compte Google sans invitation : créé sans entreprise, il tapera le code du patron
   const unknown = await googleFlow(null, { sub: "g-999", email: "inconnu@gmail.com" });
-  assert.match(unknown.location, /\/login\?erreur=google-inconnu$/);
-  assert.equal(unknown.session, undefined);
+  assert.match(unknown.location, /\/bienvenue$/);
+  assert.ok(unknown.session);
+  assert.equal((await prisma.user.findUniqueOrThrow({ where: { email: "inconnu@gmail.com" } })).companyId, null);
+});
+
+// ── Inscription libre + code du patron ───────────────
+const signupRoute = await import("@/app/api/auth/signup/route");
+const joinRoute = await import("@/app/api/invitations/join/route");
+const productsRoute = await import("@/app/api/products/route");
+
+async function signup(email: string) {
+  const res = await signupRoute.POST(
+    new NextRequest("http://localhost:3000/api/auth/signup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ firstName: "Kevin", lastName: "Hounkpè", email, password: "monmotdepasse" }),
+    })
+  );
+  assert.equal(res.status, 201, await res.clone().text());
+  return (res as unknown as { cookies: { get: (n: string) => { value: string } } }).cookies.get("fishcore-session").value;
+}
+
+test("inscription libre : le compte existe mais n'a accès à rien", async () => {
+  ctx.kevin = await signup("kevin@exemple.com");
+  const me = await call(meRoute.GET, { path: "/api/auth/me", cookie: ctx.kevin });
+  assert.equal(me.json.data.company, null);
+  assert.deepEqual(me.json.data.permissions, []);
+  assert.equal((await call(productsRoute.GET, { path: "/api/products", cookie: ctx.kevin })).status, 403);
+  const again = await signupRoute.POST(new NextRequest("http://localhost:3000/api/auth/signup", { method: "POST", body: JSON.stringify({ firstName: "K", lastName: "H", email: "kevin@exemple.com", password: "monmotdepasse" }) }));
+  assert.equal(again.status, 409);
+});
+
+test("le patron donne un code : le compte rejoint GJH avec le bon poste", async () => {
+  const r = await invite(ctx.owner, { role: "CASHIER", centerId: ctx.center, label: "Kevin", kind: "code" });
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  assert.match(r.json.data.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  assert.match(r.json.data.signupUrl, /\/register$/);
+  const minutes = (new Date(r.json.data.expiresAt).getTime() - Date.now()) / 60000;
+  assert.ok(minutes > 29 && minutes <= 30, "valable 30 minutes");
+  // tapé en minuscules, sans tiret : accepté
+  const typed = r.json.data.code.replace("-", " ").toLowerCase();
+  const j = await call(joinRoute.POST, { path: "/api/invitations/join", cookie: ctx.kevin, body: { code: typed } });
+  assert.equal(j.status, 200, JSON.stringify(j.json));
+  assert.equal(j.json.data.roleName, "Caissier");
+  const me = await call(meRoute.GET, { path: "/api/auth/me", cookie: ctx.kevin });
+  assert.equal(me.json.data.company.tradeName, "GRACES JUMELLES HOUSE");
+  assert.equal(me.json.data.user.role, "CASHIER");
+  assert.ok(me.json.data.permissions.includes("sale:create"));
+  assert.equal((await call(productsRoute.GET, { path: "/api/products", cookie: ctx.kevin })).status, 200);
+  // le code ne sert qu'une fois, et un membre ne peut pas rejoindre une deuxième fois
+  assert.equal((await call(joinRoute.POST, { path: "/api/invitations/join", cookie: ctx.kevin, body: { code: r.json.data.code } })).status, 400);
+});
+
+test("codes faux : blocage 15 minutes après 5 essais ; code expiré refusé", async () => {
+  const c = await signup("estelle@exemple.com");
+  for (let i = 1; i <= 4; i++) {
+    const r = await call(joinRoute.POST, { path: "/api/invitations/join", cookie: c, body: { code: "AAAA-AAAA" } });
+    assert.equal(r.status, 400);
+  }
+  const fifth = await call(joinRoute.POST, { path: "/api/invitations/join", cookie: c, body: { code: "AAAA-AAAA" } });
+  assert.match(fifth.json.error, /15 minutes/);
+  const good = await invite(ctx.owner, { role: "ACCOUNTANT", centerId: ctx.center, kind: "code" });
+  const locked = await call(joinRoute.POST, { path: "/api/invitations/join", cookie: c, body: { code: good.json.data.code } });
+  assert.equal(locked.status, 429);
+  await prisma.user.update({ where: { email: "estelle@exemple.com" }, data: { joinLockedUntil: null } });
+  await prisma.invitation.update({ where: { id: good.json.data.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+  const expired = await call(joinRoute.POST, { path: "/api/invitations/join", cookie: c, body: { code: good.json.data.code } });
+  assert.equal(expired.status, 400);
+  assert.match(expired.json.error, /expiré/);
 });

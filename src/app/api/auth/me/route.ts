@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
         company: user.company,
         centers,
         // Pour adapter l'interface au rôle (le serveur reste seul juge)
-        permissions: getPermissions(auth.role),
+        permissions: user.company ? getPermissions(auth.role) : [],
       },
     });
   } catch (error) {

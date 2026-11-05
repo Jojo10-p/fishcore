@@ -4,12 +4,14 @@ import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 import { ApiError, getCurrentUser, handleApiError, parseBody, readJson, requireCompany, requirePermission } from "@/lib/auth";
 import { publicOrigin } from "@/lib/password-reset";
-import { INVITATION_DAYS, hashInviteToken, inviteUrl, newInviteToken } from "@/lib/invitations";
+import { CODE_MINUTES, INVITATION_DAYS, formatCode, hashInviteToken, inviteUrl, newInviteCode, newInviteToken } from "@/lib/invitations";
 
 const schema = z.object({
   role: z.enum(["COMPANY_OWNER", "CENTER_MANAGER", "CASHIER", "ACCOUNTANT", "STOCK_MANAGER", "SALES_EMPLOYEE"]),
   centerId: z.string().optional(),
   label: z.string().trim().max(60).optional(),
+  /** « code » : à taper dans son compte (30 min) ; « link » : lien WhatsApp (7 jours). */
+  kind: z.enum(["code", "link"]).default("code"),
 });
 
 // POST /api/invitations — créer un lien d'invitation (rôle + boutique)
@@ -18,7 +20,7 @@ export async function POST(req: NextRequest) {
     const user = await getCurrentUser(req);
     await requirePermission(user, "user:create");
     const companyId = requireCompany(user);
-    const { role, centerId, label } = parseBody(schema, await readJson(req));
+    const { role, centerId, label, kind } = parseBody(schema, await readJson(req));
     if (role === "COMPANY_OWNER" && user.role !== "COMPANY_OWNER") throw new ApiError(403, "Seul le propriétaire peut inviter un propriétaire", "FORBIDDEN");
     let center: string | null = null;
     if (role !== "COMPANY_OWNER") {
@@ -28,8 +30,8 @@ export async function POST(req: NextRequest) {
       if (user.role !== "COMPANY_OWNER" && !user.centerIds.includes(centerId)) throw new ApiError(403, "Vous ne pouvez inviter que dans vos boutiques", "FORBIDDEN");
       center = centerId;
     }
-    const token = newInviteToken();
-    const expiresAt = new Date(Date.now() + INVITATION_DAYS * 24 * 3600_000);
+    const token = kind === "code" ? newInviteCode() : newInviteToken();
+    const expiresAt = new Date(Date.now() + (kind === "code" ? CODE_MINUTES * 60_000 : INVITATION_DAYS * 24 * 3600_000));
     const inv = await prisma.invitation.create({
       data: { companyId, centerId: center, role, label: label || null, tokenHash: hashInviteToken(token), createdById: user.id, expiresAt },
     });
@@ -40,11 +42,18 @@ export async function POST(req: NextRequest) {
       referenceType: "Invitation",
       referenceId: inv.id,
       result: "SUCCESS",
-      newValues: { role, centerId: center, label: label ?? null },
+      newValues: { role, centerId: center, label: label ?? null, kind },
       ipAddress: user.ipAddress,
       userAgent: user.userAgent,
     });
-    return NextResponse.json({ success: true, data: { id: inv.id, url: inviteUrl(publicOrigin(req.nextUrl.origin), token), expiresAt } }, { status: 201 });
+    const origin = publicOrigin(req.nextUrl.origin);
+    return NextResponse.json(
+      {
+        success: true,
+        data: kind === "code" ? { id: inv.id, code: formatCode(token), signupUrl: `${origin.replace(/\/$/, "")}/register`, expiresAt } : { id: inv.id, url: inviteUrl(origin, token), expiresAt },
+      },
+      { status: 201 }
+    );
   } catch (error) {
     return handleApiError(error, "USERS");
   }

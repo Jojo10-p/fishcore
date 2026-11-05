@@ -7,6 +7,7 @@ import Link from "next/link";
 import { BUSINESS_PROFILES, BUSINESS_TYPE_ORDER } from "@/lib/business-profiles";
 import { applyBrand } from "@/lib/client/brand";
 import { REGISTRATION_OPEN } from "@/lib/app-config";
+import { GoogleButton } from "@/components/auth/google-button";
 
 // ─────────────────────────────────────────────
 // Types
@@ -72,11 +73,88 @@ export default function RegisterPage() {
   return <RegisterForm />;
 }
 
+const field = "w-full rounded-xl border border-gray-300 px-4 py-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100";
+
+// Édition GJH : tout le monde crée son compte (e-mail + mot de passe) ; il rejoint
+// ensuite l'entreprise avec le code que lui donne le patron.
 function RegistrationClosed() {
-  // Édition GJH : la création de compte passe par le lien d'invitation
-  const router = useRouter();
-  useEffect(() => router.replace("/rejoindre"), [router]);
-  return null;
+  const [f, setF] = useState({ firstName: "", lastName: "", email: "", phone: "", password: "", confirm: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF((x) => ({ ...x, [k]: e.target.value }));
+  const mismatch = f.confirm.length > 0 && f.password !== f.confirm;
+  const ready = f.firstName.trim() && f.lastName.trim() && /\S+@\S+\.\S+/.test(f.email) && f.password.length >= 8 && f.password === f.confirm;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ready) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firstName: f.firstName, lastName: f.lastName, email: f.email, phone: f.phone || undefined, password: f.password }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.success) return setError(j.error ?? "Création du compte impossible");
+      window.location.replace("/bienvenue");
+    } catch {
+      setError("Impossible de créer le compte. Vérifiez votre connexion Internet.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="min-h-dvh flex items-center justify-center bg-gradient-to-br from-blue-50 to-gray-50 p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
+        <div className="text-center mb-6">
+          {/* eslint-disable-next-line @next/next/no-img-element -- logo GJH statique */}
+          <img src="/icons/gjh-logo.png" alt="GRACES JUMELLES HOUSE" className="mx-auto mb-4 h-24 w-auto object-contain" />
+          <h1 className="text-2xl font-bold text-gray-900">Créer un compte</h1>
+          <p className="mt-1 text-sm text-gray-500">GJH Gestion</p>
+        </div>
+        {error && <p className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3.5 text-sm text-red-700">{error}</p>}
+        <GoogleButton label="Créer mon compte avec Google" />
+        <form onSubmit={submit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-gray-700">Prénom</span>
+              <input className={field} value={f.firstName} onChange={set("firstName")} autoComplete="given-name" />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-gray-700">Nom</span>
+              <input className={field} value={f.lastName} onChange={set("lastName")} autoComplete="family-name" />
+            </label>
+          </div>
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-gray-700">Adresse e-mail</span>
+            <input className={field} type="email" value={f.email} onChange={set("email")} autoComplete="email" placeholder="vous@exemple.com" />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-gray-700">Téléphone (facultatif)</span>
+            <input className={field} type="tel" value={f.phone} onChange={set("phone")} autoComplete="tel" placeholder="+229 …" />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-gray-700">Mot de passe</span>
+            <input className={field} type="password" value={f.password} onChange={set("password")} autoComplete="new-password" placeholder="8 caractères minimum" />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-gray-700">Confirmer le mot de passe</span>
+            <input className={field} type="password" value={f.confirm} onChange={set("confirm")} autoComplete="new-password" />
+            {mismatch && <span className="mt-1 block text-xs text-red-600">Les deux mots de passe ne sont pas identiques</span>}
+          </label>
+          <button type="submit" disabled={!ready || busy} className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:bg-blue-300">
+            {busy ? "Création du compte…" : "Créer mon compte"}
+          </button>
+        </form>
+        <p className="mt-6 text-center text-sm text-gray-500">
+          Déjà un compte ? <Link href="/login" className="font-medium text-blue-600 hover:underline">Se connecter</Link>
+        </p>
+      </div>
+    </div>
+  );
 }
 
 function RegisterForm() {

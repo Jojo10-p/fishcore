@@ -54,7 +54,7 @@ export default function UsersPage() {
     <>
       <PageHeader
         title="Utilisateurs"
-        description="Chaque employé crée son propre compte avec le lien d'invitation que vous lui envoyez."
+        description="Chaque employé crée son propre compte, puis rejoint GJH avec le code (ou le lien) que vous lui donnez."
         actions={can("user:create") && <Button onClick={() => setCreating(true)}>+ Inviter quelqu&apos;un</Button>}
       />
       {error && <Alert>{error}</Alert>}
@@ -173,7 +173,7 @@ function PendingInvites({ refreshKey, canRevoke }: { refreshKey: number; canRevo
                     await load();
                   }}
                 >
-                  Annuler le lien
+                  Annuler
                 </Button>
               )}
             </Td>
@@ -199,8 +199,15 @@ function InviteModal({
   const [centerId, setCenterId] = useState(centers[0]?.id ?? "");
   const [label, setLabel] = useState("");
   const [phone, setPhone] = useState("");
-  const [link, setLink] = useState<{ url: string; expiresAt: string } | null>(null);
+  const [kind, setKind] = useState<"code" | "link">("code");
+  const [link, setLink] = useState<{ url?: string; code?: string; signupUrl?: string; expiresAt: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!link?.code) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [link]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -208,7 +215,7 @@ function InviteModal({
     setBusy(true);
     setError(null);
     try {
-      const res = await apiSend<{ data: { url: string; expiresAt: string } }>("/api/invitations", { role, centerId: role === "COMPANY_OWNER" ? undefined : centerId, label: label || undefined });
+      const res = await apiSend<{ data: { url?: string; code?: string; signupUrl?: string; expiresAt: string } }>("/api/invitations", { role, centerId: role === "COMPANY_OWNER" ? undefined : centerId, label: label || undefined, kind });
       setLink(res.data);
       onCreated();
     } catch (e) {
@@ -218,7 +225,14 @@ function InviteModal({
     }
   };
   const roleName = (ROLES[role] ?? role).toLowerCase();
-  const message = link ? `Bonjour${label ? ` ${label}` : ""}, voici votre lien pour créer votre compte GJH Gestion (${roleName}) : ${link.url}\nOuvrez-le, puis créez votre compte avec Google ou avec votre e-mail. Valable 7 jours, une seule fois.` : "";
+  const hello = `Bonjour${label ? ` ${label}` : ""}`;
+  const message = !link
+    ? ""
+    : link.code
+      ? `${hello}, pour rejoindre GJH Gestion (${roleName}) : 1) créez votre compte ici : ${link.signupUrl} 2) tapez ce code : ${link.code} (valable 30 minutes, une seule fois).`
+      : `${hello}, voici votre lien pour créer votre compte GJH Gestion (${roleName}) : ${link.url}\nValable 7 jours, une seule fois.`;
+  const left = link ? Math.max(0, new Date(link.expiresAt).getTime() - now) : 0;
+  const mmss = `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")}`;
   const digits = phone.replace(/[^0-9]/g, "");
 
   return (
@@ -227,8 +241,21 @@ function InviteModal({
       {!link ? (
         <>
           <p className="text-sm text-gray-700">
-            Choisissez le poste : vous recevez un lien à envoyer par WhatsApp. La personne l&apos;ouvre et crée elle-même son compte (avec Google ou un mot de passe) ; vous ne connaissez jamais son mot de passe.
+            La personne crée elle-même son compte (e-mail et mot de passe), puis tape le code que vous lui donnez : elle rejoint GJH avec le poste choisi. Vous ne connaissez jamais son mot de passe.
           </p>
+          <div className="grid grid-cols-2 gap-2">
+            {([["code", "🔢 Code à taper", "30 min — de vive voix ou par message"], ["link", "🔗 Lien WhatsApp", "7 jours — crée le compte en un clic"]] as const).map(([k, t, d]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setKind(k)}
+                className={`rounded-xl border p-3 text-left text-sm ${kind === k ? "border-blue-600 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}
+              >
+                <span className="block font-semibold text-gray-900">{t}</span>
+                <span className="block text-xs text-gray-500">{d}</span>
+              </button>
+            ))}
+          </div>
           <Field label="Poste">
             <Select value={role} onChange={(e) => setRole(e.target.value)}>
               {["CASHIER", "CENTER_MANAGER", "STOCK_MANAGER", "ACCOUNTANT", ...(isOwner ? ["COMPANY_OWNER"] : [])].map((k) => (
@@ -256,13 +283,24 @@ function InviteModal({
             <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="ex. 22997000000" />
           </Field>
           <Button onClick={create} loading={busy} disabled={role !== "COMPANY_OWNER" && !centerId}>
-            Créer le lien d&apos;invitation
+            {kind === "code" ? "Créer le code" : "Créer le lien d'invitation"}
           </Button>
         </>
       ) : (
         <>
-          <Alert tone="green">Lien prêt. Envoyez-le à {label || "la personne"} : il sert une seule fois et expire dans 7 jours.</Alert>
-          <Input readOnly value={link.url} onFocus={(e) => e.target.select()} />
+          {link.code ? (
+            <div className="rounded-2xl border-2 border-blue-200 bg-blue-50 p-5 text-center">
+              <p className="text-sm text-gray-700">Code pour {label || "la personne"} ({roleName})</p>
+              <p className="my-2 select-all font-mono text-4xl font-bold tracking-[0.2em] text-gray-900">{link.code}</p>
+              <p className={`text-sm ${left > 0 ? "text-gray-600" : "font-semibold text-red-600"}`}>{left > 0 ? `Expire dans ${mmss}` : "Code expiré : créez-en un nouveau"}</p>
+              <p className="mt-3 text-xs text-gray-500">La personne crée son compte sur {link.signupUrl}, puis tape ce code. Il sert une seule fois.</p>
+            </div>
+          ) : (
+            <>
+              <Alert tone="green">Lien prêt. Envoyez-le à {label || "la personne"} : il sert une seule fois et expire dans 7 jours.</Alert>
+              <Input readOnly value={link.url} onFocus={(e) => e.target.select()} />
+            </>
+          )}
           <div className="flex flex-wrap gap-2">
             <a href={`https://wa.me/${digits}?text=${encodeURIComponent(message)}`} target="_blank" rel="noreferrer">
               <Button variant="success">Envoyer par WhatsApp</Button>

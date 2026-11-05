@@ -37,7 +37,16 @@ export async function GET(req: NextRequest) {
       // Même adresse e-mail (vérifiée par Google) : le compte est relié à Google
       if (!user.googleSub) await prisma.user.update({ where: { id: user.id }, data: { googleSub: g.sub } });
     } else {
-      if (!saved.invite) return back("/login?erreur=google-inconnu");
+      if (!saved.invite) {
+        // Nouveau compte Google sans invitation : il rejoindra l'entreprise avec le code du patron
+        const passwordHash = await bcrypt.hash(crypto.randomBytes(24).toString("base64url"), 10);
+        const created = await prisma.user.create({
+          data: { email: g.email, firstName: g.givenName, lastName: g.familyName, passwordHash, googleSub: g.sub, role: "CASHIER", companyId: null },
+          select: { id: true, role: true, companyId: true },
+        });
+        await writeAuditLog({ eventType: "ACCOUNT_SIGNUP", userId: created.id, result: "SUCCESS", newValues: { email: g.email, via: "google" }, ...meta });
+        return startSession(back("/bienvenue"), created, meta);
+      }
       const found = await findValidInvitation(saved.invite);
       if (!found.ok) return back(`/rejoindre/${saved.invite}?erreur=invitation`);
       // Compte Google uniquement : mot de passe aléatoire (il pourra en choisir un plus tard)

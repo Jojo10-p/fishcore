@@ -82,6 +82,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const groups = NAV.map((g) => ({ ...g, items: g.items.filter(visible) })).filter((g) => g.items.length > 0);
 
   if (loading) return <Spinner />;
+  if (session && !session.company && session.user.role !== "PLATFORM_ADMIN" && !fromCache) {
+    // Compte créé mais pas encore rattaché à l'entreprise : il faut le code du patron
+    if (typeof window !== "undefined") window.location.replace("/bienvenue");
+    return <Spinner />;
+  }
   if (session?.user.role === "PLATFORM_ADMIN") {
     return (
       <div className="p-8 text-center text-sm text-gray-600">

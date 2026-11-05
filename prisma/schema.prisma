@@ -154,6 +154,7 @@ enum AuditEventType {
   INVITATION_CREATED
   INVITATION_ACCEPTED
   INVITATION_REVOKED
+  ACCOUNT_SIGNUP
   GOOGLE_LOGIN
   COMPANY_SUSPENDED
   COMPANY_REACTIVATED
@@ -386,6 +387,8 @@ model User {
   invitationsSent       Invitation[] @relation("InvitationCreator")
   invitationUsed        Invitation?  @relation("InvitationUser")
   googleSub             String?      @unique // identifiant Google (connexion avec Google)
+  joinAttempts          Int          @default(0) // codes d'entreprise faux tapés d'affilée
+  joinLockedUntil       DateTime?
   pushSubscriptions     PushSubscription[]
   centers               UserCenter[] // Centres autorisés
   cashSessions          CashSession[]
