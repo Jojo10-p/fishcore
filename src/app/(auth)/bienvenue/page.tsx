@@ -71,7 +71,7 @@ export default function WelcomePage() {
           <>
             <ol className="mb-6 space-y-2.5 text-sm text-gray-700">
               <li className="flex gap-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">1</span>Demandez le code au patron (ou au responsable).</li>
-              <li className="flex gap-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">2</span>Il le crée dans son compte : Utilisateurs › Inviter.</li>
+              <li className="flex gap-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">2</span>Il le génère dans son compte : Utilisateurs › Ajouter un utilisateur.</li>
               <li className="flex gap-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">3</span>Tapez le code ici : votre poste (caissier, gérant…) est réglé tout seul.</li>
             </ol>
             {error && <p className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3.5 text-sm text-red-700">{error}</p>}

@@ -218,7 +218,7 @@ test("le patron donne un code : le compte rejoint GJH avec le bon poste", async 
   const r = await invite(ctx.owner, { role: "CASHIER", centerId: ctx.center, label: "Kevin", kind: "code" });
   assert.equal(r.status, 201, JSON.stringify(r.json));
   assert.match(r.json.data.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
-  assert.match(r.json.data.signupUrl, /\/register$/);
+  assert.match(r.json.data.signupUrl, /\/rejoindre$/);
   const minutes = (new Date(r.json.data.expiresAt).getTime() - Date.now()) / 60000;
   assert.ok(minutes > 29 && minutes <= 30, "valable 30 minutes");
   // tapé en minuscules, sans tiret : accepté
@@ -251,4 +251,15 @@ test("codes faux : blocage 15 minutes après 5 essais ; code expiré refusé", a
   const expired = await call(joinRoute.POST, { path: "/api/invitations/join", cookie: c, body: { code: good.json.data.code } });
   assert.equal(expired.status, 400);
   assert.match(expired.json.error, /expiré/);
+});
+
+test("« Me rattacher avec un code » sans compte : le code ouvre la création du compte", async () => {
+  const r = await invite(ctx.owner, { role: "CENTER_MANAGER", centerId: ctx.center, kind: "code" });
+  assert.match(r.json.data.signupUrl, /\/rejoindre$/);
+  const info = await call(acceptRoute.GET, { path: `/api/invitations/accept?token=${r.json.data.code.toLowerCase()}` });
+  assert.equal(info.status, 200);
+  assert.equal(info.json.data.roleName, "Gérant");
+  const created = await call(acceptRoute.POST, { path: "/api/invitations/accept", body: { token: r.json.data.code, firstName: "Fabrice", lastName: "D", email: "fabrice@exemple.com", password: "monmotdepasse" } });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  assert.equal((await prisma.user.findUniqueOrThrow({ where: { email: "fabrice@exemple.com" } })).role, "CENTER_MANAGER");
 });

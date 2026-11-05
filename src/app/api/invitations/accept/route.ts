@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
 
 const schema = z
   .object({
-    token: z.string().min(20),
+    token: z.string().min(8), // code à 8 caractères ou jeton de lien
     firstName: z.string().trim().min(1, "Prénom requis").max(60),
     lastName: z.string().trim().min(1, "Nom requis").max(60),
     email: z.string().trim().toLowerCase().email("Adresse e-mail invalide"),

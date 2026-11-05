@@ -55,7 +55,7 @@ export default function UsersPage() {
       <PageHeader
         title="Utilisateurs"
         description="Chaque employé crée son propre compte, puis rejoint GJH avec le code (ou le lien) que vous lui donnez."
-        actions={can("user:create") && <Button onClick={() => setCreating(true)}>+ Inviter quelqu&apos;un</Button>}
+        actions={can("user:create") && <Button onClick={() => setCreating(true)}>+ Ajouter un utilisateur</Button>}
       />
       {error && <Alert>{error}</Alert>}
       <Card>
@@ -229,19 +229,19 @@ function InviteModal({
   const message = !link
     ? ""
     : link.code
-      ? `${hello}, pour rejoindre GJH Gestion (${roleName}) : 1) créez votre compte ici : ${link.signupUrl} 2) tapez ce code : ${link.code} (valable 30 minutes, une seule fois).`
+      ? `${hello}, pour rejoindre GJH Gestion comme ${roleName} : ouvrez ${link.signupUrl}, tapez le code ${link.code}, puis créez votre compte (valable 30 minutes, une seule fois).`
       : `${hello}, voici votre lien pour créer votre compte GJH Gestion (${roleName}) : ${link.url}\nValable 7 jours, une seule fois.`;
   const left = link ? Math.max(0, new Date(link.expiresAt).getTime() - now) : 0;
   const mmss = `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")}`;
   const digits = phone.replace(/[^0-9]/g, "");
 
   return (
-    <Modal open onClose={onClose} title="Inviter quelqu'un" footer={<Button variant="secondary" onClick={onClose}>Fermer</Button>}>
+    <Modal open onClose={onClose} title="Ajouter un utilisateur" footer={<Button variant="secondary" onClick={onClose}>Fermer</Button>}>
       {error && <Alert>{error}</Alert>}
       {!link ? (
         <>
           <p className="text-sm text-gray-700">
-            La personne crée elle-même son compte (e-mail et mot de passe), puis tape le code que vous lui donnez : elle rejoint GJH avec le poste choisi. Vous ne connaissez jamais son mot de passe.
+            Choisissez le poste, puis générez le code. La personne le tape dans « Me rattacher avec un code » et crée son compte : elle a automatiquement les accès de ce poste, rien de plus. Vous ne connaissez jamais son mot de passe.
           </p>
           <div className="grid grid-cols-2 gap-2">
             {([["code", "🔢 Code à taper", "30 min — de vive voix ou par message"], ["link", "🔗 Lien WhatsApp", "7 jours — crée le compte en un clic"]] as const).map(([k, t, d]) => (
@@ -283,7 +283,7 @@ function InviteModal({
             <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="ex. 22997000000" />
           </Field>
           <Button onClick={create} loading={busy} disabled={role !== "COMPANY_OWNER" && !centerId}>
-            {kind === "code" ? "Créer le code" : "Créer le lien d'invitation"}
+            {kind === "code" ? "Générer le code" : "Générer le lien"}
           </Button>
         </>
       ) : (
@@ -293,7 +293,7 @@ function InviteModal({
               <p className="text-sm text-gray-700">Code pour {label || "la personne"} ({roleName})</p>
               <p className="my-2 select-all font-mono text-4xl font-bold tracking-[0.2em] text-gray-900">{link.code}</p>
               <p className={`text-sm ${left > 0 ? "text-gray-600" : "font-semibold text-red-600"}`}>{left > 0 ? `Expire dans ${mmss}` : "Code expiré : créez-en un nouveau"}</p>
-              <p className="mt-3 text-xs text-gray-500">La personne crée son compte sur {link.signupUrl}, puis tape ce code. Il sert une seule fois.</p>
+              <p className="mt-3 text-xs text-gray-500">Sur {link.signupUrl}, la personne touche « Me rattacher avec un code », tape ce code puis crée son compte. Il sert une seule fois.</p>
             </div>
           ) : (
             <>

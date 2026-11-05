@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        data: kind === "code" ? { id: inv.id, code: formatCode(token), signupUrl: `${origin.replace(/\/$/, "")}/register`, expiresAt } : { id: inv.id, url: inviteUrl(origin, token), expiresAt },
+        data: kind === "code" ? { id: inv.id, code: formatCode(token), signupUrl: `${origin.replace(/\/$/, "")}/rejoindre`, expiresAt } : { id: inv.id, url: inviteUrl(origin, token), expiresAt },
       },
       { status: 201 }
     );

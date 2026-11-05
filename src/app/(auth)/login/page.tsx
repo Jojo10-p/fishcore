@@ -169,14 +169,14 @@ function LoginForm() {
           </button>
         </form>
 
-        {/* Créer un compte : avec le lien d'invitation de la direction */}
-        <div className="mt-6 text-center">
-          <p className="text-sm text-gray-500">
-            Pas encore de compte ?{" "}
-            <Link href="/register" className="text-blue-600 font-medium hover:underline">
-              Créer un compte
-            </Link>
-          </p>
+        {/* Accueil : se connecter, créer un compte, ou se rattacher au compte du patron */}
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <Link href="/register" className="rounded-xl border border-gray-300 px-3 py-3 text-center text-sm font-semibold text-gray-800 hover:bg-gray-50">
+            Créer un compte
+          </Link>
+          <Link href="/rejoindre" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-center text-sm font-semibold text-amber-900 hover:bg-amber-100">
+            Me rattacher avec un code
+          </Link>
         </div>
       </div>
     </div>
