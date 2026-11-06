@@ -102,7 +102,7 @@ export default function ProductsPage() {
               <Link href="/produits/import">
                 <Button variant="secondary">Importer (Sage, Excel)</Button>
               </Link>
-              <Button onClick={() => setEditing("new")}>{newLabel(label.singular)}</Button>
+              <Button onClick={() => setEditing("new")}>✨ Ajouter un nouveau produit</Button>
             </div>
           )
         }

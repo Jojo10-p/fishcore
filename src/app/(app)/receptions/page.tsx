@@ -61,6 +61,8 @@ interface DraftLine {
   cartonSellingPrice: string;
   lotSize: string;
   lotPrice2: string;
+  /** Ligne ouverte avec « Ajouter un nouveau produit » : article jamais vendu ici. */
+  fresh?: boolean;
 }
 interface ReceiptDraft {
   supplierId: string;
@@ -71,7 +73,8 @@ interface ReceiptDraft {
   lines: DraftLine[];
 }
 
-const emptyLine = (): DraftLine => ({
+const emptyLine = (fresh = false): DraftLine => ({
+  fresh,
   name: "",
   liters: "",
   buyMode: "carton",
@@ -85,13 +88,13 @@ const emptyLine = (): DraftLine => ({
   lotSize: "",
   lotPrice2: "",
 });
-const emptyDraft = (): ReceiptDraft => ({
+const emptyDraft = (fresh = false): ReceiptDraft => ({
   supplierId: "",
   reference: "",
   receivedAt: new Date().toISOString().slice(0, 10),
   transportCost: "",
   handlingCost: "",
-  lines: [emptyLine()],
+  lines: [emptyLine(fresh)],
 });
 const num = (v: string) => Number((v || "0").replace(",", "."));
 
@@ -99,7 +102,7 @@ export default function ReceptionsPage() {
   const { centerId, currency, can } = useSession();
   const [receipts, setReceipts] = useState<Receipt[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<false | "stock" | "new">(false);
   const [validating, setValidating] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -136,12 +139,22 @@ export default function ReceptionsPage() {
       <PageHeader
         title="Ajouter du stock"
         description="Marchandise reçue du fournisseur : le stock augmente dès que l'arrivage est enregistré."
-        actions={!creating && <Button onClick={() => setCreating(true)}>+ Ajouter du stock</Button>}
+        actions={
+          !creating && (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => setCreating("new")}>
+                ✨ Ajouter un nouveau produit
+              </Button>
+              <Button onClick={() => setCreating("stock")}>+ Ajouter du stock</Button>
+            </div>
+          )
+        }
       />
       {error && <Alert>{error}</Alert>}
       {creating && centerId && (
         <div className="mb-6">
           <ReceiptForm
+            startNew={creating === "new"}
             centerId={centerId}
             currency={currency}
             onCancel={() => setCreating(false)}
@@ -227,9 +240,21 @@ interface ProductFull extends ProductOption {
   unitConversions?: Array<{ fromUnitId: string; factor: string; sellingPrice: string | null; barcode: string | null }>;
 }
 
-function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: string; currency: string; onCancel: () => void; onSaved: () => Promise<void> }) {
+function ReceiptForm({
+  centerId,
+  currency,
+  startNew = false,
+  onCancel,
+  onSaved,
+}: {
+  centerId: string;
+  currency: string;
+  startNew?: boolean;
+  onCancel: () => void;
+  onSaved: () => Promise<void>;
+}) {
   const online = useOnline();
-  const [draft, setDraft] = useState<ReceiptDraft>(emptyDraft);
+  const [draft, setDraft] = useState<ReceiptDraft>(() => emptyDraft(startNew));
   const [products, setProducts] = useState<ProductFull[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suppliers, setSuppliers] = useState<Array<Supplier & { phone?: string | null }>>([]);
@@ -490,7 +515,7 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
           return (
             <div key={i} className="rounded-xl border border-gray-200 p-3 sm:p-4 space-y-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Article {i + 1}</span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{r.l.fresh && !r.product ? `Nouveau produit (article ${i + 1})` : `Article ${i + 1}`}</span>
                 <span className="flex items-center gap-3">
                   {r.l.name.trim() && (r.product ? <Badge tone="green">Déjà en stock</Badge> : <Badge tone="blue">Nouvel article</Badge>)}
                   {draft.lines.length > 1 && (
@@ -501,9 +526,14 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
                 </span>
               </div>
 
+              {r.l.fresh && !r.product && (
+                <p className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                  Produit jamais vendu à la boutique : donnez-lui un nom, sa contenance, son prix d’achat et ses prix de vente. Il sera ajouté à la liste des articles et à la caisse dès l’enregistrement.
+                </p>
+              )}
               <div className="relative">
                 <Field
-                  label="Nom de l'article"
+                  label={r.l.fresh && !r.product ? "Nom du nouveau produit" : "Nom de l'article"}
                   error={err(r.errors.name)}
                   hint={r.product ? `En stock : ${stock ?? 0} ${word}${r.liters ? ` · ${fmtL(r.liters)} par ${one}` : ""}` : "Tapez quelques lettres : les suggestions s'affichent"}
                 >
@@ -613,9 +643,14 @@ function ReceiptForm({ centerId, currency, onCancel, onSaved }: { centerId: stri
             </div>
           );
         })}
-        <Button variant="secondary" onClick={() => setDraft((d) => ({ ...d, lines: [...d.lines, emptyLine()] }))}>
-          + Ajouter un autre article
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => setDraft((d) => ({ ...d, lines: [...d.lines, emptyLine()] }))}>
+            + Ajouter un autre article
+          </Button>
+          <Button variant="secondary" onClick={() => setDraft((d) => ({ ...d, lines: [...d.lines, emptyLine(true)] }))}>
+            ✨ Ajouter un nouveau produit
+          </Button>
+        </div>
       </section>
 
       {/* 3. Frais (facultatif) */}
