@@ -124,7 +124,6 @@ export function DocumentHeader({
           {company.poBox && <p>{company.poBox}</p>}
           <p>
             Tél. {center?.phone ?? company.phone}
-            {company.email && ` · ${company.email}`}
           </p>
           {(company.taxId || company.tradeRegNumber) && (
             <p>

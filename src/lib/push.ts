@@ -39,7 +39,7 @@ interface Target {
 /** Envoi réel (remplaçable dans les tests). */
 export const pushTransport = {
   send: async (sub: Target, payload: string): Promise<void> => {
-    webpush.setVapidDetails(process.env.VAPID_SUBJECT || "mailto:contact@gjh.bj", process.env.VAPID_PUBLIC_KEY!, process.env.VAPID_PRIVATE_KEY!);
+    webpush.setVapidDetails(process.env.VAPID_SUBJECT || "https://fishcore.vercel.app", process.env.VAPID_PUBLIC_KEY!, process.env.VAPID_PRIVATE_KEY!);
     await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, {
       TTL: 6 * 3600,
       urgency: "high",

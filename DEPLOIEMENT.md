@@ -29,7 +29,7 @@
 | `NEXT_PUBLIC_SUPPORT_CONTACT` | facultatif : contact de l'assistance affiché aux propriétaires (« Mot de passe oublié »), ex. `WhatsApp +229 01 00 00 00 00` |
 | `VAPID_PUBLIC_KEY` | clé publique des notifications sur téléphone (alertes de stock du gérant et du patron). Générer la paire avec `npx web-push generate-vapid-keys` |
 | `VAPID_PRIVATE_KEY` | clé privée correspondante (secrète, jamais dans le code) |
-| `VAPID_SUBJECT` | contact de l'expéditeur, ex. `mailto:contact@gjh.bj` |
+| `VAPID_SUBJECT` | adresse du site ou contact de l'expéditeur, ex. `https://fishcore.vercel.app` |
 
    L'application refuse de démarrer en production sans `JWT_SECRET` et `INSTALL_LINK_SECRET`.
 3. *Deploy*. Le build :
