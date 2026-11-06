@@ -421,7 +421,7 @@ function ReceiptForm({
     const all = new Map<string, { name: string; kind: "stock" | "suggestion" }>();
     for (const p of products) all.set(norm(p.name), { name: p.name, kind: "stock" });
     for (const s of suggestions) if (!all.has(norm(s.name))) all.set(norm(s.name), { name: s.name, kind: "suggestion" });
-    return [...all.values()];
+    return [...all.values()].sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name, "fr") : a.kind === "stock" ? -1 : 1));
   }, [products, suggestions]);
 
   return (
@@ -463,7 +463,14 @@ function ReceiptForm({
         <h3 className="text-sm font-semibold text-gray-700">1. Fournisseur</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Field label="Fournisseur">
-            <Select value={draft.supplierId} onChange={setField("supplierId")}>
+            <Select
+              value={draft.supplierId}
+              onChange={(e) => {
+                setField("supplierId")(e);
+                // Fournisseur choisi : on passe directement au premier produit, liste ouverte
+                if (e.target.value) setTimeout(() => document.querySelector<HTMLInputElement>("[data-product-name]")?.focus(), 50);
+              }}
+            >
               <option value="">— Choisir —</option>
               {suppliers.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -513,7 +520,11 @@ function ReceiptForm({
           const costPer = r.qty > 0 && r.lot > 0 ? r.lot / r.qty : 0;
           const stock = r.product?.stocks?.[0] ? Number(r.product.stocks[0].quantity) : null;
           const typed = norm(r.l.name);
-          const matches = focus === i && typed.length >= 2 ? names.filter((n) => matchesSearch(n.name, typed) && norm(n.name) !== typed).slice(0, 8) : [];
+          // Un clic dans le champ ouvre toute la liste des produits ; taper la filtre (abréviations comprises)
+          const matches =
+            focus !== i || (r.l.fresh && !typed)
+              ? []
+              : names.filter((n) => (!typed || matchesSearch(n.name, typed)) && norm(n.name) !== typed).slice(0, 80);
           return (
             <div key={i} className="rounded-xl border border-gray-200 p-3 sm:p-4 space-y-3">
               <div className="flex items-center justify-between gap-2">
@@ -537,11 +548,12 @@ function ReceiptForm({
                 <Field
                   label={r.l.fresh && !r.product ? "Nom du nouveau produit" : "Nom de l'article"}
                   error={err(r.errors.name)}
-                  hint={r.product ? `En stock : ${stock ?? 0} ${word}${r.liters ? ` · ${fmtL(r.liters)} par ${one}` : ""}` : "Tapez quelques lettres : les suggestions s'affichent"}
+                  hint={r.product ? `En stock : ${stock ?? 0} ${word}${r.liters ? ` · ${fmtL(r.liters)} par ${one}` : ""}` : "Touchez le champ pour choisir dans la liste, ou tapez quelques lettres"}
                 >
                   <Input
                     value={r.l.name}
-                    placeholder="ex. Huile moto Oryx"
+                    data-product-name={i === 0 ? "" : undefined}
+                    placeholder={r.l.fresh ? "ex. Huile moto Oryx" : "Choisir un produit…"}
                     autoComplete="off"
                     onFocus={() => setFocus(i)}
                     onBlur={() => setTimeout(() => setFocus((f) => (f === i ? null : f)), 150)}
@@ -552,7 +564,7 @@ function ReceiptForm({
                   />
                 </Field>
                 {matches.length > 0 && (
-                  <ul className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg">
+                  <ul className="absolute z-20 mt-1 max-h-80 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg">
                     {matches.map((m) => (
                       <li key={m.name}>
                         <button
