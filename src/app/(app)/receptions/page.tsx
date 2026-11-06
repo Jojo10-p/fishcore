@@ -318,7 +318,6 @@ function ReceiptForm({
       cartonPrice: byCarton && !(num(l.cartonPrice) > 0) ? "Prix d'un carton requis" : undefined,
       quantity: !byCarton && !(qty > 0) ? "Combien ?" : undefined,
       lotPrice: !byCarton && !(lot > 0) ? "Prix total requis" : undefined,
-      liters: !product && !(num(l.liters) > 0) ? "Contenance requise" : undefined,
       sellingPrice: !(sell > 0) ? "Prix de vente requis" : undefined,
       lotSize: l.lotPrice2 && !(num(l.lotSize) >= 2) ? "Combien dans le lot ?" : undefined,
     };
@@ -371,14 +370,16 @@ function ReceiptForm({
         if (!id) {
           if (!bidon) throw new Error("Aucune unité disponible pour créer l'article");
           const base = r.l.name.trim();
-          const name = litersFromName(base) ? base : `${base} ${fmtL(num(r.l.liters))}`;
+          const litres = num(r.l.liters);
+          // Filtres, colles… : pas de contenance
+          const name = litersFromName(base) || !(litres > 0) ? base : `${base} ${fmtL(litres)}`;
           const created = await apiSend<{ data: { id: string } }>("/api/products", {
             name,
             baseUnitId: bidon.id,
             purchasePrice: cost,
             sellingPrice: r.sell,
             stockAlertQty: 7,
-            attributes: { contenance: fmtL(num(r.l.liters)) },
+            ...(litres > 0 || litersFromName(base) ? { attributes: { contenance: fmtL(litres > 0 ? litres : litersFromName(base)!) } } : {}),
             ...(packagings.length ? { packagings } : {}),
           });
           id = created.data.id;
@@ -574,7 +575,7 @@ function ReceiptForm({
                     <Input value={r.liters ? fmtL(r.liters) : "—"} disabled readOnly />
                   </Field>
                 ) : (
-                  <Field label="Contenance (litres par bidon)" error={err(r.errors.liters)}>
+                  <Field label="Contenance (litres par bidon)" hint="Vide pour un filtre, une colle…">
                     <Input inputMode="decimal" value={r.l.liters} onChange={(e) => setLine(i, { liters: e.target.value })} placeholder="ex. 1" />
                   </Field>
                 )}
