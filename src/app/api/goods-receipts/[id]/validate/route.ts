@@ -12,6 +12,7 @@ import {
   requirePermission,
 } from "@/lib/auth";
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
+import { actorLabel, notifyManagers } from "@/lib/notify";
 
 // POST /api/goods-receipts/[id]/validate — Valider une réception : c'est ici, et
 // seulement ici, que le stock augmente (cahier §8.3). Chaque ligne crée un lot
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       where: { id, center: { companyId } },
       include: {
         lines: { include: { product: { select: { name: true, trackBatches: true, requiresExpiry: true, baseUnitId: true } } } },
-        supplier: { select: { id: true, paymentTermDays: true } },
+        supplier: { select: { id: true, paymentTermDays: true, name: true } },
       },
     });
     if (!receipt) throw new ApiError(404, "Réception introuvable");
@@ -163,6 +164,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
 
     scheduleStockAlerts(companyId);
+
+    // Résumé pour la direction : qui a ajouté quoi, chez quel fournisseur, pour combien
+    const total = receipt.lines.reduce((t, l) => t + Number(l.totalPrice), 0);
+    const detail = receipt.lines.map((l) => `${Number(l.quantity).toLocaleString("fr-FR")} × ${l.product.name}`).join(", ");
+    notifyManagers({
+      companyId,
+      centerId: receipt.centerId,
+      actorId: user.id,
+      type: "STOCK_ADDED",
+      title: `Stock ajouté${receipt.supplier ? ` — ${receipt.supplier.name}` : ""}`,
+      message: `${await actorLabel(user.id)} a ajouté ${detail}. Achat : ${total.toLocaleString("fr-FR")} F.`,
+      link: "/receptions",
+      data: {
+        receiptId: receipt.id,
+        supplier: receipt.supplier?.name ?? null,
+        total,
+        lines: receipt.lines.map((l) => ({ name: l.product.name, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), totalPrice: Number(l.totalPrice) })),
+      },
+    });
     return NextResponse.json({ success: true, message: "Réception validée. Stock mis à jour." });
   } catch (error) {
     return handleApiError(error, "GOODS_RECEIPTS");

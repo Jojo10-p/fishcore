@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import POSInterface, { type SaleSnapshot } from "@/components/pos/pos-interface";
 import { PrintArea, invoiceFileName, printInFrame, snapshotToTicket, useAutoPrint } from "@/components/pos/printing";
 import type { TicketData } from "@/components/documents/ticket-80";
 import type { TicketHeader } from "@/lib/offline/db";
 import { getNumbering, refreshNumbering, remainingOf } from "@/lib/offline/numbering";
-import { SessionProvider, useSession } from "@/components/app/session-provider";
+import { SessionProvider, clearSessionCache, useSession } from "@/components/app/session-provider";
+import { CashJournal, PrintableJournal, printJournal, type CloseResult } from "@/components/pos/cash-journal";
+import { NotificationBell } from "@/components/app/notification-bell";
 import { ConnectionBadge, useOnline } from "@/components/app/connection-badge";
 import { Alert, Badge, Button, Field, Input, Modal, Money, Select, Spinner } from "@/components/ui";
 import { currencyLabel } from "@/lib/utils";
@@ -267,10 +268,13 @@ function OpenSessionScreen({
         <Button className="w-full" onClick={open} loading={busy} disabled={!online || !registerId}>
           Ouvrir la session
         </Button>
-        <p className="text-center">
+        <p className="flex items-center justify-center gap-4 text-center">
           <Link href="/dashboard" className="text-sm text-gray-500 hover:underline">
-            Retour à la gestion
+            Retour au tableau de bord
           </Link>
+          <button type="button" onClick={() => void logoutNow()} className="text-sm text-red-600 hover:underline">
+            Se déconnecter
+          </button>
         </p>
       </div>
     </div>
@@ -375,6 +379,8 @@ function ActiveRegister({
     [autoPrint, printLast, cashSession.id]
   );
   const [showClose, setShowClose] = useState(false);
+  // « Se déconnecter » (ou arrivée depuis le menu avec ?deconnexion=1) : fermer sa caisse d'abord
+  const [logoutMode, setLogoutMode] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).has("deconnexion"));
   const [showExpense, setShowExpense] = useState(false);
   const online = useOnline();
 
@@ -437,6 +443,10 @@ function ActiveRegister({
         <Button variant="danger" className="px-3 py-1.5" onClick={() => setShowClose(true)}>
           Clôturer
         </Button>
+        <NotificationBell />
+        <Button variant="secondary" className="px-3 py-1.5 text-red-600" onClick={() => setLogoutMode(true)}>
+          Se déconnecter
+        </Button>
       </header>
 
       <div className="flex-1 min-h-0">
@@ -467,6 +477,17 @@ function ActiveRegister({
         syncNow={sync.syncNow}
         onClosed={onClosed}
       />
+      {logoutMode && (
+        <CloseModal
+          open
+          logoutAfter
+          onClose={() => setLogoutMode(false)}
+          sessionId={cashSession.id}
+          currency={currency}
+          syncNow={sync.syncNow}
+          onClosed={onClosed}
+        />
+      )}
     </div>
     {printJob && <PrintArea key={printJob.nonce} ticket={printJob.ticket} />}
     </>
@@ -481,6 +502,7 @@ function CloseModal({
   currency,
   syncNow,
   onClosed,
+  logoutAfter = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -488,6 +510,8 @@ function CloseModal({
   currency: string;
   syncNow: () => Promise<void>;
   onClosed: () => void;
+  /** « Se déconnecter » : la caisse est fermée, le journal sort, puis la session se termine */
+  logoutAfter?: boolean;
 }) {
   const online = useOnline();
   const [declared, setDeclared] = useState("");
@@ -517,32 +541,32 @@ function CloseModal({
     }
   };
 
+  const finish = async () => {
+    onClosed();
+    if (logoutAfter) await logoutNow();
+  };
+
   if (result) {
     return (
       <Modal
         open={open}
-        onClose={onClosed}
-        title="Caisse clôturée"
+        onClose={() => void finish()}
+        closeOnBackdrop={false}
+        title="Caisse fermée — journal de caisse"
         footer={
           <>
-            <Button variant="secondary" onClick={() => window.print()}>
-              🖨 Imprimer le journal
+            <Button variant="secondary" onClick={() => printJournal(result)}>
+              🖨 Imprimer / enregistrer en PDF
             </Button>
-            <Button onClick={onClosed}>Terminer</Button>
+            <Button onClick={() => void finish()}>{logoutAfter ? "Terminer et se déconnecter" : "Terminer"}</Button>
           </>
         }
       >
         <CashJournal r={result} currency={currency} />
-        <p className="text-xs text-gray-500">La clôture sera validée par un responsable. Elle ne peut plus être modifiée.</p>
-        {/* Version imprimable (ticket 80 mm), hors de l'interface masquée à l'impression */}
-        {typeof document !== "undefined" &&
-          createPortal(
-            <div className="cash-journal-print hidden w-[72mm] bg-white p-[2mm] text-black print:block">
-              <style>{`@page { margin: 0; } @media print { body > *:not(.cash-journal-print) { display: none !important; } }`}</style>
-              <CashJournal r={result} currency={currency} printable />
-            </div>,
-            document.body
-          )}
+        <p className="text-xs text-gray-500">
+          Le journal est gardé : la direction peut le revoir à tout moment dans « Clôtures de caisse ». La clôture sera validée par un responsable.
+        </p>
+        <PrintableJournal r={result} currency={currency} />
       </Modal>
     );
   }
@@ -551,18 +575,28 @@ function CloseModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Clôturer la caisse"
+      title={logoutAfter ? "Fermer ma caisse et me déconnecter" : "Clôturer la caisse"}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
             Annuler
           </Button>
+          {logoutAfter && !online && (
+            <Button variant="secondary" onClick={() => void logoutNow()}>
+              Me déconnecter sans fermer
+            </Button>
+          )}
           <Button variant="danger" onClick={close} loading={busy} disabled={!online || declared === ""}>
-            Clôturer
+            {logoutAfter ? "Fermer la caisse" : "Clôturer"}
           </Button>
         </>
       }
     >
+      {logoutAfter && (
+        <p className="text-sm text-gray-600">
+          Comptez l&apos;argent du tiroir : votre journal de caisse sortira, puis vous serez déconnecté pour laisser la place au caissier suivant.
+        </p>
+      )}
       {!online && <Alert tone="amber">La clôture nécessite une connexion au serveur.</Alert>}
       {error && <Alert>{error}</Alert>}
       <Field label={`Montant réellement compté en espèces (${currencyLabel(currency)})`} hint="Comptez le tiroir : le système calcule l'écart avec le solde théorique.">
@@ -575,92 +609,11 @@ function CloseModal({
   );
 }
 
-interface CloseResult {
-  theoreticalBalance: string;
-  declaredBalance: string;
-  discrepancy: string;
-  totalSales: string;
-  journal?: {
-    openedAt: string;
-    closedAt: string | null;
-    registerName: string;
-    cashier: { firstName: string; lastName: string; role: string };
-    openingBalance: string;
-    salesCount: number;
-    totalCash: string;
-    totalMobileMoney: string;
-    totalCard: string;
-    totalOther: string;
-    totalCashOut: string;
-    expenses: Array<{ category: string; description: string | null; amount: string; date: string }>;
-  };
-}
-
-/** Journal de caisse de la journée : ouverture, ventes par mode, dépenses, clôture. */
-function CashJournal({ r, currency, printable = false }: { r: CloseResult; currency: string; printable?: boolean }) {
-  const j = r.journal;
-  const gap = Number(r.discrepancy);
-  const row = (label: string, value: string | number, strong = false, tone = "") => (
-    <div className={`flex justify-between gap-2 ${strong ? "font-semibold" : ""} ${tone}`}>
-      <span className={printable ? "" : "text-gray-600"}>{label}</span>
-      <span className="tabular-nums">
-        <Money value={value} currency={currency} />
-      </span>
-    </div>
-  );
-  return (
-    <div className={printable ? "space-y-1 text-[11.5px]" : "space-y-1.5 text-sm"}>
-      {printable && (
-        <div className="mb-2 text-center">
-          <p className="text-[15px] font-black">JOURNAL DE CAISSE</p>
-          {j && (
-            <p>
-              {j.registerName} — {j.cashier.firstName}
-            </p>
-          )}
-        </div>
-      )}
-      {j && (
-        <p className={printable ? "" : "text-xs text-gray-500"}>
-          Ouverte le {new Date(j.openedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
-          {j.closedAt && ` · clôturée le ${new Date(j.closedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}`}
-        </p>
-      )}
-      {j && row("Fond de caisse (ouverture)", j.openingBalance)}
-      {row(`Ventes${j ? ` (${j.salesCount})` : ""}`, r.totalSales, true)}
-      {j && Number(j.totalCash) > 0 && row("  dont espèces", j.totalCash)}
-      {j && Number(j.totalMobileMoney) > 0 && row("  dont Mobile Money", j.totalMobileMoney)}
-      {j && Number(j.totalCard) > 0 && row("  dont carte", j.totalCard)}
-      {j && Number(j.totalOther) > 0 && row("  dont autres", j.totalOther)}
-      {j && j.expenses.length > 0 && (
-        <div className="border-t border-dashed border-gray-300 pt-1">
-          <p className="font-semibold">Dépenses</p>
-          {j.expenses.map((e, i) => (
-            <div key={i} className="flex justify-between gap-2">
-              <span className="min-w-0 truncate">
-                {e.category}
-                {e.description ? ` — ${e.description}` : ""}
-              </span>
-              <span className="tabular-nums">
-                −<Money value={e.amount} currency={currency} />
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="border-t border-gray-300 pt-1">
-        {row("Espèces attendues", r.theoreticalBalance)}
-        {row("Espèces comptées", r.declaredBalance, true)}
-        {row("Écart", r.discrepancy, true, gap === 0 ? "text-green-700" : "text-red-700")}
-      </div>
-      {printable && (
-        <div className="mt-6 grid grid-cols-2 gap-2 text-[10px]">
-          <div className="h-12 border border-black p-1">Caissier</div>
-          <div className="h-12 border border-black p-1">Responsable</div>
-        </div>
-      )}
-    </div>
-  );
+/** Fin de session : l'utilisateur est hors ligne pour la direction, la caisse est libre. */
+async function logoutNow() {
+  await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+  clearSessionCache();
+  window.location.replace("/login");
 }
 
 const EXPENSE_CATEGORIES = ["Transport", "Manutention", "Électricité", "Eau", "Repas", "Petit matériel", "Entretien", "Autre"];

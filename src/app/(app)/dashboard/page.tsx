@@ -16,6 +16,15 @@ interface DashboardData {
   lowStockCount: number;
   lowStock: Array<{ productId: string; name: string; quantity: number; unit: string; center: string }>;
   openSessions: number;
+  scope: "all" | "mine";
+  activeUsers: Array<{
+    id: string;
+    name: string;
+    role: string;
+    lastSeenAt: string;
+    openSession: { registerName: string; openedAt: string; salesCount: number; total: number } | null;
+  }>;
+  perCashier: Array<{ cashierId: string; name: string; salesCount: number; revenue: number }>;
   recentSales: Array<{
     id: string;
     saleNumber: string;
@@ -35,6 +44,15 @@ const STATUS: Record<string, { label: string; tone: "green" | "red" | "amber" | 
   DRAFT: { label: "Brouillon", tone: "gray" },
 };
 
+const ROLE_NAMES: Record<string, string> = {
+  COMPANY_OWNER: "Direction",
+  CENTER_MANAGER: "Gérant",
+  CASHIER: "Caissier",
+  STOCK_MANAGER: "Magasinier",
+  ACCOUNTANT: "Comptable",
+  SALES_EMPLOYEE: "Vendeur",
+};
+
 const qty = (n: number) => n.toLocaleString("fr-FR", { maximumFractionDigits: 3 });
 
 // Tableau de bord GJH : l'essentiel du jour, en un coup d'œil (ordinateur ou téléphone)
@@ -47,9 +65,9 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // La caisse arrive directement sur l'écran de vente
+  // Tout le monde a son tableau de bord (le caissier y voit ses propres ventes)
   useEffect(() => {
-    if (session && !can("report:view")) router.replace(can("sale:create") ? "/caisse" : "/stock");
+    if (session && !can("dashboard:view")) router.replace(can("sale:create") ? "/caisse" : "/stock");
   }, [session, can, router]);
 
   const load = useCallback(async () => {
@@ -66,7 +84,7 @@ export default function DashboardPage() {
   }, [consolidated, centerId, date]);
 
   useEffect(() => {
-    if (!can("report:view")) return;
+    if (!can("dashboard:view")) return;
     const first = setTimeout(() => void load(), 0);
     const timer = setInterval(() => void load(), 30_000);
     return () => {
@@ -81,7 +99,15 @@ export default function DashboardPage() {
     <>
       <PageHeader
         title={`Bonjour ${session?.user.firstName ?? ""}`.trim()}
-        description={isToday ? "Voici la journée de la boutique, en direct." : "Journée sélectionnée"}
+        description={
+          data?.scope === "mine"
+            ? isToday
+              ? "Vos ventes du jour, en direct."
+              : "Vos ventes de la journée sélectionnée"
+            : isToday
+              ? "Voici la journée de la boutique, en direct."
+              : "Journée sélectionnée"
+        }
         actions={
           <>
             {isOwner && (session?.centers.length ?? 0) > 1 && (
@@ -127,8 +153,8 @@ export default function DashboardPage() {
         {data && (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              <Kpi label="Encaissé" value={<Money value={data.today.revenue} currency={currency} />} />
-              <Kpi label="Ventes" value={data.today.salesCount} />
+              <Kpi label={data.scope === "mine" ? "Mon encaissement" : "Encaissé"} value={<Money value={data.today.revenue} currency={currency} />} />
+              <Kpi label={data.scope === "mine" ? "Mes ventes" : "Ventes"} value={data.today.salesCount} />
               <Kpi
                 label={`Presque épuisés (${LOW_STOCK_THRESHOLD} ou moins)`}
                 value={data.lowStockCount}
@@ -136,6 +162,71 @@ export default function DashboardPage() {
                 href="/stock?alerte=1"
               />
             </div>
+
+            {data.scope === "all" && (
+              <div className="grid gap-5 lg:grid-cols-2">
+                <Card>
+                  <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-gray-100">
+                    <h2 className="font-semibold text-gray-900">Connectés en ce moment</h2>
+                    <Badge tone="green">{data.activeUsers.length}</Badge>
+                  </div>
+                  {data.activeUsers.length === 0 ? (
+                    <p className="px-4 sm:px-6 py-6 text-sm text-gray-500">Personne d&apos;autre n&apos;est connecté.</p>
+                  ) : (
+                    <ul className="divide-y divide-gray-100">
+                      {data.activeUsers.map((u) => (
+                        <li key={u.id} className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3 text-sm">
+                          <span className="min-w-0">
+                            <span className="flex items-center gap-2 font-medium text-gray-900">
+                              <span className="h-2.5 w-2.5 rounded-full bg-green-500" aria-hidden />
+                              {u.name}
+                            </span>
+                            <span className="block text-xs text-gray-500">
+                              {ROLE_NAMES[u.role] ?? u.role}
+                              {u.openSession &&
+                                ` · ${u.openSession.registerName} ouverte à ${new Date(u.openSession.openedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`}
+                            </span>
+                          </span>
+                          {u.openSession && (
+                            <span className="text-right whitespace-nowrap">
+                              <span className="block font-semibold text-gray-900">
+                                <Money value={u.openSession.total} currency={currency} />
+                              </span>
+                              <span className="block text-xs text-gray-500">{u.openSession.salesCount} vente(s)</span>
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </Card>
+                <Card>
+                  <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-gray-100">
+                    <h2 className="font-semibold text-gray-900">Ventes par caissier</h2>
+                    <Link href="/caisses" className="text-sm text-blue-600 hover:underline">
+                      Journaux de caisse
+                    </Link>
+                  </div>
+                  {data.perCashier.length === 0 ? (
+                    <p className="px-4 sm:px-6 py-6 text-sm text-gray-500">Pas encore de vente.</p>
+                  ) : (
+                    <ul className="divide-y divide-gray-100">
+                      {data.perCashier.map((c) => (
+                        <li key={c.cashierId} className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3 text-sm">
+                          <span className="font-medium text-gray-900">{c.name}</span>
+                          <span className="text-right whitespace-nowrap">
+                            <span className="block font-semibold text-gray-900">
+                              <Money value={c.revenue} currency={currency} />
+                            </span>
+                            <span className="block text-xs text-gray-500">{c.salesCount} vente(s)</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </Card>
+              </div>
+            )}
 
             <div className="grid gap-5 lg:grid-cols-2">
               <Card>
@@ -164,7 +255,7 @@ export default function DashboardPage() {
 
               <Card>
                 <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-gray-100">
-                  <h2 className="font-semibold text-gray-900">Dernières ventes</h2>
+                  <h2 className="font-semibold text-gray-900">{data.scope === "mine" ? "Mes dernières ventes" : "Dernières ventes"}</h2>
                   <Link href="/ventes" className="text-sm text-blue-600 hover:underline">
                     Tout voir
                   </Link>

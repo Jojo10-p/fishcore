@@ -16,6 +16,7 @@ import {
 import { hasPermission } from "@/lib/rbac";
 import { restoreBatch } from "@/lib/stock";
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
+import { actorLabel, notifyManagers } from "@/lib/notify";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -90,6 +91,18 @@ export async function POST(req: NextRequest, { params }: Params) {
         return created;
       });
 
+      // Cloche + téléphone du patron et du gérant : ils acceptent ou refusent
+      notifyManagers({
+        companyId: sale.companyId,
+        centerId: sale.centerId,
+        actorId: user.id,
+        type: "CANCEL_REQUESTED",
+        title: `Annulation demandée — ${sale.saleNumber}`,
+        message: `${await actorLabel(user.id)} demande d'annuler la vente ${sale.saleNumber} (${Number(sale.totalAmount).toLocaleString("fr-FR")} F). Raison : ${requestReason}`,
+        link: "/annulations",
+        data: { saleId, cancellationId: cancellation.id },
+      });
+
       return NextResponse.json({ success: true, data: cancellation }, { status: 201 });
     }
 
@@ -147,6 +160,17 @@ export async function POST(req: NextRequest, { params }: Params) {
             },
             tx
           );
+        });
+        notifyManagers({
+          companyId: sale.companyId,
+          centerId: sale.centerId,
+          actorId: user.id,
+          userIds: [cancellation.requesterId],
+          type: "CANCEL_DECIDED",
+          title: `Annulation refusée — ${sale.saleNumber}`,
+          message: `${await actorLabel(user.id)} a refusé l'annulation de la vente ${sale.saleNumber}. Motif : ${rejectionReason}`,
+          link: "/annulations",
+          data: { saleId, cancellationId, decision: "REJECTED" },
         });
         return NextResponse.json({ success: true, message: "Demande rejetée." });
       }
@@ -256,6 +280,17 @@ export async function POST(req: NextRequest, { params }: Params) {
       });
 
       scheduleStockAlerts(sale.companyId);
+      notifyManagers({
+        companyId: sale.companyId,
+        centerId: sale.centerId,
+        actorId: user.id,
+        userIds: [cancellation.requesterId],
+        type: "CANCEL_DECIDED",
+        title: `Annulation acceptée — ${sale.saleNumber}`,
+        message: `${await actorLabel(user.id)} a accepté l'annulation de la vente ${sale.saleNumber}. Les produits sont revenus en stock.`,
+        link: "/annulations",
+        data: { saleId, cancellationId, decision: "APPROVED" },
+      });
 
       return NextResponse.json({ success: true, message: "Annulation approuvée. Stock restauré et remboursement enregistré." });
     }

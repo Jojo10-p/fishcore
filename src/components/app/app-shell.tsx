@@ -12,6 +12,7 @@ import { getPendingSyncCount } from "@/lib/offline/sync";
 import { APP_NAME } from "@/lib/app-config";
 import { InstallAppButton } from "@/components/app/install-app";
 import { ChangePasswordButton } from "@/components/app/change-password";
+import { NotificationBell } from "@/components/app/notification-bell";
 
 interface NavItem {
   href: string;
@@ -29,7 +30,7 @@ interface NavItem {
 // Édition GJH : menu réduit à l'essentiel (vendre, ajouter du stock, suivre).
 // Les autres écrans existent toujours mais ne sont plus dans le menu.
 const NAV: Array<{ group: string | null; items: NavItem[] }> = [
-  { group: null, items: [{ href: "/dashboard", label: "Tableau de bord", icon: "📊", any: ["report:view"] }] },
+  { group: null, items: [{ href: "/dashboard", label: "Tableau de bord", icon: "📊", any: ["dashboard:view"] }] },
   {
     group: "Ventes",
     items: [
@@ -108,6 +109,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
     setLoggingOut(true);
+    // Caisse encore ouverte à mon nom : on la ferme d'abord (journal de caisse), puis déconnexion
+    if (can("cash:view_session")) {
+      const open = await fetch("/api/cash/sessions?open=true", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+      const mine = (open?.data as Array<{ cashierId: string }> | undefined)?.some((x) => x.cashierId === session.user.id);
+      if (mine) {
+        setLoggingOut(false);
+        router.push("/caisse?deconnexion=1");
+        return;
+      }
+    }
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
     clearSessionCache();
     router.replace("/login");
@@ -199,6 +212,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <span className="font-bold text-gray-900 truncate">{appName}</span>
         <div className="flex items-center gap-2">
           <ConnectionBadge compact />
+          <NotificationBell />
         </div>
       </header>
 
@@ -215,6 +229,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="flex-1 lg:pl-64 min-w-0">
         <div className="hidden lg:flex items-center justify-end gap-3 px-8 pt-4">
           <ConnectionBadge />
+          <NotificationBell />
+          <button onClick={logout} disabled={loggingOut} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-red-600 hover:bg-red-50">
+            {loggingOut ? "Déconnexion…" : "Se déconnecter"}
+          </button>
         </div>
         {fromCache && (
           <div className="mx-4 lg:mx-8 mt-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm text-amber-900">

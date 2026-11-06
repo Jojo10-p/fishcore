@@ -24,7 +24,7 @@ export async function startSession(
     .sign(getJwtSecret());
   // Seule l'empreinte du jeton est enregistrée
   await prisma.authSession.create({
-    data: { userId: user.id, sessionToken: hashSessionToken(token), expires: expiresAt, ipAddress: meta.ipAddress ?? null, userAgent: meta.userAgent ?? null },
+    data: { userId: user.id, sessionToken: hashSessionToken(token), expires: expiresAt, ipAddress: meta.ipAddress ?? null, userAgent: meta.userAgent ?? null, lastSeenAt: new Date() },
   });
   await prisma.user.update({ where: { id: user.id }, data: { loginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() } });
   response.cookies.set(SESSION_COOKIE, token, {

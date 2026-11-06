@@ -9,7 +9,7 @@ type Values = { sellingPrice?: string; purchasePrice?: string; prices?: Record<s
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await getCurrentUser(req);
-    await requirePermission(user, "product:price");
+    await requirePermission(user, "audit:view");
     const companyId = requireCompany(user);
     const { id } = await params;
     const product = await prisma.product.findFirst({ where: { id, companyId }, select: { id: true, name: true } });

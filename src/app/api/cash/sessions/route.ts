@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sessionJournal } from "@/lib/cash-journal";
+import { actorLabel, notifyManagers } from "@/lib/notify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -237,41 +239,19 @@ export async function POST(req: NextRequest) {
         return { ...totals, declaredBalance: declared, discrepancy };
       });
 
-      // Journal de caisse : de quoi imprimer le récapitulatif de la journée
-      const [journalSession, expenses, salesCount] = await Promise.all([
-        prisma.cashSession.findUniqueOrThrow({
-          where: { id: sessionId },
-          select: { openedAt: true, closedAt: true, openingBalance: true, cashier: { select: { firstName: true, lastName: true, role: true } }, cashRegister: { select: { name: true } } },
-        }),
-        prisma.expense.findMany({ where: { sessionId }, select: { category: true, description: true, amount: true, date: true }, orderBy: { date: "asc" } }),
-        prisma.sale.count({ where: { sessionId, status: { not: "CANCELLED" } } }),
-      ]);
-
-      return NextResponse.json({
-        success: true,
-        data: {
-          sessionId,
-          theoreticalBalance: result.theoreticalBalance,
-          declaredBalance: result.declaredBalance,
-          discrepancy: result.discrepancy,
-          totalSales: result.totalSales,
-          totalRefunds: result.totalRefunds,
-          journal: {
-            openedAt: journalSession.openedAt,
-            closedAt: journalSession.closedAt,
-            registerName: journalSession.cashRegister.name,
-            cashier: journalSession.cashier,
-            openingBalance: journalSession.openingBalance,
-            salesCount,
-            totalCash: result.totalCash,
-            totalMobileMoney: result.totalMobileMoney,
-            totalCard: result.totalCard,
-            totalOther: result.totalOther,
-            totalCashOut: result.totalCashOut,
-            expenses,
-          },
-        },
+      // Journal de caisse : imprimé ou enregistré par le caissier, gardé pour la direction
+      const journal = await sessionJournal(sessionId);
+      notifyManagers({
+        companyId,
+        centerId: session.cashRegister.centerId,
+        actorId: user.id,
+        type: "CASH_CLOSED",
+        title: `Caisse fermée — ${journal?.journal.cashier.firstName ?? ""}`.trim(),
+        message: `${await actorLabel(session.cashierId)} : ${journal?.journal.salesCount ?? 0} vente(s), ${Number(result.totalSales).toLocaleString("fr-FR")} F encaissés. Écart : ${Number(result.discrepancy).toLocaleString("fr-FR")} F.`,
+        link: `/caisses?journal=${sessionId}`,
+        data: { sessionId, totalSales: result.totalSales.toString(), discrepancy: result.discrepancy.toString() },
       });
+      return NextResponse.json({ success: true, data: journal });
     }
 
     // ── Validation de la clôture (contrôle indépendant) ─
@@ -432,6 +412,17 @@ export async function GET(req: NextRequest) {
         cashRegister: { center: { companyId }, ...(centerScope ? { centerId: centerScope } : {}) },
         ...(cashRegisterId ? { cashRegisterId } : {}),
         ...(searchParams.get("open") === "true" ? { closedAt: null } : {}),
+        // Historique : remonter dans le temps (« Voir plus anciennes ») ou une journée précise
+        ...(searchParams.get("before") || searchParams.get("day")
+          ? {
+              openedAt: {
+                ...(searchParams.get("before") ? { lt: new Date(searchParams.get("before")!) } : {}),
+                ...(/^\d{4}-\d{2}-\d{2}$/.test(searchParams.get("day") ?? "")
+                  ? { gte: new Date(`${searchParams.get("day")}T00:00:00+01:00`), lt: new Date(new Date(`${searchParams.get("day")}T00:00:00+01:00`).getTime() + 86_400_000) }
+                  : {}),
+              },
+            }
+          : {}),
         // Sans vue globale, un caissier ne voit que ses sessions
         ...(hasPermission(user.role, "cash:view_all_sessions") ? {} : { cashierId: user.id }),
       },

@@ -483,7 +483,10 @@ model AuthSession {
   createdAt    DateTime @default(now())
   ipAddress    String?
   userAgent    String?
+  /// Dernière activité (mise à jour au plus une fois par minute) : « en ligne » pour la direction
+  lastSeenAt   DateTime?
 
+  @@index([lastSeenAt])
   @@map("auth_sessions")
 }
 
@@ -1406,6 +1409,7 @@ model Notification {
   isRead    Boolean   @default(false)
   readAt    DateTime?
 
+  @@index([userId, createdAt])
   @@map("notifications")
 }
 

@@ -71,7 +71,7 @@ interface Report {
 export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
-    await requirePermission(user, "product:create");
+    await requirePermission(user, "product:import");
     const companyId = requireCompany(user);
     const data = parseBody(schema, await readJson(req));
     const withStock = data.rows.some((r) => r.stock !== undefined);

@@ -19,7 +19,9 @@ export type Permission =
   | "product:create"
   | "product:edit"
   | "product:delete"
-  | "product:price" // changer un prix de vente déjà fixé (direction, gérant)
+  | "product:price" // changer un prix de vente déjà fixé (historisé, signalé à la direction)
+  | "product:import" // import en masse (Sage, Excel) : direction, gérant
+  | "unit:manage" // réglages des unités (vente au détail, décimales) : direction, gérant
   | "stock:view"
   | "stock:receive"
   | "stock:adjust"
@@ -58,6 +60,7 @@ export type Permission =
   | "supplier:payment"
   | "document:create"
   | "document:export"
+  | "dashboard:view" // tableau de bord (chacun ses chiffres ; tout pour qui a sale:view_all)
   | "report:view"
   | "report:export"
   | "audit:view"
@@ -74,7 +77,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "company:view", "company:edit",
     "center:view", "center:create", "center:edit", "center:delete",
     "user:view", "user:create", "user:edit", "user:deactivate",
-    "product:view", "product:create", "product:edit", "product:delete", "product:price",
+    "product:view", "product:create", "product:edit", "product:delete", "product:price", "unit:manage", "product:import",
     "stock:view", "stock:receive", "stock:adjust", "stock:transfer", "stock:loss",
     "inventory:start", "inventory:validate",
     "sale:create", "sale:view", "sale:view_all",
@@ -91,36 +94,48 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "audit:view",
     "notification:view", "notification:configure",
     "install_link:generate",
+    "dashboard:view",
   ],
 
+  // Gérant : comme la direction pour la boutique, y compris ajouter des utilisateurs
   CENTER_MANAGER: [
     "center:view",
-    "user:view",
-    "product:view", "product:create", "product:edit", "product:price",
+    "user:view", "user:create", "user:edit", "user:deactivate",
+    "dashboard:view",
+    "product:view", "product:create", "product:edit", "product:price", "unit:manage", "product:import",
     "stock:view", "stock:receive", "stock:adjust", "stock:transfer", "stock:loss",
     "inventory:start", "inventory:validate",
     "sale:view", "sale:view_all",
     "sale:cancel_approve", "sale:refund", "sale:discount",
     "cash:open_session", "cash:close_session", "cash:close_session_validate",
     "cash:view_session", "cash:view_all_sessions", "cash:movement", "cash:register_manage",
-    "supplier:view", "supplier:create",
+    "supplier:view", "supplier:create", "supplier:edit",
     "purchase:view", "purchase:create",
     "expense:view", "expense:create", "expense:cancel",
     "customer:view", "customer:edit", "supplier:payment",
     "quote:view", "quote:create", "quote:cancel", "sale:deliver",
     "document:create", "document:export",
     "report:view", "report:export",
+    "audit:view",
     "notification:view",
     "install_link:generate",
   ],
 
+  // Caissier et magasinier : vendent, ajoutent du stock, créent et changent les prix
+  // (chaque ajout / changement est signalé à la direction et reste dans l'historique).
+  // Ils ne peuvent pas : annuler une vente (seulement la demander), ajouter des
+  // utilisateurs, effacer ou masquer quoi que ce soit, voir les historiques
+  // (ventes des autres, bénéfices, prix, journal, clôtures des autres), ni les paramètres.
   CASHIER: [
-    "product:view",
-    "stock:view",
+    "dashboard:view",
+    "product:view", "product:create", "product:edit", "product:price",
+    "stock:view", "stock:receive",
     "sale:create", "sale:view",
     "sale:cancel_request",
     "cash:open_session", "cash:close_session", "cash:view_session",
     "expense:create", // dépense payée avec l'argent de sa caisse
+    "supplier:view", "supplier:create",
+    "purchase:view", "purchase:create",
     "customer:view", "customer:edit",
     "quote:view", "quote:create",
     "document:create",
@@ -128,6 +143,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
 
   ACCOUNTANT: [
+    "dashboard:view",
     "product:view",
     "stock:view",
     "sale:view", "sale:view_all",
@@ -143,16 +159,24 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
 
   STOCK_MANAGER: [
-    "product:view", "product:create", "product:edit",
+    "dashboard:view",
+    "product:view", "product:create", "product:edit", "product:price",
     "stock:view", "stock:receive", "stock:adjust", "stock:transfer", "stock:loss",
     "inventory:start", "inventory:validate",
+    "sale:create", "sale:view",
+    "sale:cancel_request",
+    "cash:open_session", "cash:close_session", "cash:view_session",
+    "expense:create",
     "supplier:view", "supplier:create",
     "purchase:view", "purchase:create",
-    "sale:deliver", "quote:view",
+    "customer:view", "customer:edit",
+    "sale:deliver", "quote:view", "quote:create",
+    "document:create",
     "notification:view",
   ],
 
   SALES_EMPLOYEE: [
+    "dashboard:view",
     "product:view",
     "stock:view",
     "sale:create", "sale:view",

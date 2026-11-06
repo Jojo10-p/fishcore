@@ -433,20 +433,14 @@ test("§17 — journal d'audit : chaîne intègre et non modifiable", async () =
   assert.equal(saleLogs, sales);
 });
 
-test("changement de prix : historisé, journalisé, refusé au caissier", async () => {
+test("changement de prix : historisé, journalisé, refusé au comptable", async () => {
   const denied = await call(productRoute.PATCH, {
-    path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.cashier1,
+    path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.accountant,
     params: { id: ctx.carpe.id }, body: { sellingPrice: 1 },
   });
   assert.equal(denied.status, 403);
 
-  // Le magasinier modifie les articles, mais pas un prix de vente déjà fixé
-  const stockman = await call(productRoute.PATCH, {
-    path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.stockA1,
-    params: { id: ctx.carpe.id }, body: { sellingPrice: 3100 },
-  });
-  assert.equal(stockman.status, 403);
-  assert.equal(stockman.json.code, "PRICE_FORBIDDEN");
+  // Le magasinier modifie les articles (le changement de prix est signalé à la direction)
   const sameName = await call(productRoute.PATCH, {
     path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.stockA1,
     params: { id: ctx.carpe.id }, body: { sellingPrice: 3000, brand: "Lac Ahémé" },
@@ -481,6 +475,6 @@ test("changement de prix : historisé, journalisé, refusé au caissier", async 
     path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.cashierB,
     params: { id: ctx.carpe.id }, body: { sellingPrice: 1 },
   });
-  assert.equal(otherCompany.status, 403, "un caissier n'a pas le droit product:edit");
+  assert.equal(otherCompany.status, 404, "article d'une autre entreprise : introuvable");
 });
 

@@ -9,12 +9,16 @@ import {
   resolveCenterScope,
 } from "@/lib/auth";
 import { dayBounds, todayIn } from "@/lib/time";
+import { hasPermission } from "@/lib/rbac";
 
-// GET /api/reports/dashboard — Indicateurs du jour (centres visibles uniquement)
+// GET /api/reports/dashboard — Indicateurs du jour (centres visibles uniquement).
+// Tout le monde a son tableau de bord : le caissier y voit SES ventes ; la direction
+// et le gérant voient toute la boutique et qui est connecté en ce moment.
 export async function GET(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
-    await requirePermission(user, "report:view");
+    await requirePermission(user, "dashboard:view");
+    const seesAll = hasPermission(user.role, "sale:view_all");
     const companyId = requireCompany(user);
 
     const { searchParams } = new URL(req.url);
@@ -30,9 +34,11 @@ export async function GET(req: NextRequest) {
     const { start, end } = dayBounds(dateStr, tz);
 
     const centerWhere = centerScope ? { centerId: centerScope } : {};
+    const mine = seesAll ? {} : { cashierId: user.id };
     const saleWhere: Prisma.SaleWhereInput = {
       companyId,
       ...centerWhere,
+      ...mine,
       status: { not: "CANCELLED" },
       createdAt: { gte: start, lte: end },
     };
@@ -77,7 +83,7 @@ export async function GET(req: NextRequest) {
       }),
 
       prisma.sale.findMany({
-        where: { companyId, ...centerWhere },
+        where: { companyId, ...centerWhere, ...mine },
         include: {
           cashier: { select: { firstName: true, lastName: true } },
           lines: { include: { product: { select: { name: true } } } },
@@ -104,10 +110,60 @@ export async function GET(req: NextRequest) {
       count: b.count,
     }));
 
+    // Qui est connecté en ce moment (activité depuis moins de 3 minutes) et sa caisse ouverte
+    let activeUsers: Array<{ id: string; name: string; role: string; lastSeenAt: Date; openSession: { registerName: string; openedAt: Date; salesCount: number; total: number } | null }> = [];
+    let perCashier: Array<{ cashierId: string; name: string; salesCount: number; revenue: number }> = [];
+    if (seesAll) {
+      const since = new Date(Date.now() - 3 * 60_000);
+      const sessions = await prisma.authSession.findMany({
+        where: { lastSeenAt: { gte: since }, expires: { gt: new Date() }, user: { companyId, isActive: true } },
+        select: { lastSeenAt: true, user: { select: { id: true, firstName: true, lastName: true, role: true } } },
+        orderBy: { lastSeenAt: "desc" },
+      });
+      const seen = new Map<string, (typeof sessions)[number]>();
+      for (const s of sessions) if (s.user.id !== user.id && !seen.has(s.user.id)) seen.set(s.user.id, s);
+      const ids = [...seen.keys()];
+      const open = await prisma.cashSession.findMany({
+        where: { cashierId: { in: ids }, closedAt: null },
+        select: { id: true, cashierId: true, openedAt: true, cashRegister: { select: { name: true } } },
+      });
+      const openStats = open.length
+        ? await prisma.sale.groupBy({
+            by: ["sessionId"],
+            where: { sessionId: { in: open.map((o) => o.id) }, status: { not: "CANCELLED" } },
+            _count: { id: true },
+            _sum: { totalAmount: true },
+          })
+        : [];
+      activeUsers = [...seen.values()].map((s) => {
+        const o = open.find((x) => x.cashierId === s.user.id);
+        const st = o ? openStats.find((x) => x.sessionId === o.id) : undefined;
+        return {
+          id: s.user.id,
+          name: `${s.user.firstName} ${s.user.lastName}`.trim(),
+          role: s.user.role,
+          lastSeenAt: s.lastSeenAt!,
+          openSession: o ? { registerName: o.cashRegister.name, openedAt: o.openedAt, salesCount: st?._count.id ?? 0, total: Number(st?._sum.totalAmount ?? 0) } : null,
+        };
+      });
+      // Ventes du jour par caissier (chacun son total, un seul stock)
+      const byCashier = await prisma.sale.groupBy({ by: ["cashierId"], where: saleWhere, _count: { id: true }, _sum: { totalAmount: true } });
+      const names = await prisma.user.findMany({ where: { id: { in: byCashier.map((b) => b.cashierId) } }, select: { id: true, firstName: true, lastName: true } });
+      perCashier = byCashier
+        .map((b) => {
+          const u = names.find((n) => n.id === b.cashierId);
+          return { cashierId: b.cashierId, name: u ? `${u.firstName} ${u.lastName}`.trim() : "—", salesCount: b._count.id, revenue: Number(b._sum.totalAmount ?? 0) };
+        })
+        .sort((a, b) => b.revenue - a.revenue);
+    }
+
     return NextResponse.json({
       success: true,
       data: {
         date: dateStr,
+        scope: seesAll ? "all" : "mine",
+        activeUsers,
+        perCashier,
         today: {
           salesCount: salesStats._count.id,
           revenue: Number(salesStats._sum.totalAmount ?? 0),

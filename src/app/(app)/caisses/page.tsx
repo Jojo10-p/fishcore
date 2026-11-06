@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, Money, PageHeader, Spinner, Table, Td } from "@/components/ui";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
+import { CashJournal, PrintableJournal, printJournal, type CloseResult } from "@/components/pos/cash-journal";
 
 interface Register {
   id: string;
@@ -33,21 +34,40 @@ export default function CaissesPage() {
   const [error, setError] = useState<string | null>(null);
   const [newRegister, setNewRegister] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [day, setDay] = useState("");
+  const [more, setMore] = useState(true);
+  // Journal de caisse ouvert (aussi depuis une notification : ?journal=<id>)
+  const [journalId, setJournalId] = useState<string | null>(() =>
+    typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("journal") : null
+  );
 
   const load = useCallback(async () => {
     if (!centerId) return;
     try {
       const [r, s] = await Promise.all([
         apiGet<{ data: Register[] }>(`/api/cash/registers?centerId=${centerId}`),
-        apiGet<{ data: SessionRow[] }>(`/api/cash/sessions?centerId=${centerId}`),
+        apiGet<{ data: SessionRow[] }>(`/api/cash/sessions?centerId=${centerId}${day ? `&day=${day}` : ""}`),
       ]);
       setRegisters(r.data);
       setSessions(s.data);
+      setMore(!day && s.data.length >= 50);
       setError(null);
     } catch (e) {
       setError(errorMessage(e));
     }
-  }, [centerId]);
+  }, [centerId, day]);
+
+  const loadMore = async () => {
+    const last = sessions?.at(-1);
+    if (!last || !centerId) return;
+    try {
+      const s = await apiGet<{ data: SessionRow[] }>(`/api/cash/sessions?centerId=${centerId}&before=${encodeURIComponent(last.openedAt)}`);
+      setSessions((list) => [...(list ?? []), ...s.data]);
+      setMore(s.data.length >= 50);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 0);
@@ -108,13 +128,24 @@ export default function CaissesPage() {
       </div>
 
       <Card>
-        <h2 className="font-semibold text-gray-900 px-4 sm:px-6 py-4 border-b border-gray-100">Sessions récentes</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-900">Journaux de caisse</h2>
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            Jour
+            <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} className="w-auto" />
+            {day && (
+              <button className="text-blue-600 hover:underline" onClick={() => setDay("")}>
+                Tout
+              </button>
+            )}
+          </label>
+        </div>
         {!sessions ? (
           <Spinner />
         ) : sessions.length === 0 ? (
           <EmptyState icon="💰" title="Aucune session" />
         ) : (
-          <Table head={["Caisse", "Caissier", "Ouverture", "Clôture", "Encaissé", "Théorique", "Compté", "Écart", "Statut"]}>
+          <Table head={["Caisse", "Caissier", "Ouverture", "Clôture", "Encaissé", "Théorique", "Compté", "Écart", "Statut", ""]}>
             {sessions.map((s) => {
               const gap = s.discrepancy !== null ? Number(s.discrepancy) : null;
               return (
@@ -144,12 +175,26 @@ export default function CaissesPage() {
                       <Badge tone="amber">À valider</Badge>
                     )}
                   </Td>
+                  <Td>
+                    {s.closedAt && (
+                      <button className="text-sm font-semibold text-blue-700 hover:underline" onClick={() => setJournalId(s.id)}>
+                        Journal
+                      </button>
+                    )}
+                  </Td>
                 </tr>
               );
             })}
           </Table>
         )}
+        {more && sessions && sessions.length > 0 && (
+          <button className="w-full border-t border-gray-100 py-3 text-sm text-blue-600 hover:bg-gray-50" onClick={() => void loadMore()}>
+            Voir les plus anciennes
+          </button>
+        )}
       </Card>
+
+      {journalId && <JournalModal sessionId={journalId} currency={currency} onClose={() => setJournalId(null)} />}
 
       <Modal
         open={newRegister !== null}
@@ -171,5 +216,42 @@ export default function CaissesPage() {
         </Field>
       </Modal>
     </>
+  );
+}
+
+/** Journal d'une caisse fermée, à revoir et réimprimer à tout moment. */
+function JournalModal({ sessionId, currency, onClose }: { sessionId: string; currency: string; onClose: () => void }) {
+  const [r, setR] = useState<CloseResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    apiGet<{ data: CloseResult }>(`/api/cash/sessions/${sessionId}/journal`)
+      .then((res) => setR(res.data))
+      .catch((e) => setError(errorMessage(e)));
+  }, [sessionId]);
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Journal de caisse"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Fermer
+          </Button>
+          <Button onClick={() => r && printJournal(r)} disabled={!r}>
+            🖨 Imprimer / enregistrer en PDF
+          </Button>
+        </>
+      }
+    >
+      {error && <Alert>{error}</Alert>}
+      {!r && !error && <Spinner />}
+      {r && (
+        <>
+          <CashJournal r={r} currency={currency} />
+          <PrintableJournal r={r} currency={currency} />
+        </>
+      )}
+    </Modal>
   );
 }

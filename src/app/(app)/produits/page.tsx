@@ -98,12 +98,16 @@ export default function ProductsPage() {
         actions={
           can("product:create") && (
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => setShowUnits(true)}>
-                Unités
-              </Button>
-              <Link href="/produits/import">
-                <Button variant="secondary">Importer (Sage, Excel)</Button>
-              </Link>
+              {can("unit:manage") && (
+                <Button variant="secondary" onClick={() => setShowUnits(true)}>
+                  Unités
+                </Button>
+              )}
+              {can("product:import") && (
+                <Link href="/produits/import">
+                  <Button variant="secondary">Importer (Sage, Excel)</Button>
+                </Link>
+              )}
               <Button onClick={() => setEditing("new")}>✨ Ajouter un nouveau produit</Button>
             </div>
           )
@@ -173,7 +177,7 @@ export default function ProductsPage() {
                         Changer le prix
                       </button>
                     )}
-                    {can("product:price") && (
+                    {can("audit:view") && (
                       <button className="text-sm text-gray-600 hover:underline" onClick={() => setHistory(p)}>
                         Historique
                       </button>

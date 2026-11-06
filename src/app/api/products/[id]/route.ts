@@ -18,6 +18,7 @@ import { attributesSchema, packagingSchema } from "@/lib/validations";
 import { assertBarcodeFree, assertReferenceFree, productClientSelect, replacePackagings } from "@/lib/catalog";
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
 import { hasPermission } from "@/lib/rbac";
+import { actorLabel, notifyManagers } from "@/lib/notify";
 
 const updateSchema = z
   .object({
@@ -52,6 +53,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const { id } = await params;
     const { packagings, attributes, priceReason, ...data } = parseBody(updateSchema, await readJson(req));
 
+    // Changements de prix de vente à signaler à la direction (rempli dans la transaction)
+    let priceNews: string[] = [];
+    let productName = "";
     const product = await prisma.$transaction(async (tx) => {
       const current = await tx.product.findFirst({
         where: { id, companyId },
@@ -121,6 +125,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         newPrices.length > 0 ||
         (data.purchasePrice !== undefined && !new Prisma.Decimal(data.purchasePrice).equals(current.purchasePrice));
       const priceList = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).map(([k, v]) => [names[k] ?? k, v]));
+      const f = (v: string | undefined) => (v === undefined ? "—" : Number(v).toLocaleString("fr-FR"));
+      priceNews = changedPrices.map((k) => `${names[k] ?? k} ${f(before[k])} → ${f(after[k])} F`);
+      productName = updated.name;
 
       if (priceChanged) {
         await tx.productPriceHistory.create({
@@ -147,6 +154,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     });
 
     scheduleStockAlerts(companyId);
+    if (priceNews.length) {
+      notifyManagers({
+        companyId,
+        actorId: user.id,
+        type: "PRICE_CHANGED",
+        title: `Prix changé — ${productName}`,
+        message: `${await actorLabel(user.id)} : ${priceNews.join(" ; ")}${priceReason ? `. Motif : ${priceReason}` : ""}`,
+        link: "/produits",
+        data: { productId: id, changes: priceNews, reason: priceReason ?? null },
+      });
+    }
     return NextResponse.json({ success: true, data: product });
   } catch (error) {
     if (isUniqueViolation(error)) {

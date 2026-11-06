@@ -96,13 +96,13 @@ test("e-mail déjà utilisé, lien annulé, lien expiré", async () => {
   assert.match(exp.json.error, /expiré/);
 });
 
-test("droits : seul le patron envoie des invitations", async () => {
+test("droits : le patron et le gérant ajoutent des utilisateurs, pas la caisse", async () => {
   assert.equal((await invite(ctx.cashier, { role: "CASHIER", centerId: ctx.center })).status, 403);
   const mgrInv = await invite(ctx.owner, { role: "CENTER_MANAGER", centerId: ctx.center });
   await call(acceptRoute.POST, { path: "/api/invitations/accept", body: { token: tokenOf(mgrInv.json.data.url), firstName: "Fabrice", lastName: "Dossou", email: "gerant@exemple.com", password: "monmotdepasse" } });
   const mgr = await login("gerant@exemple.com", "monmotdepasse");
   assert.equal((await invite(mgr, { role: "COMPANY_OWNER" })).status, 403);
-  assert.equal((await invite(mgr, { role: "CASHIER", centerId: ctx.center })).status, 403);
+  assert.equal((await invite(mgr, { role: "CASHIER", centerId: ctx.center })).status, 201, "le gérant ajoute un caissier");
   assert.equal((await invite(ctx.owner, { role: "CASHIER" })).status, 400, "boutique obligatoire");
 });
 

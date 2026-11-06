@@ -72,6 +72,7 @@ export async function getCurrentUser(req: NextRequest): Promise<AuthUser> {
     select: {
       id: true,
       expires: true,
+      lastSeenAt: true,
       user: {
         select: {
           id: true,
@@ -96,6 +97,10 @@ export async function getCurrentUser(req: NextRequest): Promise<AuthUser> {
   }
   const { user } = session;
   if (!user.isActive) throw new ApiError(401, "Compte désactivé");
+  // Présence (« en ligne ») : au plus une écriture par minute et par session
+  if (!session.lastSeenAt || Date.now() - session.lastSeenAt.getTime() > 60_000) {
+    await prisma.authSession.update({ where: { id: session.id }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
+  }
   if (user.company && !user.company.isActive) {
     throw new ApiError(403, "L'abonnement de cette entreprise est suspendu.");
   }

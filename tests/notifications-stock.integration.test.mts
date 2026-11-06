@@ -21,6 +21,7 @@ const pushTestRoute = await import("@/app/api/push/test/route");
 const stockRoute = await import("@/app/api/stock/route");
 const { waitForStockAlerts, stockNotification } = await import("@/lib/stock-alerts");
 const { pushTransport } = await import("@/lib/push");
+const { waitForNotifications } = await import("@/lib/notify");
 
 const ctx: Json = {};
 const sent: Array<{ endpoint: string; payload: Json }> = [];
@@ -249,6 +250,7 @@ test("alerte « presque épuisé » : dit chez quel fournisseur racheter et son 
   assert.equal(gr.status, 201, JSON.stringify(gr.json));
   await call(validateRoute.POST, { path: `/api/goods-receipts/${gr.json.data.id}/validate`, cookie: ctx.owner, params: { id: gr.json.data.id }, body: {} });
   await waitForStockAlerts();
+  await waitForNotifications(); // résumé « Stock ajouté » envoyé au gérant
   take();
   await sell(13); // 7
   const s = take();

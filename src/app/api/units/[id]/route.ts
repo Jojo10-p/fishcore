@@ -16,7 +16,7 @@ const schema = z
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await getCurrentUser(req);
-    await requirePermission(user, "product:edit");
+    await requirePermission(user, "unit:manage");
     const companyId = requireCompany(user);
     const { id } = await params;
     const data = parseBody(schema, await readJson(req));
