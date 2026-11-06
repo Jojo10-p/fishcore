@@ -1,5 +1,6 @@
 "use client";
 
+import { invoiceFileName } from "@/components/pos/printing";
 import Link from "next/link";
 import { ROLE_LABELS, stamp } from "@/components/documents/ticket-80";
 import { use, useEffect, useState } from "react";
@@ -71,7 +72,7 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
 
   useEffect(() => {
     if (!sale) return;
-    document.title = `Facture ${sale.saleNumber}`;
+    document.title = invoiceFileName(sale.saleNumber);
     // ?print=1 : impression lancée depuis la caisse
     if (new URLSearchParams(window.location.search).get("print") !== "1") return;
     const t = setTimeout(() => window.print(), 300);

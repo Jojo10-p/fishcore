@@ -1,5 +1,6 @@
 "use client";
 
+import { invoiceFileName } from "@/components/pos/printing";
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { TICKET_PRINT_CSS, Ticket80, type TicketData } from "@/components/documents/ticket-80";
@@ -84,7 +85,7 @@ export default function TicketPage({ params }: { params: Promise<{ id: string }>
 
   useEffect(() => {
     if (!sale) return;
-    document.title = `Facture ${sale.saleNumber}`;
+    document.title = invoiceFileName(sale.saleNumber);
     if (new URLSearchParams(window.location.search).get("print") !== "1") return;
     // Laisser le temps au code-barres d'être dessiné
     const t = setTimeout(() => window.print(), 300);

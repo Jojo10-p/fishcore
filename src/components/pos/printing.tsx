@@ -17,6 +17,9 @@ import type { TicketHeader } from "@/lib/offline/db";
 
 const PREF_KEY = "fishcore-auto-print";
 
+/** Nom proposé quand on enregistre la facture en PDF : « Fact. GJH-000003 ». */
+export const invoiceFileName = (saleNumber: string) => `Fact. ${saleNumber}`;
+
 /** Impression automatique après chaque vente : activée par défaut, réglable par appareil. */
 export function useAutoPrint(): [boolean, (v: boolean) => void] {
   const [value, setValue] = useState<boolean>(() => {

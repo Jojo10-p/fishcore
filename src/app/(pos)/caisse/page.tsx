@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import POSInterface, { type SaleSnapshot } from "@/components/pos/pos-interface";
-import { PrintArea, printInFrame, snapshotToTicket, useAutoPrint } from "@/components/pos/printing";
+import { PrintArea, invoiceFileName, printInFrame, snapshotToTicket, useAutoPrint } from "@/components/pos/printing";
 import type { TicketData } from "@/components/documents/ticket-80";
 import type { TicketHeader } from "@/lib/offline/db";
 import { getNumbering, refreshNumbering, remainingOf } from "@/lib/offline/numbering";
@@ -321,8 +321,17 @@ function ActiveRegister({
   // Ticket affiché dans la zone d'impression : on lance l'impression
   useEffect(() => {
     if (!printJob) return;
-    const t = setTimeout(() => window.print(), 150);
-    return () => clearTimeout(t);
+    // Nom du fichier quand on enregistre en PDF : « Fact. GJH-000003 »
+    const before = document.title;
+    const t = setTimeout(() => {
+      document.title = invoiceFileName(printJob.ticket.saleNumber);
+      window.print();
+      document.title = before;
+    }, 150);
+    return () => {
+      clearTimeout(t);
+      document.title = before;
+    };
   }, [printJob]);
 
   const printLast = useCallback(
