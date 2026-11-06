@@ -1,3 +1,4 @@
+import { hasPermission } from "@/lib/rbac";
 import { NextRequest, NextResponse } from "next/server";
 import { LOW_STOCK_THRESHOLD } from "@/lib/app-config";
 import { Prisma } from "@prisma/client";
@@ -178,8 +179,10 @@ export async function POST(req: NextRequest) {
             } else {
               productId = found.id;
               trackBatches = found.trackBatches;
+              // Changer un prix existant : direction et gérant seulement
               const priceChange =
                 data.updateExisting &&
+                hasPermission(user.role, "product:price") &&
                 ((row.sellingPrice !== undefined && !new D(row.sellingPrice).equals(found.sellingPrice)) ||
                   (row.purchasePrice !== undefined && !new D(row.purchasePrice).equals(found.purchasePrice)));
               const extra = data.updateExisting && (row.category || (barcode && !found.barcode));
@@ -195,7 +198,23 @@ export async function POST(req: NextRequest) {
                     ...(barcode && !found.barcode ? { barcode } : {}),
                   },
                 });
-                if (priceChange) await tx.productPriceHistory.create({ data: { productId: found.id, purchasePrice, sellingPrice, changedById: user.id } });
+                if (priceChange) {
+                  await tx.productPriceHistory.create({ data: { productId: found.id, purchasePrice, sellingPrice, changedById: user.id } });
+                  await writeAuditLog(
+                    {
+                      eventType: "PRICE_CHANGED",
+                      companyId,
+                      userId: user.id,
+                      referenceType: "Product",
+                      referenceId: found.id,
+                      result: "SUCCESS",
+                      reason: "Import de la liste d'articles",
+                      oldValues: { sellingPrice: found.sellingPrice.toString(), purchasePrice: found.purchasePrice.toString() },
+                      newValues: { sellingPrice: String(sellingPrice), purchasePrice: String(purchasePrice) },
+                    },
+                    tx
+                  );
+                }
                 report.updated++;
               } else {
                 report.unchanged++;

@@ -35,6 +35,7 @@ const productsRoute = await import("@/app/api/products/route");
 const stockRoute = await import("@/app/api/stock/route");
 const usersRoute = await import("@/app/api/users/route");
 const productRoute = await import("@/app/api/products/[id]/route");
+const historyRoute = await import("@/app/api/products/[id]/price-history/route");
 
 const BASE = "http://localhost:3000";
 const PASSWORD = "Motdepasse1";
@@ -117,6 +118,7 @@ async function seed() {
     cashier2: await mkUser("cashier2@a.test", "CASHIER", A.id, [A1.id]),
     cashierA2: await mkUser("cashier-a2@a.test", "CASHIER", A.id, [A2.id]),
     accountant: await mkUser("accountant@a.test", "ACCOUNTANT", A.id, [A1.id]),
+    stockA1: await mkUser("stock@a.test", "STOCK_MANAGER", A.id, [A1.id]),
     cashierB: await mkUser("cashier@b.test", "CASHIER", B.id, [B1.id]),
   };
 
@@ -438,14 +440,42 @@ test("changement de prix : historisé, journalisé, refusé au caissier", async 
   });
   assert.equal(denied.status, 403);
 
+  // Le magasinier modifie les articles, mais pas un prix de vente déjà fixé
+  const stockman = await call(productRoute.PATCH, {
+    path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.stockA1,
+    params: { id: ctx.carpe.id }, body: { sellingPrice: 3100 },
+  });
+  assert.equal(stockman.status, 403);
+  assert.equal(stockman.json.code, "PRICE_FORBIDDEN");
+  const sameName = await call(productRoute.PATCH, {
+    path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.stockA1,
+    params: { id: ctx.carpe.id }, body: { sellingPrice: 3000, brand: "Lac Ahémé" },
+  });
+  assert.equal(sameName.status, 200, "même prix : modification autorisée");
+
   const ok = await call(productRoute.PATCH, {
     path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.managerA1,
-    params: { id: ctx.carpe.id }, body: { sellingPrice: 3200 },
+    params: { id: ctx.carpe.id }, body: { sellingPrice: 3200, priceReason: "hausse fournisseur" },
   });
   assert.equal(ok.status, 200, JSON.stringify(ok.json));
   assert.equal(await prisma.productPriceHistory.count({ where: { productId: ctx.carpe.id } }), 1);
   const log = await prisma.auditLog.findFirstOrThrow({ where: { eventType: "PRICE_CHANGED", referenceId: ctx.carpe.id } });
-  assert.deepEqual(log.oldValues, { sellingPrice: "3000", purchasePrice: "2000" });
+  assert.equal((log.oldValues as { sellingPrice: string }).sellingPrice, "3000");
+  assert.equal((log.newValues as { sellingPrice: string }).sellingPrice, "3200");
+  assert.equal(log.reason, "hausse fournisseur");
+
+  // Historique lisible : date, qui, ancien → nouveau, motif
+  const hist = await call(historyRoute.GET, {
+    path: `/api/products/${ctx.carpe.id}/price-history`, cookie: ctx.cookies.ownerA, params: { id: ctx.carpe.id },
+  });
+  assert.equal(hist.status, 200, JSON.stringify(hist.json));
+  const ev = hist.json.data.history[0];
+  assert.equal(ev.reason, "hausse fournisseur");
+  assert.ok(ev.changes.some((c: { before: string; after: string }) => c.before === "3000" && c.after === "3200"));
+  const histDenied = await call(historyRoute.GET, {
+    path: `/api/products/${ctx.carpe.id}/price-history`, cookie: ctx.cookies.stockA1, params: { id: ctx.carpe.id },
+  });
+  assert.equal(histDenied.status, 403);
 
   const otherCompany = await call(productRoute.PATCH, {
     path: `/api/products/${ctx.carpe.id}`, method: "PATCH", cookie: ctx.cookies.cashierB,

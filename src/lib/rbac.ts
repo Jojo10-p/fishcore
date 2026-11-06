@@ -19,6 +19,7 @@ export type Permission =
   | "product:create"
   | "product:edit"
   | "product:delete"
+  | "product:price" // changer un prix de vente déjà fixé (direction, gérant)
   | "stock:view"
   | "stock:receive"
   | "stock:adjust"
@@ -73,7 +74,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "company:view", "company:edit",
     "center:view", "center:create", "center:edit", "center:delete",
     "user:view", "user:create", "user:edit", "user:deactivate",
-    "product:view", "product:create", "product:edit", "product:delete",
+    "product:view", "product:create", "product:edit", "product:delete", "product:price",
     "stock:view", "stock:receive", "stock:adjust", "stock:transfer", "stock:loss",
     "inventory:start", "inventory:validate",
     "sale:create", "sale:view", "sale:view_all",
@@ -95,7 +96,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   CENTER_MANAGER: [
     "center:view",
     "user:view",
-    "product:view", "product:create", "product:edit",
+    "product:view", "product:create", "product:edit", "product:price",
     "stock:view", "stock:receive", "stock:adjust", "stock:transfer", "stock:loss",
     "inventory:start", "inventory:validate",
     "sale:view", "sale:view_all",

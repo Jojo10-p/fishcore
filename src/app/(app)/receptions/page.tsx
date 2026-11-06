@@ -255,6 +255,9 @@ function ReceiptForm({
   onSaved: () => Promise<void>;
 }) {
   const online = useOnline();
+  const { can } = useSession();
+  // Prix d'un article déjà en stock : seuls la direction et le gérant les changent
+  const canPrice = can("product:price");
   const [draft, setDraft] = useState<ReceiptDraft>(() => emptyDraft(startNew));
   const [products, setProducts] = useState<ProductFull[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -390,7 +393,7 @@ function ReceiptForm({
             .filter((u) => !packagings.some((p) => p.unitId === u.fromUnitId))
             .map((u) => ({ unitId: u.fromUnitId, factor: Number(u.factor), sellingPrice: u.sellingPrice != null ? Number(u.sellingPrice) : null, barcode: u.barcode }));
           const priceChanged = Number(r.product!.sellingPrice) !== r.sell;
-          if (priceChanged || packagings.length) {
+          if (canPrice && (priceChanged || packagings.length)) {
             await apiSend(`/api/products/${id}`, { sellingPrice: r.sell, ...(packagings.length ? { packagings: [...keep, ...packagings] } : {}) }, "PATCH");
           }
         }
@@ -635,7 +638,8 @@ function ReceiptForm({
               )}
 
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Prix de vente</p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {r.product && !canPrice && <p className="text-xs text-gray-500">Prix fixés par la direction : seuls la direction et le gérant peuvent les changer.</p>}
+              <fieldset disabled={!!r.product && !canPrice} className="grid grid-cols-2 sm:grid-cols-4 gap-3 disabled:opacity-60">
                 <Field label={`1 ${one}`} error={err(r.errors.sellingPrice)}>
                   <Input inputMode="numeric" value={r.l.sellingPrice} onChange={(e) => setLine(i, { sellingPrice: e.target.value })} placeholder="ex. 3 500" />
                 </Field>
@@ -648,7 +652,7 @@ function ReceiptForm({
                 <Field label={num(r.l.lotSize) >= 2 ? `Prix du lot de ${num(r.l.lotSize)}` : "Prix du lot"} hint="Facultatif">
                   <Input inputMode="numeric" value={r.l.lotPrice2} onChange={(e) => setLine(i, { lotPrice2: e.target.value })} placeholder="ex. 10 000" />
                 </Field>
-              </div>
+              </fieldset>
               {costPer > 0 && r.sell > 0 && (
                 <p className={`text-sm font-medium ${r.sell - costPer > 0 ? "text-green-700" : "text-red-700"}`}>
                   {r.sell - costPer >= 0 ? "Bénéfice" : "Perte"} : <Money value={Math.abs(r.sell - costPer)} currency={currency} /> par {one}

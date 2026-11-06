@@ -54,6 +54,8 @@ export default function ProductsPage() {
   const [categoryId, setCategoryId] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<Product | "new" | null>(null);
+  const [pricing, setPricing] = useState<Product | null>(null);
+  const [history, setHistory] = useState<Product | null>(null);
   const [showUnits, setShowUnits] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -165,11 +167,23 @@ export default function ProductsPage() {
                   </div>
                 </Td>
                 <Td>
-                  {can("product:edit") && (
-                    <button className="text-sm text-blue-600 hover:underline" onClick={() => setEditing(p)}>
-                      Modifier
-                    </button>
-                  )}
+                  <div className="flex flex-col items-start gap-1">
+                    {can("product:price") && (
+                      <button className="whitespace-nowrap text-sm font-semibold text-blue-700 hover:underline" onClick={() => setPricing(p)}>
+                        Changer le prix
+                      </button>
+                    )}
+                    {can("product:price") && (
+                      <button className="text-sm text-gray-600 hover:underline" onClick={() => setHistory(p)}>
+                        Historique
+                      </button>
+                    )}
+                    {can("product:edit") && (
+                      <button className="text-sm text-blue-600 hover:underline" onClick={() => setEditing(p)}>
+                        Modifier
+                      </button>
+                    )}
+                  </div>
                 </Td>
               </tr>
             ))}
@@ -186,6 +200,8 @@ export default function ProductsPage() {
           }}
         />
       )}
+      {pricing && <PriceModal product={pricing} currency={currency} onClose={() => setPricing(null)} onSaved={load} />}
+      {history && <PriceHistoryModal product={history} currency={currency} onClose={() => setHistory(null)} />}
       {editing && (
         <ProductModal
           product={editing === "new" ? null : editing}
@@ -227,7 +243,9 @@ function ProductModal({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const { profile, session } = useSession();
+  const { profile, session, can } = useSession();
+  // Prix déjà fixés : seuls la direction et le gérant les changent
+  const priceLocked = !!product && !can("product:price");
   const vatEnabled = session?.company?.vatEnabled ?? false;
   const defaultUnit = units.find((u) => u.symbol === profile.defaultUnit) ?? units[0];
 
@@ -380,10 +398,10 @@ function ProductModal({
       </Field>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Field label={`Achat / ${baseUnit?.symbol ?? "u"}`}>
-          <Input inputMode="decimal" value={form.purchasePrice} onChange={set("purchasePrice")} />
+          <Input inputMode="decimal" value={form.purchasePrice} onChange={set("purchasePrice")} disabled={priceLocked} />
         </Field>
         <Field label={`Vente / ${baseUnit?.symbol ?? "u"}`}>
-          <Input inputMode="decimal" value={form.sellingPrice} onChange={set("sellingPrice")} />
+          <Input inputMode="decimal" value={form.sellingPrice} onChange={set("sellingPrice")} disabled={priceLocked} title={priceLocked ? "Seuls la direction et le gérant peuvent changer un prix" : undefined} />
         </Field>
         <Field label="TVA %" hint={vatEnabled ? "Incluse dans le prix" : "Entreprise non assujettie"}>
           <Input inputMode="decimal" value={form.taxRate} onChange={set("taxRate")} placeholder={vatEnabled ? "défaut" : "0"} />
@@ -409,7 +427,7 @@ function ProductModal({
                 ))}
             </Select>
             <Input aria-label={`Contenance en ${baseUnit?.symbol}`} placeholder={`= ? ${baseUnit?.symbol ?? ""}`} inputMode="decimal" value={p.factor} onChange={(e) => setPackagings((rows) => rows.map((r, j) => (j === i ? { ...r, factor: e.target.value } : r)))} />
-            <Input aria-label="Prix du conditionnement" placeholder={`Prix (${currencyLabel(currency)})`} inputMode="decimal" value={p.sellingPrice} onChange={(e) => setPackagings((rows) => rows.map((r, j) => (j === i ? { ...r, sellingPrice: e.target.value } : r)))} />
+            <Input aria-label="Prix du conditionnement" placeholder={`Prix (${currencyLabel(currency)})`} inputMode="decimal" disabled={priceLocked && !!product?.unitConversions.some((c) => c.fromUnitId === p.unitId && c.sellingPrice != null)} value={p.sellingPrice} onChange={(e) => setPackagings((rows) => rows.map((r, j) => (j === i ? { ...r, sellingPrice: e.target.value } : r)))} />
             <Input aria-label="Code-barres du conditionnement" placeholder="Code-barres" value={p.barcode} onChange={(e) => setPackagings((rows) => rows.map((r, j) => (j === i ? { ...r, barcode: e.target.value } : r)))} />
             <button className="text-gray-400 hover:text-red-600" onClick={() => setPackagings((rows) => rows.filter((_, j) => j !== i))} aria-label="Retirer">
               ✕
@@ -510,6 +528,160 @@ function UnitsModal({ units, onClose, onChanged }: { units: Unit[]; onClose: () 
           </li>
         ))}
       </ul>
+    </Modal>
+  );
+}
+
+// ── Changer le prix (direction, gérant) ──────
+
+const fmtNum = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 2 }).replace(/[  ]/g, " ");
+
+function PriceModal({ product, currency, onClose, onSaved }: { product: Product; currency: string; onClose: () => void; onSaved: () => Promise<void> }) {
+  const rows = [
+    { key: "base", label: `Prix ${product.baseUnit.name.toLowerCase()} (1 ${product.baseUnit.symbol})`, current: Number(product.sellingPrice) },
+    ...product.unitConversions
+      .filter((c) => c.sellingPrice != null)
+      .map((c) => ({ key: c.fromUnitId, label: `Prix ${c.fromUnit.name.toLowerCase()} (${Number(c.factor)} ${product.baseUnit.symbol})`, current: Number(c.sellingPrice) })),
+  ];
+  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(rows.map((r) => [r.key, String(r.current)])));
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const num = (v: string) => Number(String(v).replace(/\s/g, "").replace(",", "."));
+  const bump = (key: string, delta: number) => setValues((v) => ({ ...v, [key]: String(Math.max(0, (num(v[key]) || 0) + delta)) }));
+  const changed = rows.filter((r) => num(values[r.key]) !== r.current);
+  const invalid = rows.some((r) => !(num(values[r.key]) > 0));
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiSend(
+        `/api/products/${product.id}`,
+        {
+          sellingPrice: num(values.base),
+          packagings: product.unitConversions.map((c) => ({
+            unitId: c.fromUnitId,
+            factor: Number(c.factor),
+            sellingPrice: c.sellingPrice != null ? num(values[c.fromUnitId]) : null,
+            barcode: c.barcode,
+          })),
+          ...(reason.trim() ? { priceReason: reason.trim() } : {}),
+        },
+        "PATCH"
+      );
+      await onSaved();
+      onClose();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      title={`Changer le prix — ${product.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Annuler
+          </Button>
+          <Button onClick={save} disabled={busy || invalid || changed.length === 0}>
+            {busy ? "Enregistrement…" : "Enregistrer le nouveau prix"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600">Le nouveau prix s&apos;applique tout de suite à la caisse. L&apos;ancien prix, la date et votre nom sont gardés dans l&apos;historique.</p>
+        {rows.map((r) => (
+          <div key={r.key} className="rounded-xl border border-gray-200 p-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-sm font-semibold text-gray-800">{r.label}</p>
+              <p className="text-xs text-gray-500">
+                Actuel : <Money value={r.current} currency={currency} />
+              </p>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Input inputMode="numeric" className="w-36" value={values[r.key]} onChange={(e) => setValues((v) => ({ ...v, [r.key]: e.target.value }))} aria-label={r.label} />
+              {[-100, 100, 200, 500].map((d) => (
+                <button key={d} type="button" onClick={() => bump(r.key, d)} className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm font-semibold hover:bg-gray-50">
+                  {d > 0 ? `+${d}` : d}
+                </button>
+              ))}
+              {num(values[r.key]) !== r.current && num(values[r.key]) > 0 && (
+                <span className={`text-sm font-semibold ${num(values[r.key]) > r.current ? "text-green-700" : "text-red-700"}`}>
+                  {num(values[r.key]) > r.current ? "+" : "−"}
+                  {fmtNum(Math.abs(num(values[r.key]) - r.current))}
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+        <Field label="Motif (facultatif)" hint="ex. hausse du fournisseur">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} />
+        </Field>
+        {error && <Alert>{error}</Alert>}
+      </div>
+    </Modal>
+  );
+}
+
+interface PriceEvent {
+  id: string;
+  at: string;
+  by: string | null;
+  reason: string | null;
+  changes: Array<{ label: string; before: string | null; after: string | null }>;
+}
+
+function PriceHistoryModal({ product, currency, onClose }: { product: Product; currency: string; onClose: () => void }) {
+  const [events, setEvents] = useState<PriceEvent[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    apiGet<{ data: { history: PriceEvent[] } }>(`/api/products/${product.id}/price-history`)
+      .then((r) => setEvents(r.data.history))
+      .catch((e) => setError(errorMessage(e)));
+  }, [product.id]);
+  const date = (iso: string) => {
+    const d = new Date(iso);
+    return `${d.toLocaleDateString("fr-FR")} à ${String(d.getHours()).padStart(2, "0")}h${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+  return (
+    <Modal open size="lg" title={`Historique des prix — ${product.name}`} onClose={onClose}>
+      {error && <Alert>{error}</Alert>}
+      {!events && !error ? (
+        <Spinner />
+      ) : events && events.length === 0 ? (
+        <EmptyState title="Aucun changement de prix">Le prix n&apos;a pas été modifié depuis la création de l&apos;article.</EmptyState>
+      ) : (
+        events && (
+          <Table head={["Date", "Par", "Changement", "Motif"]}>
+            {events.map((e) => (
+              <tr key={e.id}>
+                <Td className="whitespace-nowrap">{date(e.at)}</Td>
+                <Td>{e.by ?? "—"}</Td>
+                <Td className="whitespace-normal">
+                  {e.changes.length === 0 ? (
+                    <span className="text-gray-400">—</span>
+                  ) : (
+                    e.changes.map((c) => (
+                      <span key={c.label} className="block">
+                        <span className="text-gray-500">{c.label} : </span>
+                        {c.before != null ? <Money value={c.before} currency={currency} /> : "—"} → <strong>{c.after != null ? <Money value={c.after} currency={currency} /> : "—"}</strong>
+                      </span>
+                    ))
+                  )}
+                </Td>
+                <Td className="whitespace-normal text-gray-600">{e.reason ?? "—"}</Td>
+              </tr>
+            ))}
+          </Table>
+        )
+      )}
     </Modal>
   );
 }

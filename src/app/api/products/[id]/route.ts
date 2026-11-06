@@ -17,6 +17,7 @@ import {
 import { attributesSchema, packagingSchema } from "@/lib/validations";
 import { assertBarcodeFree, assertReferenceFree, productClientSelect, replacePackagings } from "@/lib/catalog";
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
+import { hasPermission } from "@/lib/rbac";
 
 const updateSchema = z
   .object({
@@ -36,6 +37,8 @@ const updateSchema = z
     requiresPrescription: z.boolean().optional(),
     isActive: z.boolean().optional(),
     packagings: z.array(packagingSchema).max(10).optional(),
+    /** Motif du changement de prix (facultatif), gardé dans l'historique */
+    priceReason: z.string().trim().max(200).optional(),
   })
   .refine((d) => Object.keys(d).length > 0, "Aucune modification");
 
@@ -47,11 +50,40 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     await requirePermission(user, "product:edit");
     const companyId = requireCompany(user);
     const { id } = await params;
-    const { packagings, attributes, ...data } = parseBody(updateSchema, await readJson(req));
+    const { packagings, attributes, priceReason, ...data } = parseBody(updateSchema, await readJson(req));
 
     const product = await prisma.$transaction(async (tx) => {
-      const current = await tx.product.findFirst({ where: { id, companyId } });
+      const current = await tx.product.findFirst({
+        where: { id, companyId },
+        include: { baseUnit: { select: { name: true } }, unitConversions: { select: { fromUnitId: true, factor: true, sellingPrice: true, fromUnit: { select: { name: true, symbol: true } } } } },
+      });
       if (!current) throw new ApiError(404, "Produit introuvable");
+
+      // Prix de vente (bidon, carton, lot) avant / après : seuls la direction et le gérant peuvent les changer
+      const label = (u: { name: string; symbol: string }, factor: Prisma.Decimal | number) => `${u.name} (${Number(factor)})`;
+      const before: Record<string, string> = { [current.baseUnitId]: current.sellingPrice.toString() };
+      const names: Record<string, string> = { [current.baseUnitId]: current.baseUnit.name };
+      for (const c of current.unitConversions) {
+        if (c.sellingPrice != null) before[c.fromUnitId] = c.sellingPrice.toString();
+        names[c.fromUnitId] = label(c.fromUnit, c.factor);
+      }
+      const after: Record<string, string> = { ...before };
+      if (data.sellingPrice !== undefined) after[current.baseUnitId] = new Prisma.Decimal(data.sellingPrice).toString();
+      if (packagings) {
+        for (const k of Object.keys(after)) if (k !== current.baseUnitId) delete after[k];
+        const pkUnits = await tx.unit.findMany({ where: { id: { in: packagings.map((p) => p.unitId) } }, select: { id: true, name: true, symbol: true } });
+        for (const p of packagings) {
+          const u = pkUnits.find((x) => x.id === p.unitId);
+          if (u && !names[p.unitId]) names[p.unitId] = label(u, p.factor);
+          if (p.sellingPrice != null) after[p.unitId] = new Prisma.Decimal(p.sellingPrice).toString();
+        }
+      }
+      const changedPrices = Object.keys({ ...before, ...after }).filter(
+        (k) => before[k] !== undefined && (after[k] === undefined || !new Prisma.Decimal(before[k]).equals(after[k]))
+      );
+      if (changedPrices.length && !hasPermission(user.role, "product:price")) {
+        throw new ApiError(403, "Seuls la direction et le gérant peuvent changer un prix de vente", "PRICE_FORBIDDEN");
+      }
 
       if (data.categoryId) {
         const cat = await tx.category.findFirst({ where: { id: data.categoryId, companyId }, select: { id: true } });
@@ -83,9 +115,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         await replacePackagings(tx, { companyId, productId: id, baseUnitId: current.baseUnitId, packagings, productBarcode: updated.barcode });
       }
 
+      const newPrices = Object.keys(after).filter((k) => before[k] === undefined);
       const priceChanged =
-        (data.sellingPrice !== undefined && !new Prisma.Decimal(data.sellingPrice).equals(current.sellingPrice)) ||
+        changedPrices.length > 0 ||
+        newPrices.length > 0 ||
         (data.purchasePrice !== undefined && !new Prisma.Decimal(data.purchasePrice).equals(current.purchasePrice));
+      const priceList = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).map(([k, v]) => [names[k] ?? k, v]));
 
       if (priceChanged) {
         await tx.productPriceHistory.create({
@@ -99,8 +134,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             referenceType: "Product",
             referenceId: id,
             result: "SUCCESS",
-            oldValues: { sellingPrice: current.sellingPrice.toString(), purchasePrice: current.purchasePrice.toString() },
-            newValues: { sellingPrice: updated.sellingPrice.toString(), purchasePrice: updated.purchasePrice.toString() },
+            reason: priceReason || undefined,
+            oldValues: { sellingPrice: current.sellingPrice.toString(), purchasePrice: current.purchasePrice.toString(), prices: priceList(before) },
+            newValues: { sellingPrice: updated.sellingPrice.toString(), purchasePrice: updated.purchasePrice.toString(), prices: priceList(after) },
             ipAddress: user.ipAddress,
             userAgent: user.userAgent,
           },
