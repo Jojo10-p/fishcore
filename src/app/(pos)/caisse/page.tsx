@@ -391,11 +391,42 @@ function ActiveRegister({
   }, [refreshNumbers]);
   const sync = useOfflineSync({ centerId: cashSession.centerId, sessionId: cashSession.id, onSyncComplete });
 
+  const [menu, setMenu] = useState(false);
+  const actions = (
+    <>
+      {lastSale && (
+        <span className="flex items-center gap-2 text-sm">
+          <Button className="px-3 py-1.5" onClick={() => printLast()}>
+            🖨 Réimprimer {lastSale.snapshot.saleNumber}
+          </Button>
+          {!lastSale.offline && (
+            <Link href={`/facture/${lastSale.id}`} target="_blank" className="text-blue-600 hover:underline">
+              A4
+            </Link>
+          )}
+        </span>
+      )}
+      <label className="flex items-center gap-1.5 text-xs text-gray-600" title="Imprimer la facture après chaque vente (réglage de cet appareil)">
+        <input type="checkbox" checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />
+        Impression auto
+      </label>
+      <Button variant="secondary" className="px-3 py-1.5" onClick={() => setShowExpense(true)} disabled={!online}>
+        💸 Dépense
+      </Button>
+      <Button variant="danger" className="px-3 py-1.5" onClick={() => setShowClose(true)}>
+        Clôturer
+      </Button>
+      <Button variant="secondary" className="px-3 py-1.5 text-red-600" onClick={() => setLogoutMode(true)}>
+        Se déconnecter
+      </Button>
+    </>
+  );
+
   return (
     <>
     <div className="h-dvh flex flex-col print:hidden">
-      <header className="flex flex-wrap items-center gap-2 sm:gap-3 bg-white border-b border-gray-200 px-3 sm:px-4 py-2">
-        <Link href="/dashboard" className="text-sm text-gray-500 hover:text-gray-800" title="Gestion">
+      <header className="relative flex items-center gap-2 sm:gap-3 bg-white border-b border-gray-200 px-3 sm:px-4 py-2">
+        <Link href="/dashboard" className="text-lg text-gray-500 hover:text-gray-800" title="Tableau de bord" aria-label="Tableau de bord">
           ←
         </Link>
         <div className="mr-auto min-w-0">
@@ -416,37 +447,22 @@ function ActiveRegister({
             <Badge tone="red">Reconnexion requise</Badge>
           </Link>
         )}
-        <label className="flex items-center gap-1.5 text-xs text-gray-600" title="Imprimer la facture après chaque vente (réglage de cet appareil)">
-          <input type="checkbox" checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />
-          Impression auto
-        </label>
         {numbersLeft !== null && numbersLeft < 20 && (
           <Badge tone={numbersLeft < 10 ? "red" : "amber"}>
             {numbersLeft} facture(s) d&apos;avance — {numbersLeft === 0 ? "connectez la caisse" : "reconnectez bientôt"}
           </Badge>
         )}
-        {lastSale && (
-          <span className="flex items-center gap-2 text-sm">
-            <Button className="px-3 py-1.5" onClick={() => printLast()}>
-              🖨 Réimprimer {lastSale.snapshot.saleNumber}
-            </Button>
-            {!lastSale.offline && (
-              <Link href={`/facture/${lastSale.id}`} target="_blank" className="text-blue-600 hover:underline">
-                A4
-              </Link>
-            )}
-          </span>
-        )}
-        <Button variant="secondary" className="px-3 py-1.5" onClick={() => setShowExpense(true)} disabled={!online}>
-          💸 Dépense
-        </Button>
-        <Button variant="danger" className="px-3 py-1.5" onClick={() => setShowClose(true)}>
-          Clôturer
-        </Button>
         <NotificationBell />
-        <Button variant="secondary" className="px-3 py-1.5 text-red-600" onClick={() => setLogoutMode(true)}>
-          Se déconnecter
+        {/* Ordinateur : actions visibles ; téléphone : rangées dans « Menu » */}
+        <div className="hidden lg:flex items-center gap-2">{actions}</div>
+        <Button variant="secondary" className="px-3 py-1.5 lg:hidden" onClick={() => setMenu((m) => !m)} aria-expanded={menu}>
+          ☰ Menu
         </Button>
+        {menu && (
+          <div className="absolute right-3 top-full z-40 mt-1 flex w-64 flex-col gap-2 rounded-2xl border border-gray-200 bg-white p-3 shadow-xl lg:hidden" onClick={() => setMenu(false)}>
+            {actions}
+          </div>
+        )}
       </header>
 
       <div className="flex-1 min-h-0">

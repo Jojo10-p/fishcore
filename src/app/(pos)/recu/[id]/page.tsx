@@ -1,5 +1,6 @@
 "use client";
 
+import { closeOrBack } from "@/lib/utils";
 import { invoiceFileName } from "@/components/pos/printing";
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
@@ -108,7 +109,7 @@ export default function TicketPage({ params }: { params: Promise<{ id: string }>
         <Link href={`/facture/${sale.id}`} className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm">
           Facture A4
         </Link>
-        <button onClick={() => window.close()} className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm">
+        <button onClick={closeOrBack} className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm">
           Fermer
         </button>
       </div>

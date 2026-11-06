@@ -57,3 +57,16 @@ export function currencyLabel(currency: string = "XOF"): string {
   if (currency === "XOF" || currency === "XAF") return "F CFA";
   return currency;
 }
+
+/**
+ * « Fermer » sur une facture : ferme l'onglet quand il a été ouvert pour l'occasion ;
+ * sinon (le navigateur refuse window.close), revient à la page précédente ou au tableau de bord.
+ */
+export function closeOrBack() {
+  window.close();
+  setTimeout(() => {
+    if (window.closed) return;
+    if (window.history.length > 1) window.history.back();
+    else window.location.assign("/dashboard");
+  }, 150);
+}

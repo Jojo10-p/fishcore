@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import JsBarcode from "jsbarcode";
 import { amountInWords } from "@/lib/amount-in-words";
-import { formatCurrency } from "@/lib/utils";
+import { closeOrBack, formatCurrency } from "@/lib/utils";
 
 // ─────────────────────────────────────────────
 // Documents commerciaux A4 (facture, devis, bon de sortie)
@@ -82,7 +82,7 @@ export function A4Page({ children, toolbar }: { children: React.ReactNode; toolb
           Imprimer
         </button>
         {toolbar}
-        <button onClick={() => window.close()} className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm hover:bg-gray-50">
+        <button onClick={closeOrBack} className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm hover:bg-gray-50">
           Fermer
         </button>
       </div>

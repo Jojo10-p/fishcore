@@ -3,7 +3,7 @@
 import { matchesSearch } from "@/lib/search-aliases";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOfflineDB, type OfflinePackaging, type OfflineProduct } from "@/lib/offline/db";
-import { applySaleToLocalStock, createOfflineSale } from "@/lib/offline/sales";
+import { applySaleToLocalStock, createOfflineSale, getLocalStock } from "@/lib/offline/sales";
 import { commitNumber, peekNextNumber, refreshNumbering } from "@/lib/offline/numbering";
 import { cn, formatCurrency, generateIdempotencyKey } from "@/lib/utils";
 
@@ -150,6 +150,20 @@ export default function POSInterface({
       .toArray()
       .then((list) => setProducts(list.sort((a, b) => a.name.localeCompare(b.name))));
   }, [catalogVersion]);
+
+  // Stock restant affiché sur chaque article (stock du centre, moins les ventes de cet appareil)
+  const [stockMap, setStockMap] = useState<Map<string, number>>(new Map());
+  const [stockTick, setStockTick] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => void getLocalStock(centerId).then((m) => alive && setStockMap(m)).catch(() => undefined);
+    refresh();
+    const t = setInterval(refresh, 15_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [centerId, catalogVersion, stockTick]);
 
   useEffect(() => {
     const on = () => setIsOnline(true);
@@ -518,38 +532,28 @@ export default function POSInterface({
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-3">
-              {filteredProducts.map((p) => (
-                <div key={p.id} className="bg-white border border-gray-200 rounded-xl p-3 flex flex-col">
-                  <button onClick={() => setAskQty({ product: p })} className="text-left flex-1 active:scale-[0.98] transition-transform">
-                    <p className="font-medium text-gray-900 text-sm leading-tight">
-                      {p.internalCode && <span className="mr-1 font-mono text-xs text-gray-400">{p.internalCode}</span>}
-                      {p.name}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-0.5 truncate">
-                      {[p.brand, p.categoryName, ...Object.values(p.attributes ?? {}).slice(0, 2)].filter(Boolean).join(" · ") || " "}
-                    </p>
-                    <p className="text-blue-700 font-bold text-sm mt-1">
-                      {fmt(p.sellingPrice)}
-                      <span className="text-gray-400 font-normal"> / {p.baseUnitSymbol}</span>
-                    </p>
-                    {p.requiresPrescription && <p className="text-[11px] text-amber-700 mt-0.5">Sur ordonnance</p>}
+              {filteredProducts.map((p) => {
+                const left = stockMap.get(p.id);
+                const tone = left === undefined ? "text-gray-400" : left <= 0 ? "text-red-600" : left <= (p.stockAlertQty || 7) ? "text-amber-600" : "text-green-700";
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setAskQty({ product: p })}
+                    className="flex min-h-[7.5rem] flex-col justify-between rounded-2xl border border-gray-200 bg-white p-3 sm:p-4 text-left shadow-sm transition hover:border-blue-300 hover:shadow active:scale-[0.98]"
+                  >
+                    <span className="block text-[15px] font-semibold leading-snug text-gray-900">{p.name}</span>
+                    <span className="mt-3 block">
+                      <span className="block text-lg font-bold text-blue-700">
+                        {fmt(p.sellingPrice)}
+                        <span className="text-sm font-normal text-gray-400"> / {p.baseUnitSymbol}</span>
+                      </span>
+                      <span className={cn("mt-0.5 block text-sm font-medium", tone)}>
+                        {left === undefined ? "Stock : —" : left <= 0 ? "Épuisé" : `En stock : ${fmtQty(left)}`}
+                      </span>
+                    </span>
                   </button>
-                  {(p.packagings ?? []).length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {p.packagings.map((pk) => (
-                        <button
-                          key={pk.unitId}
-                          onClick={() => setAskQty({ product: p, packaging: pk })}
-                          className="text-[11px] rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-blue-800 hover:bg-blue-100"
-                          title={`1 ${pk.name} = ${fmtQty(pk.factor)} ${p.baseUnitSymbol}`}
-                        >
-                          {pk.symbol} ×{fmtQty(pk.factor)} · {fmt(pk.sellingPrice)}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -793,11 +797,28 @@ export default function POSInterface({
           unit={askQty.packaging?.symbol ?? askQty.product.baseUnitSymbol}
           price={askQty.packaging?.sellingPrice ?? askQty.product.sellingPrice}
           allowsDecimal={askQty.packaging ? false : askQty.product.allowsDecimal}
+          stock={stockMap.get(askQty.product.id)}
+          baseUnit={askQty.product.baseUnitSymbol}
+          options={
+            (askQty.product.packagings ?? []).length
+              ? [
+                  { key: "", label: `Au ${askQty.product.baseUnitSymbol}`, price: askQty.product.sellingPrice, active: !askQty.packaging, pick: () => setAskQty({ product: askQty.product }) },
+                  ...askQty.product.packagings.map((pk) => ({
+                    key: pk.unitId,
+                    label: /\d/.test(pk.name) ? pk.name : `${pk.name} (${fmtQty(pk.factor)})`,
+                    price: pk.sellingPrice,
+                    active: askQty.packaging?.unitId === pk.unitId,
+                    pick: () => setAskQty({ product: askQty.product, packaging: pk }),
+                  })),
+                ]
+              : []
+          }
           fmt={fmt}
           onCancel={() => setAskQty(null)}
           onConfirm={(qty) => {
             addToCart(askQty.product, askQty.packaging, qty);
             setAskQty(null);
+            setStockTick((t) => t + 1);
             searchRef.current?.focus();
           }}
         />
@@ -812,6 +833,9 @@ function QuantityDialog({
   unit,
   price,
   allowsDecimal,
+  stock,
+  baseUnit,
+  options = [],
   fmt,
   onCancel,
   onConfirm,
@@ -820,6 +844,10 @@ function QuantityDialog({
   unit: string;
   price: number;
   allowsDecimal: boolean;
+  stock?: number;
+  baseUnit?: string;
+  /** Vendre au bidon, au carton, par lot… (vide : une seule façon de vendre) */
+  options?: Array<{ key: string; label: string; price: number; active: boolean; pick: () => void }>;
   fmt: (n: number) => string;
   onCancel: () => void;
   onConfirm: (qty: number) => void;
@@ -841,7 +869,22 @@ function QuantityDialog({
         <h3 className="font-semibold text-gray-900">{name}</h3>
         <p className="text-xs text-gray-500">
           {fmt(price)} / {unit}
+          {stock !== undefined && ` · en stock : ${fmtQty(stock)} ${baseUnit ?? ""}`}
         </p>
+        {options.length > 1 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {options.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                onClick={o.pick}
+                className={cn("rounded-lg border px-2.5 py-1.5 text-sm", o.active ? "border-blue-600 bg-blue-50 font-semibold text-blue-800" : "border-gray-300 text-gray-700")}
+              >
+                {o.label} · {fmt(o.price)}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="mt-4 flex items-center gap-2">
           <button type="button" onClick={() => setValue(String(Math.max(1, qty - 1)))} className="h-12 w-12 rounded-xl bg-gray-100 text-xl" aria-label="Moins">
             −
