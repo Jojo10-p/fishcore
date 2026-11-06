@@ -74,7 +74,8 @@ const n = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 2 })
 const q = (v: number) => v.toLocaleString("fr-FR", { minimumFractionDigits: v % 1 ? 2 : 0, maximumFractionDigits: 3 });
 
 /** Styles d'impression : 72 mm imprimables sur un rouleau de 80 mm, sans marge. */
-export const TICKET_PRINT_CSS = "@page { margin: 0; } @media print { html, body { background: #fff; width: 80mm; } }";
+export const TICKET_PRINT_CSS =
+  "@page { margin: 0; } @media print { html, body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }";
 
 // Couleurs GJH à l'écran ; à l'impression (thermique ou sans couleur) tout reste
 // lisible en noir : aucun texte blanc, les fonds colorés ne sont que décoratifs.
@@ -84,12 +85,10 @@ export function Ticket80({ t }: { t: TicketData }) {
   const place = [t.center.address ?? c.address, t.center.city ?? c.city].filter(Boolean).join(", ");
   const who = `${ROLE_LABELS[t.cashierRole ?? ""] ?? "Caissier"} : ${t.cashierFirstName}`;
   return (
-    <div className="w-[72mm] bg-white px-[2mm] py-3 font-sans text-[11.5px] leading-tight text-black">
+    <div className="mx-auto w-[72mm] bg-white px-[2mm] py-3 font-sans text-[11.5px] leading-tight text-black">
       <header className="text-center">
-        {/* eslint-disable-next-line @next/next/no-img-element -- logo couleur à l'écran */}
-        <img src="/icons/gjh-logo.png" alt="" className="mx-auto mb-1 h-[22mm] w-auto object-contain print:hidden" />
-        {/* eslint-disable-next-line @next/next/no-img-element -- logo noir et blanc pour l'imprimante (mis en cache hors ligne) */}
-        <img src="/icons/gjh-ticket.png" alt="" className="mx-auto mb-1 hidden h-[22mm] w-auto object-contain print:block" />
+        {/* eslint-disable-next-line @next/next/no-img-element -- logo couleur, aussi à l'impression (mis en cache hors ligne) */}
+        <img src="/icons/gjh-logo.png" alt="" className="mx-auto mb-1 h-[22mm] w-auto object-contain" />
         <p className="text-[17px] font-black uppercase tracking-wide" style={{ color: NAVY }}>
           {c.tradeName}
         </p>
@@ -223,7 +222,7 @@ export function Ticket80({ t }: { t: TicketData }) {
           Merci de votre confiance
         </p>
         {c.invoiceNotes && <p className="mt-1 whitespace-pre-line text-[10px]">{c.invoiceNotes}</p>}
-        <p className="mt-2 border-t border-dashed border-gray-500 pt-1 text-left text-[11px]">
+        <p className="mt-2 border-t border-dashed border-gray-500 pt-1 text-center text-[11px]">
           {who} — {stamp(date)}
         </p>
       </footer>

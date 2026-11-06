@@ -18,7 +18,7 @@ const VERSION = `fishcore-${new URL(self.location.href).searchParams.get("v") ||
 const PAGES_CACHE = `${VERSION}-pages`;
 const STATIC_CACHE = `${VERSION}-static`;
 const PRECACHE_PAGES = ["/caisse", "/offline.html"];
-const PRECACHE_FILES = ["/icons/gjh-ticket.png", "/icons/icon-192.png", "/manifest.webmanifest"];
+const PRECACHE_FILES = ["/icons/gjh-logo.png", "/icons/gjh-ticket.png", "/icons/icon-192.png", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(precache().then(() => self.skipWaiting()));
