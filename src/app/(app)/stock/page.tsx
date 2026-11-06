@@ -1,5 +1,6 @@
 "use client";
 
+import { matchesSearch } from "@/lib/search-aliases";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "@/components/app/session-provider";
@@ -93,7 +94,7 @@ function StockPage() {
   const filtered =
     rows?.filter((r) => {
       const q = search.toLowerCase();
-      const match = !q || r.product.name.toLowerCase().includes(q) || r.product.brand?.toLowerCase().includes(q) || r.product.category?.name.toLowerCase().includes(q);
+      const match = !q || matchesSearch(r.product.name, q) || r.product.brand?.toLowerCase().includes(q) || r.product.category?.name.toLowerCase().includes(q);
       return match && (!onlyExpiry || atRisk(r));
     }) ?? null;
   const centerName = session?.centers.find((c) => c.id === centerId)?.name;

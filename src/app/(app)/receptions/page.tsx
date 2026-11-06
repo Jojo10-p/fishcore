@@ -1,5 +1,6 @@
 "use client";
 
+import { matchesSearch } from "@/lib/search-aliases";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { useOnline } from "@/components/app/connection-badge";
@@ -512,7 +513,7 @@ function ReceiptForm({
           const costPer = r.qty > 0 && r.lot > 0 ? r.lot / r.qty : 0;
           const stock = r.product?.stocks?.[0] ? Number(r.product.stocks[0].quantity) : null;
           const typed = norm(r.l.name);
-          const matches = focus === i && typed.length >= 2 ? names.filter((n) => norm(n.name).includes(typed) && norm(n.name) !== typed).slice(0, 8) : [];
+          const matches = focus === i && typed.length >= 2 ? names.filter((n) => matchesSearch(n.name, typed) && norm(n.name) !== typed).slice(0, 8) : [];
           return (
             <div key={i} className="rounded-xl border border-gray-200 p-3 sm:p-4 space-y-3">
               <div className="flex items-center justify-between gap-2">

@@ -1,5 +1,6 @@
 "use client";
 
+import { matchesSearch } from "@/lib/search-aliases";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOfflineDB, type OfflinePackaging, type OfflineProduct } from "@/lib/offline/db";
 import { applySaleToLocalStock, createOfflineSale } from "@/lib/offline/sales";
@@ -182,7 +183,7 @@ export default function POSInterface({
     if (!q) return products;
     return products.filter(
       (p) =>
-        p.name.toLowerCase().includes(q) ||
+        matchesSearch(p.name, q) ||
         p.internalCode?.toLowerCase().includes(q) ||
         p.barcode?.includes(q) ||
         p.brand?.toLowerCase().includes(q) ||
