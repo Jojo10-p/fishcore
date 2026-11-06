@@ -17,6 +17,7 @@ interface SaleRow {
   deliveryStatus: "PENDING" | "PARTIAL" | "DELIVERED";
   cashier: { firstName: string; lastName: string };
   customer: { name: string; phone: string | null } | null;
+  customerName?: string | null;
   payments: Array<{ method: string; amount: string }>;
 }
 
@@ -86,7 +87,7 @@ export default function SalesPage() {
                   {s.createdOffline && <span className="ml-2"><Badge tone="purple">hors ligne</Badge></span>}
                 </Td>
                 <Td>{new Date(s.createdAt).toLocaleString("fr-FR", { dateStyle: search ? "short" : undefined, timeStyle: "short" })}</Td>
-                <Td>{s.customer?.name ?? <span className="text-gray-400">—</span>}</Td>
+                <Td>{s.customer?.name ?? s.customerName ?? <span className="text-gray-400">Client Prestige</span>}</Td>
                 <Td>
                   {s.cashier.firstName} {s.cashier.lastName}
                 </Td>

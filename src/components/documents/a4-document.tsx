@@ -166,7 +166,7 @@ export function PartyBlock({ label, party }: { label: string; party: DocParty | 
           {party.taxId && <p>IFU : {party.taxId}</p>}
         </div>
       ) : (
-        <p className="mt-1 text-sm font-semibold">Client comptant</p>
+        <p className="mt-1 text-sm font-semibold">Client Prestige</p>
       )}
     </section>
   );

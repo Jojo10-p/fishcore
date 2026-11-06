@@ -105,7 +105,7 @@ export function Ticket80({ t }: { t: TicketData }) {
         </p>
         <p>Date : {stamp(date)}</p>
         <p>
-          Client : <strong>{t.customer ? t.customer.name : "Client de passage"}</strong>
+          Client : <strong>{t.customer ? t.customer.name : "Client Prestige"}</strong>
           {t.customer?.phone && ` (${t.customer.phone})`}
         </p>
         {t.customer?.taxId && <p>IFU client : {t.customer.taxId}</p>}

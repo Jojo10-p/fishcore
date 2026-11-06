@@ -140,7 +140,7 @@ export default function PickupPage() {
               <tr key={s.id}>
                 <Td className="font-medium">{s.saleNumber}</Td>
                 <Td>{new Date(s.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}</Td>
-                <Td>{s.customer?.name ?? <span className="text-gray-400">Client comptant</span>}</Td>
+                <Td>{s.customer?.name ?? <span className="text-gray-400">Client Prestige</span>}</Td>
                 <Td>{s._count.lines}</Td>
                 <Td>{s.deliveryStatus === "PARTIAL" ? <Badge tone="amber">Servie en partie</Badge> : <Badge tone="blue">À servir</Badge>}</Td>
                 <Td>
@@ -245,7 +245,7 @@ function ServeModal({ saleId, onClose, onDone }: { saleId: string; onClose: () =
                 {sale.customer.phone && ` (${sale.customer.phone})`}
               </>
             ) : (
-              "Client comptant"
+              "Client Prestige"
             )}{" "}
             · payée le {new Date(sale.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
           </p>
