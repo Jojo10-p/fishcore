@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 import { requestMeta } from "@/lib/auth";
 import { startSession } from "@/lib/session";
-import { ROLE_NAMES, createUserFromInvitation, findValidInvitation } from "@/lib/invitations";
+import { ROLE_NAMES, boutiqueMismatch, createUserFromInvitation, findValidInvitation } from "@/lib/invitations";
 import { googleConfigured } from "@/lib/google";
 
 const fail = (error: string, status = 400) => NextResponse.json({ success: false, error }, { status });
@@ -15,6 +15,8 @@ export async function GET(req: NextRequest) {
   const found = await findValidInvitation(req.nextUrl.searchParams.get("token") ?? "");
   if (!found.ok) return fail(found.error, 404);
   const inv = found.invitation;
+  const wrongShop = boutiqueMismatch(inv, req.nextUrl.searchParams.get("boutique"));
+  if (wrongShop) return fail(wrongShop, 404);
   return NextResponse.json({
     success: true,
     data: { companyName: inv.company.tradeName, role: inv.role, roleName: ROLE_NAMES[inv.role], centerName: inv.center?.name ?? null, label: inv.label, expiresAt: inv.expiresAt, google: googleConfigured() },

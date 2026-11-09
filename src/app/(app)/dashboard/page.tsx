@@ -1,5 +1,6 @@
 "use client";
 
+import { boutiqueIcon } from "@/lib/boutiques";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -57,10 +58,9 @@ const qty = (n: number) => n.toLocaleString("fr-FR", { maximumFractionDigits: 3 
 
 // Tableau de bord GJH : l'essentiel du jour, en un coup d'œil (ordinateur ou téléphone)
 export default function DashboardPage() {
-  const { can, centerId, currency, session } = useSession();
+  const { can, centerId, setCenterId, currency, session } = useSession();
   const router = useRouter();
-  const isOwner = session?.user.role === "COMPANY_OWNER";
-  const [consolidated, setConsolidated] = useState(isOwner);
+  const [consolidated, setConsolidated] = useState(false);
   const [date, setDate] = useState("");
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -110,11 +110,30 @@ export default function DashboardPage() {
         }
         actions={
           <>
-            {isOwner && (session?.centers.length ?? 0) > 1 && (
-              <label className="inline-flex items-center gap-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-lg px-3">
-                <input type="checkbox" checked={consolidated} onChange={(e) => setConsolidated(e.target.checked)} />
-                Toutes les boutiques
-              </label>
+            {(session?.centers.length ?? 0) > 1 && can("sale:view_all") && (
+              // Le boss choisit le tableau de bord d'une boutique, ou les deux ensemble
+              <div className="inline-flex flex-wrap rounded-xl border border-gray-300 bg-white p-1 text-sm">
+                {session!.centers.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => {
+                      setConsolidated(false);
+                      setCenterId(c.id);
+                    }}
+                    className={`rounded-lg px-3 py-1.5 font-medium ${!consolidated && centerId === c.id ? "bg-blue-600 text-white" : "text-gray-700 hover:bg-gray-100"}`}
+                  >
+                    {boutiqueIcon(c.name)} {c.name}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setConsolidated(true)}
+                  className={`rounded-lg px-3 py-1.5 font-medium ${consolidated ? "bg-blue-600 text-white" : "text-gray-700 hover:bg-gray-100"}`}
+                >
+                  Les deux
+                </button>
+              </div>
             )}
             <Input type="date" aria-label="Date" value={date} onChange={(e) => setDate(e.target.value)} className="w-auto" />
           </>

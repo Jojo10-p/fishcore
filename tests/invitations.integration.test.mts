@@ -263,3 +263,27 @@ test("« Me rattacher avec un code » sans compte : le code ouvre la création d
   assert.equal(created.status, 201, JSON.stringify(created.json));
   assert.equal((await prisma.user.findUniqueOrThrow({ where: { email: "fabrice@exemple.com" } })).role, "CENTER_MANAGER");
 });
+
+test("deux boutiques : choisir sa boutique, puis le code ; le code d'une boutique ne marche pas dans l'autre", async () => {
+  const other = await call(centersRoute.POST, { path: "/api/centers", cookie: ctx.owner, body: { name: "Huile d'arachide", code: "ARA" } });
+  assert.equal(other.status, 201, JSON.stringify(other.json));
+  const arachide = other.json.data.id;
+  const r = await invite(ctx.owner, { role: "CASHIER", centerId: arachide, kind: "code" });
+  // Mauvaise boutique : refusé (sans compte et avec compte)
+  const wrong = await call(acceptRoute.GET, { path: `/api/invitations/accept?token=${r.json.data.code}&boutique=${ctx.center}` });
+  assert.equal(wrong.status, 404);
+  assert.match(wrong.json.error, /Huile d'arachide/);
+  const c = await signup("ghislain@exemple.com");
+  const bad = await call(joinRoute.POST, { path: "/api/invitations/join", cookie: c, body: { code: r.json.data.code, boutiqueId: ctx.center } });
+  assert.equal(bad.status, 400);
+  assert.match(bad.json.error, /pas pour cette boutique/);
+  // Bonne boutique : rattaché à l'huile d'arachide uniquement
+  const ok = await call(joinRoute.POST, { path: "/api/invitations/join", cookie: c, body: { code: r.json.data.code, boutiqueId: arachide } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  const u = await prisma.user.findUniqueOrThrow({ where: { email: "ghislain@exemple.com" }, include: { centers: true } });
+  assert.deepEqual(u.centers.map((x) => x.centerId), [arachide]);
+  // La liste publique des boutiques n'existe que pour GJH (édition dédiée)
+  const pub = await import("@/app/api/public/boutiques/route");
+  const list = await (await pub.GET()).json();
+  assert.ok(list.data.some((b: Json) => b.name === "Huile d'arachide"));
+});

@@ -21,6 +21,8 @@ const PUBLIC_PATHS = [
   "/api/auth/google",
   "/api/auth/providers",
   "/api/invitations/accept",
+  // Choisir sa boutique avant de taper le code du patron
+  "/api/public/boutiques",
   "/rejoindre",
   "/mot-de-passe-oublie",
   "/reinitialiser",

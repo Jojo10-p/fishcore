@@ -2,6 +2,7 @@ import { after } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { sendPush } from "@/lib/push";
+import { boutiqueIcon } from "@/lib/boutiques";
 
 // ─────────────────────────────────────────────
 // Cloche de la direction : ce que font la caisse et le magasin
@@ -52,6 +53,14 @@ export async function managerIds(companyId: string, centerId?: string | null): P
 async function deliver(n: NotifyInput): Promise<void> {
   const ids = (n.userIds ?? (await managerIds(n.companyId, n.centerId))).filter((id) => id !== n.actorId);
   if (!ids.length) return;
+  // Plusieurs boutiques : on dit de laquelle il s'agit (« 🥜 Huile d'arachide — … »)
+  if (n.centerId) {
+    const [center, count] = await Promise.all([
+      prisma.center.findUnique({ where: { id: n.centerId }, select: { name: true } }),
+      prisma.center.count({ where: { companyId: n.companyId } }),
+    ]);
+    if (center && count > 1) n = { ...n, title: `${boutiqueIcon(center.name)} ${center.name} — ${n.title}` };
+  }
   await prisma.notification.createMany({
     data: ids.map((userId) => ({
       companyId: n.companyId,

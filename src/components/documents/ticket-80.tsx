@@ -93,6 +93,7 @@ export function Ticket80({ t }: { t: TicketData }) {
           {c.tradeName}
         </p>
         {c.legalName && c.legalName !== c.tradeName && <p>{c.legalName}</p>}
+        {t.center.name && t.center.name !== c.tradeName && <p className="font-semibold">{t.center.name}</p>}
         {place && <p>{place}</p>}
         <p>Tél. {t.center.phone ?? c.phone}</p>
         {c.taxId && <p className="font-semibold">IFU : {c.taxId}</p>}

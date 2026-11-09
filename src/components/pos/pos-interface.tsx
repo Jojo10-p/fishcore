@@ -802,7 +802,7 @@ export default function POSInterface({
           options={
             (askQty.product.packagings ?? []).length
               ? [
-                  { key: "", label: `Au ${askQty.product.baseUnitSymbol}`, price: askQty.product.sellingPrice, active: !askQty.packaging, pick: () => setAskQty({ product: askQty.product }) },
+                  { key: "", label: askQty.product.baseUnitSymbol === "L" ? "Au litre" : `Au ${askQty.product.baseUnitSymbol}`, price: askQty.product.sellingPrice, active: !askQty.packaging, pick: () => setAskQty({ product: askQty.product }) },
                   ...askQty.product.packagings.map((pk) => ({
                     key: pk.unitId,
                     label: /\d/.test(pk.name) ? pk.name : `${pk.name} (${fmtQty(pk.factor)})`,
@@ -886,7 +886,7 @@ function QuantityDialog({
           </div>
         )}
         <div className="mt-4 flex items-center gap-2">
-          <button type="button" onClick={() => setValue(String(Math.max(1, qty - 1)))} className="h-12 w-12 rounded-xl bg-gray-100 text-xl" aria-label="Moins">
+          <button type="button" onClick={() => setValue(String(Math.max(allowsDecimal ? 0.25 : 1, qty - 1)))} className="h-12 w-12 rounded-xl bg-gray-100 text-xl" aria-label="Moins">
             −
           </button>
           <input
@@ -903,9 +903,15 @@ function QuantityDialog({
           </button>
         </div>
         <div className="mt-2 flex gap-1.5">
-          {[1, 2, 3, 5, 10].map((v) => (
-            <button key={v} type="button" onClick={() => setValue(String(v))} className={cn("flex-1 rounded-lg border py-1.5 text-sm", qty === v ? "border-blue-600 bg-blue-50 text-blue-800" : "border-gray-300")}>
-              {v}
+          {(allowsDecimal ? [0.25, 0.5, 1, 2, 5] : [1, 2, 3, 5, 10]).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setValue(String(v).replace(".", ","))}
+              className={cn("flex-1 rounded-lg border py-1.5 text-sm", qty === v ? "border-blue-600 bg-blue-50 font-semibold text-blue-800" : "border-gray-300")}
+            >
+              {v === 0.25 ? "¼" : v === 0.5 ? "½" : v}
+              {allowsDecimal && ` ${unit}`}
             </button>
           ))}
         </div>

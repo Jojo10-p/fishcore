@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 import { ApiError, getCurrentUser, handleApiError } from "@/lib/auth";
-import { ROLE_NAMES, attachUserToInvitation, findValidInvitation } from "@/lib/invitations";
+import { ROLE_NAMES, attachUserToInvitation, boutiqueMismatch, findValidInvitation } from "@/lib/invitations";
 
 const MAX_TRIES = 5;
 
@@ -17,8 +17,10 @@ export async function POST(req: NextRequest) {
       const min = Math.ceil((me.joinLockedUntil.getTime() - Date.now()) / 60000);
       throw new ApiError(429, `Trop de codes faux. Réessayez dans ${min} minute(s).`, "JOIN_LOCKED");
     }
-    const body = (await req.json().catch(() => ({}))) as { code?: string };
-    const found = await findValidInvitation(String(body.code ?? ""));
+    const body = (await req.json().catch(() => ({}))) as { code?: string; boutiqueId?: string };
+    const raw = await findValidInvitation(String(body.code ?? ""));
+    const wrongShop = raw.ok ? boutiqueMismatch(raw.invitation, body.boutiqueId) : null;
+    const found = wrongShop ? ({ ok: false, error: wrongShop } as const) : raw;
     if (!found.ok) {
       const tries = me.joinAttempts + 1;
       await prisma.user.update({

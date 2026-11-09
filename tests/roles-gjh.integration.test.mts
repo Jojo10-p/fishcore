@@ -249,3 +249,47 @@ test("fermeture de caisse : journal rendu, gardé pour la direction, introuvable
   const own = await call(journalRoute.GET, { path: `/api/cash/sessions/${ctx.s1}/journal`, cookie: ctx.cashier1, params: { id: ctx.s1 } });
   assert.equal(own.status, 200);
 });
+
+test("huile d'arachide : boutique à part, vente au litre, ½ et ¼ au prix exact", async () => {
+  const c = await call(centersRoute.POST, { path: "/api/centers", cookie: ctx.owner, body: { name: "Huile d'arachide", code: "ARA" } });
+  assert.equal(c.status, 201, JSON.stringify(c.json));
+  const ara = c.json.data.id as string;
+  const units = (await call(unitsRoute.GET, { path: "/api/units", cookie: ctx.owner })).json.data;
+  const litre = units.find((u: Json) => u.symbol === "L");
+  const bidon = units.find((u: Json) => u.symbol === "bidon");
+  assert.ok(litre && bidon, "unités litre et bidon");
+  const p = await call(productsRoute.POST, {
+    path: "/api/products",
+    cookie: ctx.owner,
+    body: { name: "HUILE D'ARACHIDE 25L", centerId: ara, baseUnitId: litre.id, sellingPrice: 1500, purchasePrice: 1200, stockAlertQty: 7, packagings: [{ unitId: bidon.id, factor: 25, sellingPrice: 36000 }] },
+  });
+  assert.equal(p.status, 201, JSON.stringify(p.json));
+  const arachideOil = p.json.data.id as string;
+
+  // Chaque boutique ne voit que ses articles
+  const inMotor = await call(productsRoute.GET, { path: `/api/products?centerId=${ctx.center}`, cookie: ctx.owner });
+  assert.ok(!inMotor.json.data.some((x: Json) => x.id === arachideOil), "pas d'huile d'arachide chez les huiles moteur");
+  const inAra = await call(productsRoute.GET, { path: `/api/products?centerId=${ara}`, cookie: ctx.owner });
+  assert.ok(inAra.json.data.some((x: Json) => x.id === arachideOil));
+
+  await prisma.stock.create({ data: { centerId: ara, productId: arachideOil, quantity: 50, avgCost: 1200 } });
+  const reg = (await prisma.cashRegister.findFirstOrThrow({ where: { centerId: ara } })).id;
+  const session = await openSession(ctx.owner, reg);
+  const r = await call(salesRoute.POST, {
+    path: "/api/sales",
+    cookie: ctx.owner,
+    body: {
+      sessionId: session,
+      idempotencyKey: idem(),
+      lines: [
+        { productId: arachideOil, quantity: 0.25, unitPrice: 1500 },
+        { productId: arachideOil, quantity: 0.5, unitPrice: 1500 },
+      ],
+      payments: [{ method: "CASH", amount: 1125 }],
+    },
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  assert.equal(Number(r.json.data.totalAmount), 1125, "¼ L = 375 et ½ L = 750, sans arrondi");
+  const st = await prisma.stock.findFirstOrThrow({ where: { centerId: ara, productId: arachideOil } });
+  assert.equal(Number(st.quantity), 49.25);
+});

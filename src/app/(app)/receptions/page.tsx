@@ -64,6 +64,10 @@ interface DraftLine {
   lotPrice2: string;
   /** Ligne ouverte avec « Ajouter un nouveau produit » : article jamais vendu ici. */
   fresh?: boolean;
+  /** Vendu aussi au détail (litre, ½ L, ¼ L) : stock compté en litres */
+  retail?: boolean;
+  /** Prix du bidon entier (vente au détail) */
+  bidonPrice?: string;
 }
 interface ReceiptDraft {
   supplierId: string;
@@ -235,6 +239,7 @@ interface Suggestion {
   name: string;
   liters: number | null;
   unitsPerCarton: number | null;
+  category?: string | null;
 }
 interface ProductFull extends ProductOption {
   baseUnitId: string;
@@ -280,8 +285,8 @@ function ReceiptForm({
     loadProducts();
     apiGet<{ data: Array<Supplier & { phone?: string | null }> }>("/api/suppliers").then((r) => setSuppliers(r.data)).catch(() => undefined);
     apiGet<{ data: Unit[] }>("/api/units").then((r) => setUnits(r.data)).catch(() => undefined);
-    apiGet<{ data: Suggestion[] }>("/api/product-suggestions").then((r) => setSuggestions(r.data)).catch(() => undefined);
-  }, [loadProducts]);
+    apiGet<{ data: Suggestion[] }>(`/api/product-suggestions?centerId=${centerId}`).then((r) => setSuggestions(r.data)).catch(() => undefined);
+  }, [loadProducts, centerId]);
 
   const byName = useMemo(() => new Map(products.map((p) => [norm(p.name), p])), [products]);
   const sugByName = useMemo(() => new Map(suggestions.map((s) => [norm(s.name), s])), [suggestions]);
@@ -296,8 +301,15 @@ function ReceiptForm({
     const l = draft.lines[i];
     const cartonId = units.find((u) => u.symbol === "carton")?.id;
     const carton = p?.unitConversions?.find((u) => u.fromUnitId === cartonId);
+    const bidonId = units.find((u) => u.symbol === "bidon")?.id;
+    const litreId = units.find((u) => u.symbol === "L")?.id;
+    const retailBidon = p && p.baseUnitId === litreId ? p.unitConversions?.find((u) => u.fromUnitId === bidonId) : undefined;
     setLine(i, {
       name,
+      // Suggestion marquée « détail » (ex. VIGO, huile d'arachide) : vente au litre cochée d'office
+      retail: l.retail || (!p && sug?.category === "detail"),
+      bidonPrice: l.bidonPrice || (retailBidon?.sellingPrice ? String(Number(retailBidon.sellingPrice)) : ""),
+      buyMode: !p && sug?.category === "detail" ? "unit" : l.buyMode,
       liters: l.liters || (sug?.liters ? String(sug.liters) : ""),
       perCarton: l.perCarton || (carton ? String(Number(carton.factor)) : sug?.unitsPerCarton ? String(sug.unitsPerCarton) : ""),
       sellingPrice: l.sellingPrice || (p ? String(Number(p.sellingPrice)) : ""),
@@ -306,15 +318,24 @@ function ReceiptForm({
     setFocus(null);
   };
 
+  const litreUnit = units.find((u) => u.symbol === "L");
+  const bidonUnit = units.find((u) => u.symbol === "bidon");
   const rows = draft.lines.map((l) => {
     const product = byName.get(norm(l.name)) ?? null;
+    // Détail : article compté en litres (bidon = conditionnement de N litres)
+    const retailBidon = product && litreUnit && product.baseUnitId === litreUnit.id ? product.unitConversions?.find((u) => u.fromUnitId === bidonUnit?.id) : undefined;
+    const retail = product ? !!(litreUnit && product.baseUnitId === litreUnit.id) : !!l.retail;
     const byCarton = l.buyMode === "carton";
     const cartons = num(l.cartons);
     const perCarton = num(l.perCarton);
     const qty = byCarton ? cartons * perCarton : num(l.quantity);
     const lot = byCarton ? cartons * num(l.cartonPrice) : num(l.lotPrice);
     const sell = num(l.sellingPrice);
-    const liters = product ? (litersFromName(product.name) ?? (num(l.liters) || null)) : num(l.liters) || null;
+    const liters = retailBidon
+      ? Number(retailBidon.factor)
+      : product
+        ? (litersFromName(product.name) ?? (num(l.liters) || null))
+        : num(l.liters) || null;
     const errors = {
       name: !l.name.trim() ? "Nom de l'article requis" : undefined,
       cartons: byCarton && !(cartons > 0) ? "Combien de cartons ?" : undefined,
@@ -323,10 +344,11 @@ function ReceiptForm({
       quantity: !byCarton && !(qty > 0) ? "Combien ?" : undefined,
       lotPrice: !byCarton && !(lot > 0) ? "Prix total requis" : undefined,
       sellingPrice: !(sell > 0) ? "Prix de vente requis" : undefined,
-      lotSize: l.lotPrice2 && !(num(l.lotSize) >= 2) ? "Combien dans le lot ?" : undefined,
+      lotSize: !retail && l.lotPrice2 && !(num(l.lotSize) >= 2) ? "Combien dans le lot ?" : undefined,
+      liters: retail && !(Number(liters) > 0) ? "Contenance du bidon requise (ex. 25)" : undefined,
     };
     const blank = !l.name.trim() && !l.cartons && !l.quantity && !l.cartonPrice && !l.lotPrice;
-    return { l, product, qty, lot, sell, liters, byCarton, perCarton, errors, ok: !Object.values(errors).some(Boolean), blank };
+    return { l, product, qty, lot, sell, liters, byCarton, perCarton, retail, retailBidon, errors, ok: !Object.values(errors).some(Boolean), blank };
   });
   const filled = rows.filter((r) => !r.blank);
   const goods = filled.reduce((s, r) => s + r.lot, 0);
@@ -365,6 +387,36 @@ function ReceiptForm({
       const carton = units.find((u) => u.symbol === "carton");
       const lines: Array<{ productId: string; quantity: number; unitPrice: number; totalPrice: number }> = [];
       for (const r of filled) {
+        if (r.retail) {
+          // Vente au détail : stock en litres, prix du litre (½ et ¼ calculés à la caisse), bidon entier
+          if (!litreUnit || !bidonUnit) throw new Error("Unités « Litre » et « Bidon » introuvables");
+          const L = Number(r.liters);
+          const litres = r.qty * L;
+          const costL = Math.round((r.lot / litres) * 100) / 100;
+          const bidonSell = num(r.l.bidonPrice ?? "") > 0 ? num(r.l.bidonPrice ?? "") : Math.round(r.sell * L);
+          const pk = [{ unitId: bidonUnit.id, factor: L, sellingPrice: bidonSell }];
+          let rid = r.product?.id;
+          if (!rid) {
+            const created = await apiSend<{ data: { id: string } }>("/api/products", {
+              name: r.l.name.trim(),
+              centerId,
+              baseUnitId: litreUnit.id,
+              purchasePrice: costL,
+              sellingPrice: r.sell,
+              stockAlertQty: 7,
+              attributes: { contenance: fmtL(L), détail: "litre, ½ L, ¼ L" },
+              packagings: pk,
+            });
+            rid = created.data.id;
+          } else if (canPrice && (Number(r.product!.sellingPrice) !== r.sell || Number(r.retailBidon?.sellingPrice ?? 0) !== bidonSell)) {
+            const keep = (r.product!.unitConversions ?? [])
+              .filter((u) => u.fromUnitId !== bidonUnit.id)
+              .map((u) => ({ unitId: u.fromUnitId, factor: Number(u.factor), sellingPrice: u.sellingPrice != null ? Number(u.sellingPrice) : null, barcode: u.barcode }));
+            await apiSend(`/api/products/${rid}`, { sellingPrice: r.sell, packagings: [...keep, ...pk] }, "PATCH");
+          }
+          lines.push({ productId: rid, quantity: litres, unitPrice: costL, totalPrice: Math.round(r.lot) });
+          continue;
+        }
         const cost = Math.round((r.lot / r.qty) * 100) / 100;
         // Prix de vente du carton et du lot : conditionnements de l'article
         const packagings: Array<{ unitId: string; factor: number; sellingPrice: number }> = [];
@@ -379,6 +431,7 @@ function ReceiptForm({
           const name = litersFromName(base) || !(litres > 0) ? base : `${base} ${fmtL(litres)}`;
           const created = await apiSend<{ data: { id: string } }>("/api/products", {
             name,
+            centerId,
             baseUnitId: bidon.id,
             purchasePrice: cost,
             sellingPrice: r.sell,
@@ -518,7 +571,7 @@ function ReceiptForm({
       <section className="space-y-3">
         <h3 className="text-sm font-semibold text-gray-700">2. Articles reçus</h3>
         {rows.map((r, i) => {
-          const word = unitWord(r.product?.baseUnit.symbol);
+          const word = r.retail ? "bidons" : unitWord(r.product?.baseUnit.symbol);
           const one = r.product?.baseUnit.symbol === "btl" ? "bouteille" : word === "seaux" ? "seau" : word.replace(/s$/, "");
           const costPer = r.qty > 0 && r.lot > 0 ? r.lot / r.qty : 0;
           const stock = r.product?.stocks?.[0] ? Number(r.product.stocks[0].quantity) : null;
@@ -595,6 +648,15 @@ function ReceiptForm({
                     <Input inputMode="decimal" value={r.l.liters} onChange={(e) => setLine(i, { liters: e.target.value })} placeholder="ex. 1" />
                   </Field>
                 )}
+                {!r.product && (
+                  <label className="col-span-2 flex items-center gap-2 self-end rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+                    <input type="checkbox" checked={!!r.l.retail} onChange={(e) => setLine(i, { retail: e.target.checked, buyMode: e.target.checked ? "unit" : r.l.buyMode })} />
+                    Vendu aussi au détail (litre, ½ L, ¼ L)
+                  </label>
+                )}
+                {r.product && r.retail && (
+                  <p className="col-span-2 self-end rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-900">Vendu au détail : stock compté en litres</p>
+                )}
                 <Field label="Acheté">
                   <Select value={r.l.buyMode} onChange={(e) => setLine(i, { buyMode: e.target.value as DraftLine["buyMode"] })}>
                     <option value="carton">Au carton</option>
@@ -626,9 +688,11 @@ function ReceiptForm({
                   </Field>
                 </div>
               )}
+              {r.retail && r.errors.liters && tried && <p className="text-sm text-red-600">{r.errors.liters}</p>}
               {r.qty > 0 && (
                 <p className="text-sm text-gray-600">
                   Total reçu : <strong>{r.qty.toLocaleString("fr-FR")} {word}</strong>
+                  {r.retail && Number(r.liters) > 0 && <> = <strong>{(r.qty * Number(r.liters)).toLocaleString("fr-FR")} litres</strong> en stock</>}
                   {r.lot > 0 && (
                     <>
                       {" "}pour <Money value={r.lot} currency={currency} /> · revient à <strong><Money value={costPer} currency={currency} /></strong> le {one}
@@ -639,6 +703,35 @@ function ReceiptForm({
 
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Prix de vente</p>
               {r.product && !canPrice && <p className="text-xs text-gray-500">Prix fixés par la direction : seuls la direction et le gérant peuvent les changer.</p>}
+              {r.retail ? (
+                <>
+                  <fieldset disabled={!!r.product && !canPrice} className="grid grid-cols-2 gap-3 disabled:opacity-60">
+                    <Field label="Prix du litre" error={err(r.errors.sellingPrice)}>
+                      <Input inputMode="numeric" value={r.l.sellingPrice} onChange={(e) => setLine(i, { sellingPrice: e.target.value })} placeholder="ex. 1 500" />
+                    </Field>
+                    <Field label={Number(r.liters) > 0 ? `Le bidon entier (${fmtL(Number(r.liters))})` : "Le bidon entier"} hint="Vide : litres × prix du litre">
+                      <Input
+                        inputMode="numeric"
+                        value={r.l.bidonPrice ?? ""}
+                        onChange={(e) => setLine(i, { bidonPrice: e.target.value })}
+                        placeholder={r.sell > 0 && Number(r.liters) > 0 ? (r.sell * Number(r.liters)).toLocaleString("fr-FR") : "ex. 35 000"}
+                      />
+                    </Field>
+                  </fieldset>
+                  {r.sell > 0 && (
+                    <p className="text-sm text-gray-700">
+                      À la caisse : 1 L = <strong><Money value={r.sell} currency={currency} /></strong> · ½ L = <strong><Money value={r.sell / 2} currency={currency} /></strong> · ¼ L ={" "}
+                      <strong><Money value={r.sell / 4} currency={currency} /></strong>
+                    </p>
+                  )}
+                  {costPer > 0 && r.sell > 0 && Number(r.liters) > 0 && (
+                    <p className={`text-sm font-medium ${r.sell - costPer / Number(r.liters) > 0 ? "text-green-700" : "text-red-700"}`}>
+                      {r.sell - costPer / Number(r.liters) >= 0 ? "Bénéfice" : "Perte"} : <Money value={Math.abs(r.sell - costPer / Number(r.liters))} currency={currency} /> par litre
+                    </p>
+                  )}
+                </>
+              ) : (
+              <>
               <fieldset disabled={!!r.product && !canPrice} className="grid grid-cols-2 sm:grid-cols-4 gap-3 disabled:opacity-60">
                 <Field label={`1 ${one}`} error={err(r.errors.sellingPrice)}>
                   <Input inputMode="numeric" value={r.l.sellingPrice} onChange={(e) => setLine(i, { sellingPrice: e.target.value })} placeholder="ex. 3 500" />
@@ -657,6 +750,8 @@ function ReceiptForm({
                 <p className={`text-sm font-medium ${r.sell - costPer > 0 ? "text-green-700" : "text-red-700"}`}>
                   {r.sell - costPer >= 0 ? "Bénéfice" : "Perte"} : <Money value={Math.abs(r.sell - costPer)} currency={currency} /> par {one}
                 </p>
+              )}
+              </>
               )}
             </div>
           );

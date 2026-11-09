@@ -3,12 +3,16 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { BoutiquePicker } from "@/components/auth/boutique-picker";
 
 // « Me rattacher avec un code » : on tape le code donné par le patron, puis on crée
 // son compte. Le poste (caissier, gérant…) vient du code.
 export default function JoinWithCodePage() {
   const router = useRouter();
   const [code, setCode] = useState("");
+  const [boutique, setBoutique] = useState<string | null>(null);
+  const [shops, setShops] = useState(0);
+  const mustChoose = shops > 1 && !boutique;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -27,7 +31,7 @@ export default function JoinWithCodePage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await fetch(`/api/invitations/accept?token=${encodeURIComponent(clean)}`, { cache: "no-store" });
+      const r = await fetch(`/api/invitations/accept?token=${encodeURIComponent(clean)}${boutique ? `&boutique=${boutique}` : ""}`, { cache: "no-store" });
       const j = await r.json();
       if (!j.success) return setError(j.error ?? "Code refusé");
       router.push(`/rejoindre/${encodeURIComponent(clean)}`);
@@ -47,6 +51,15 @@ export default function JoinWithCodePage() {
           <h1 className="text-2xl font-bold text-gray-900">Me rattacher avec un code</h1>
           <p className="text-sm text-gray-500 mt-1">Tapez le code que le patron vous a donné</p>
         </div>
+        <BoutiquePicker
+          onLoaded={setShops}
+          value={boutique}
+          onChange={(id) => {
+            setBoutique(id);
+            setError(null);
+            setTimeout(() => input.current?.focus(), 50);
+          }}
+        />
         {error && <p className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3.5 text-sm text-red-700">{error}</p>}
         <form onSubmit={submit} className="space-y-4">
           <input
@@ -59,7 +72,7 @@ export default function JoinWithCodePage() {
             placeholder="XXXX-XXXX"
             className={`w-full rounded-xl border-2 border-gray-300 px-4 py-4 text-center font-bold focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100 ${isLink ? "text-sm" : "font-mono text-3xl tracking-[0.25em] uppercase"}`}
           />
-          <button type="submit" disabled={!ready || busy} className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:bg-blue-300">
+          <button type="submit" disabled={!ready || busy || mustChoose} className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:bg-blue-300">
             {busy ? "Vérification…" : "Continuer"}
           </button>
         </form>

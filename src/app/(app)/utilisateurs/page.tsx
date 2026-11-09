@@ -27,7 +27,7 @@ const ROLES: Record<string, string> = {
 };
 
 export default function UsersPage() {
-  const { can, session } = useSession();
+  const { can, session, centerId: currentCenterId } = useSession();
   const [users, setUsers] = useState<UserRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -112,6 +112,7 @@ export default function UsersPage() {
       {creating && session && (
         <InviteModal
           centers={session.centers}
+          currentCenterId={currentCenterId}
           isOwner={session.user.role === "COMPANY_OWNER"}
           onClose={() => {
             setCreating(false);
@@ -186,17 +187,20 @@ function PendingInvites({ refreshKey, canRevoke }: { refreshKey: number; canRevo
 
 function InviteModal({
   centers,
+  currentCenterId,
   isOwner,
   onClose,
   onCreated,
 }: {
   centers: Array<{ id: string; name: string }>;
+  currentCenterId?: string | null;
   isOwner: boolean;
   onClose: () => void;
   onCreated: () => void;
 }) {
   const [role, setRole] = useState("CASHIER");
-  const [centerId, setCenterId] = useState(centers[0]?.id ?? "");
+  // Le code est fait pour la boutique ouverte (huile d'arachide ou huile de moteur)
+  const [centerId, setCenterId] = useState(currentCenterId ?? centers[0]?.id ?? "");
   const [label, setLabel] = useState("");
   const [phone, setPhone] = useState("");
   const [kind, setKind] = useState<"code" | "link">("code");
@@ -266,7 +270,7 @@ function InviteModal({
             </Select>
           </Field>
           {role !== "COMPANY_OWNER" && centers.length > 1 && (
-            <Field label="Boutique">
+            <Field label="Boutique" hint="Le code ne marchera que pour cette boutique.">
               <Select value={centerId} onChange={(e) => setCenterId(e.target.value)}>
                 {centers.map((c) => (
                   <option key={c.id} value={c.id}>

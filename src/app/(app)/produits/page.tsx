@@ -46,7 +46,7 @@ function newLabel(word: string) {
 }
 
 export default function ProductsPage() {
-  const { can, currency, profile } = useSession();
+  const { can, currency, profile, centerId } = useSession();
   const [products, setProducts] = useState<Product[] | null>(null);
   const [units, setUnits] = useState<Unit[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -64,13 +64,14 @@ export default function ProductsPage() {
       const params = new URLSearchParams({ active: showInactive ? "false" : "true" });
       if (search) params.set("search", search);
       if (categoryId) params.set("categoryId", categoryId);
+      if (centerId) params.set("centerId", centerId); // articles de la boutique ouverte
       const res = await apiGet<{ data: Product[] }>(`/api/products?${params}`);
       setProducts(res.data);
       setError(null);
     } catch (e) {
       setError(errorMessage(e));
     }
-  }, [search, categoryId, showInactive]);
+  }, [search, categoryId, showInactive, centerId]);
 
   const loadRefs = useCallback(async () => {
     const [u, c] = await Promise.all([apiGet<{ data: Unit[] }>("/api/units"), apiGet<{ data: Category[] }>("/api/categories")]);
@@ -247,7 +248,7 @@ function ProductModal({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const { profile, session, can } = useSession();
+  const { profile, session, can, centerId } = useSession();
   // Prix déjà fixés : seuls la direction et le gérant les changent
   const priceLocked = !!product && !can("product:price");
   const vatEnabled = session?.company?.vatEnabled ?? false;
@@ -329,7 +330,7 @@ function ProductModal({
     };
     try {
       if (product) await apiSend(`/api/products/${product.id}`, { ...payload, isActive: active }, "PATCH");
-      else await apiSend("/api/products", { ...payload, baseUnitId, barcode: form.barcode || undefined, internalCode: form.internalCode || undefined });
+      else await apiSend("/api/products", { ...payload, baseUnitId, centerId: centerId ?? undefined, barcode: form.barcode || undefined, internalCode: form.internalCode || undefined });
       await onSaved();
       onClose();
     } catch (e) {

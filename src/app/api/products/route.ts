@@ -56,6 +56,12 @@ export async function GET(req: NextRequest) {
         : {}),
     };
 
+    // Chaque boutique ne voit que ses articles (et ceux communs à toutes)
+    if (centerId) {
+      const and = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : [];
+      where.AND = [...and, { OR: [{ centerId: null }, { centerId }] }];
+    }
+
     const products = await prisma.product.findMany({
       where,
       select: {
@@ -77,7 +83,15 @@ export async function POST(req: NextRequest) {
     const user = await getCurrentUser(req);
     await requirePermission(user, "product:create");
     const companyId = requireCompany(user);
-    const { packagings, attributes, ...data } = parseBody(productSchema, await readJson(req));
+    const body = await readJson(req);
+    const { packagings, attributes, ...data } = parseBody(productSchema, body);
+    // Boutique de l'article (huile de moteur, huile d'arachide…)
+    const centerId = typeof (body as { centerId?: unknown })?.centerId === "string" ? (body as { centerId: string }).centerId : null;
+    if (centerId) {
+      await requireCenterAccess(user, centerId);
+      const c = await prisma.center.findFirst({ where: { id: centerId, companyId }, select: { id: true } });
+      if (!c) throw new ApiError(400, "Boutique invalide");
+    }
 
     const company = await prisma.company.findUniqueOrThrow({
       where: { id: companyId },
@@ -105,6 +119,7 @@ export async function POST(req: NextRequest) {
       const created = await tx.product.create({
         data: {
           companyId,
+          centerId,
           name: data.name,
           internalCode: data.internalCode || null,
           barcode: data.barcode || null,

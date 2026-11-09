@@ -324,6 +324,7 @@ model Center {
   purchases         Purchase[]
   transfers         StockTransfer[]
   incomingTransfers StockTransfer[]     @relation("TransferDestination")
+  products          Product[] // articles propres à cette boutique
   expenses          Expense[]
   inventories       Inventory[]
   auditLogs         AuditLog[]
@@ -503,6 +504,10 @@ model Product {
   companyId String
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
+  /// Boutique à laquelle l'article est réservé (ex. huile d'arachide) ; vide = toutes les boutiques
+  centerId String?
+  center   Center? @relation(fields: [centerId], references: [id], onDelete: SetNull)
+
   name         String
   internalCode String? // Référence interne / SKU
   barcode      String? // Code-barres de l'unité de base
@@ -551,6 +556,7 @@ model Product {
 
   @@unique([companyId, barcode])
   @@index([companyId, name])
+  @@index([centerId])
   @@map("products")
 }
 
@@ -1553,6 +1559,9 @@ model ProductSuggestion {
   liters         Decimal? @db.Decimal(8, 3) // contenance d'une unité (bidon, bouteille)
   unitsPerCarton Int? // nombre d'unités dans un carton
   category       String?
+  /// Boutique concernée (huile de moteur, huile d'arachide…) ; vide = toutes
+  centerId       String?
 
+  @@index([centerId])
   @@map("product_suggestions")
 }

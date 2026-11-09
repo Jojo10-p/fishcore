@@ -102,3 +102,13 @@ export async function attachUserToInvitation(inv: ValidInvitation, userId: strin
     return user;
   });
 }
+
+/**
+ * « Choisir ma boutique » puis taper le code : un code de la boutique « Huile
+ * d'arachide » ne marche pas dans « Huile de moteur » (et inversement).
+ * Un code sans boutique (propriétaire) marche partout.
+ */
+export function boutiqueMismatch(inv: { centerId: string | null; center?: { name: string } | null }, boutiqueId?: string | null): string | null {
+  if (!boutiqueId || !inv.centerId || inv.centerId === boutiqueId) return null;
+  return `Ce code n'est pas pour cette boutique${inv.center?.name ? ` : il est pour « ${inv.center.name} »` : ""}. Demandez le code de votre boutique au patron.`;
+}

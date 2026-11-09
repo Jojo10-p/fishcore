@@ -56,6 +56,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // Changements de prix de vente à signaler à la direction (rempli dans la transaction)
     let priceNews: string[] = [];
     let productName = "";
+    let productCenter: string | null = null;
     const product = await prisma.$transaction(async (tx) => {
       const current = await tx.product.findFirst({
         where: { id, companyId },
@@ -128,6 +129,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const f = (v: string | undefined) => (v === undefined ? "—" : Number(v).toLocaleString("fr-FR"));
       priceNews = changedPrices.map((k) => `${names[k] ?? k} ${f(before[k])} → ${f(after[k])} F`);
       productName = updated.name;
+      productCenter = updated.centerId;
 
       if (priceChanged) {
         await tx.productPriceHistory.create({
@@ -158,6 +160,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       notifyManagers({
         companyId,
         actorId: user.id,
+        centerId: productCenter,
         type: "PRICE_CHANGED",
         title: `Prix changé — ${productName}`,
         message: `${await actorLabel(user.id)} : ${priceNews.join(" ; ")}${priceReason ? `. Motif : ${priceReason}` : ""}`,

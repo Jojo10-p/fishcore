@@ -7,12 +7,13 @@ import type { Permission } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
 import { clearSessionCache, useSession } from "@/components/app/session-provider";
 import { ConnectionBadge } from "@/components/app/connection-badge";
-import { Select, Spinner } from "@/components/ui";
+import { Spinner } from "@/components/ui";
 import { getPendingSyncCount } from "@/lib/offline/sync";
 import { APP_NAME } from "@/lib/app-config";
 import { InstallAppButton } from "@/components/app/install-app";
 import { ChangePasswordButton } from "@/components/app/change-password";
 import { NotificationBell } from "@/components/app/notification-bell";
+import { boutiqueIcon } from "@/lib/boutiques";
 
 interface NavItem {
   href: string;
@@ -163,15 +164,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const centerPicker =
     session.centers.length > 1 ? (
-      <Select aria-label="Centre" value={centerId ?? ""} onChange={(e) => setCenterId(e.target.value)}>
-        {session.centers.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name} ({c.code})
-          </option>
-        ))}
-      </Select>
+      <div className="space-y-1">
+        <p className="px-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Boutique</p>
+        <div className="grid gap-1">
+          {session.centers.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => setCenterId(c.id)}
+              className={`flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium ${centerId === c.id ? "bg-blue-600 text-white" : "bg-gray-50 text-gray-700 hover:bg-gray-100"}`}
+            >
+              <span aria-hidden>{boutiqueIcon(c.name)}</span>
+              {c.name}
+            </button>
+          ))}
+        </div>
+      </div>
     ) : session.centers[0] ? (
-      <p className="text-sm text-gray-600 px-1">{session.centers[0].name}</p>
+      <p className="px-1 text-sm font-semibold text-gray-800">
+        {boutiqueIcon(session.centers[0].name)} {session.centers[0].name}
+      </p>
     ) : null;
 
   const userBox = (

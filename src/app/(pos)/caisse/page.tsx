@@ -10,6 +10,7 @@ import { getNumbering, refreshNumbering, remainingOf } from "@/lib/offline/numbe
 import { SessionProvider, clearSessionCache, useSession } from "@/components/app/session-provider";
 import { CashJournal, PrintableJournal, printJournal, type CloseResult } from "@/components/pos/cash-journal";
 import { NotificationBell } from "@/components/app/notification-bell";
+import { boutiqueIcon } from "@/lib/boutiques";
 import { ConnectionBadge, useOnline } from "@/components/app/connection-badge";
 import { Alert, Badge, Button, Field, Input, Modal, Money, Select, Spinner } from "@/components/ui";
 import { currencyLabel } from "@/lib/utils";
@@ -301,7 +302,8 @@ function ActiveRegister({
   const [printJob, setPrintJob] = useState<{ ticket: TicketData; nonce: number } | null>(null);
   const [header, setHeader] = useState<TicketHeader | null>(null);
   const [numbersLeft, setNumbersLeft] = useState<number | null>(null);
-  const { session } = useSession();
+  const { session, centerId: shopId } = useSession();
+  const shop = session?.centers.find((c) => c.id === shopId);
   // Le ticket 80 mm est le format par défaut ; A4 si l'entreprise l'a choisi
   const format = header?.company.invoiceFormat ?? session?.company?.invoiceFormat ?? "TICKET_80";
 
@@ -430,7 +432,10 @@ function ActiveRegister({
           ←
         </Link>
         <div className="mr-auto min-w-0">
-          <p className="font-semibold text-gray-900 text-sm truncate">{cashSession.registerName}</p>
+          <p className="font-semibold text-gray-900 text-sm truncate">
+            {shop && (session?.centers.length ?? 0) > 1 ? `${boutiqueIcon(shop.name)} ${shop.name} · ` : ""}
+            {cashSession.registerName}
+          </p>
           <p className="text-xs text-gray-500">
             Ouverte à {new Date(cashSession.openedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
           </p>
