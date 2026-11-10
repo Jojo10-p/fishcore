@@ -1,6 +1,7 @@
 "use client";
 
 import { matchesSearch } from "@/lib/search-aliases";
+import { COMMON_FORMATS, FORMAT_SEP, composeName, familyOf, formatLiters, litersLabel } from "@/lib/product-name";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { useOnline } from "@/components/app/connection-badge";
@@ -232,7 +233,14 @@ function litersFromName(name: string): number | null {
   const l = name.match(/(\d+(?:[.,]\d+)?)\s*l\b/i);
   return l ? Number(l[1].replace(",", ".")) : null;
 }
-const fmtL = (n: number) => `${n.toLocaleString("fr-FR", { maximumFractionDigits: 2 })} L`;
+const fmtL = (n: number) => litersLabel(n);
+/** Nom tapé ou choisi → marque/produit + litres (« SHELL HELIX 4L » → SHELL HELIX, 4) */
+function splitName(name: string): { family: string; liters: number | null } {
+  if (name.includes(FORMAT_SEP)) return { family: familyOf(name), liters: formatLiters(name) };
+  const liters = litersFromName(name);
+  const family = liters ? name.replace(/\s*[-—]?\s*(bidon\s+)?\d+(?:[.,]\d+)?\s*(ml|l)\b/i, "").trim() : name.trim();
+  return { family: family || name.trim(), liters };
+}
 
 interface Suggestion {
   id: string;
@@ -295,10 +303,16 @@ function ReceiptForm({
   const setLine = (i: number, patch: Partial<DraftLine>) => setDraft((d) => ({ ...d, lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) }));
 
   // Choisir un nom (article existant ou suggestion) : pré-remplit ce qu'on connaît
-  const pickName = (i: number, name: string) => {
-    const p = byName.get(norm(name));
-    const sug = sugByName.get(norm(name));
+  const pickName = (i: number, picked: string) => {
     const l = draft.lines[i];
+    // On garde la marque/le produit ; le format (1 L, 4 L…) se choisit à part
+    const sp = splitName(picked);
+    const formats = products.filter((x) => norm(familyOf(x.name)) === norm(sp.family));
+    const only = !sp.liters && formats.length === 1 ? formatLiters(formats[0].name) : null;
+    const litres = sp.liters ?? only ?? (num(l.liters) || null);
+    const name = sp.family;
+    const p = byName.get(norm(composeName(name, litres))) ?? byName.get(norm(picked)) ?? null;
+    const sug = sugByName.get(norm(picked)) ?? sugByName.get(norm(name));
     const cartonId = units.find((u) => u.symbol === "carton")?.id;
     const carton = p?.unitConversions?.find((u) => u.fromUnitId === cartonId);
     const bidonId = units.find((u) => u.symbol === "bidon")?.id;
@@ -310,7 +324,7 @@ function ReceiptForm({
       retail: l.retail || (!p && sug?.category === "detail"),
       bidonPrice: l.bidonPrice || (retailBidon?.sellingPrice ? String(Number(retailBidon.sellingPrice)) : ""),
       buyMode: !p && sug?.category === "detail" ? "unit" : l.buyMode,
-      liters: l.liters || (sug?.liters ? String(sug.liters) : ""),
+      liters: litres ? String(litres) : l.liters || (sug?.liters ? String(sug.liters) : ""),
       perCarton: l.perCarton || (carton ? String(Number(carton.factor)) : sug?.unitsPerCarton ? String(sug.unitsPerCarton) : ""),
       sellingPrice: l.sellingPrice || (p ? String(Number(p.sellingPrice)) : ""),
       cartonSellingPrice: l.cartonSellingPrice || (carton?.sellingPrice ? String(Number(carton.sellingPrice)) : ""),
@@ -321,7 +335,15 @@ function ReceiptForm({
   const litreUnit = units.find((u) => u.symbol === "L");
   const bidonUnit = units.find((u) => u.symbol === "bidon");
   const rows = draft.lines.map((l) => {
-    const product = byName.get(norm(l.name)) ?? null;
+    const sp = splitName(l.name);
+    const fam = sp.family;
+    const wantL = num(l.liters) || sp.liters || null;
+    const sameFamily = l.name.trim() ? products.filter((x) => norm(familyOf(x.name)) === norm(fam)) : [];
+    const product =
+      (l.name.trim()
+        ? (byName.get(norm(composeName(fam, wantL))) ??
+          (wantL ? sameFamily.find((x) => formatLiters(x.name) === wantL) : byName.get(norm(l.name))))
+        : null) ?? null;
     // Détail : article compté en litres (bidon = conditionnement de N litres)
     const retailBidon = product && litreUnit && product.baseUnitId === litreUnit.id ? product.unitConversions?.find((u) => u.fromUnitId === bidonUnit?.id) : undefined;
     const retail = product ? !!(litreUnit && product.baseUnitId === litreUnit.id) : !!l.retail;
@@ -331,11 +353,9 @@ function ReceiptForm({
     const qty = byCarton ? cartons * perCarton : num(l.quantity);
     const lot = byCarton ? cartons * num(l.cartonPrice) : num(l.lotPrice);
     const sell = num(l.sellingPrice);
-    const liters = retailBidon
-      ? Number(retailBidon.factor)
-      : product
-        ? (litersFromName(product.name) ?? (num(l.liters) || null))
-        : num(l.liters) || null;
+    const liters = retailBidon ? Number(retailBidon.factor) : (wantL ?? (product ? (formatLiters(product.name) ?? litersFromName(product.name)) : null));
+    // Formats déjà en stock pour cette marque (choix rapide)
+    const familyFormats = l.name.trim() ? products.filter((x) => norm(familyOf(x.name)) === norm(fam)) : [];
     const errors = {
       name: !l.name.trim() ? "Nom de l'article requis" : undefined,
       cartons: byCarton && !(cartons > 0) ? "Combien de cartons ?" : undefined,
@@ -348,7 +368,7 @@ function ReceiptForm({
       liters: retail && !(Number(liters) > 0) ? "Contenance du bidon requise (ex. 25)" : undefined,
     };
     const blank = !l.name.trim() && !l.cartons && !l.quantity && !l.cartonPrice && !l.lotPrice;
-    return { l, product, qty, lot, sell, liters, byCarton, perCarton, retail, retailBidon, errors, ok: !Object.values(errors).some(Boolean), blank };
+    return { l, fam, product, qty, lot, sell, liters, byCarton, perCarton, retail, retailBidon, familyFormats, errors, ok: !Object.values(errors).some(Boolean), blank };
   });
   const filled = rows.filter((r) => !r.blank);
   const goods = filled.reduce((s, r) => s + r.lot, 0);
@@ -398,7 +418,7 @@ function ReceiptForm({
           let rid = r.product?.id;
           if (!rid) {
             const created = await apiSend<{ data: { id: string } }>("/api/products", {
-              name: r.l.name.trim(),
+              name: composeName(r.fam, L),
               centerId,
               baseUnitId: litreUnit.id,
               purchasePrice: costL,
@@ -425,10 +445,9 @@ function ReceiptForm({
         let id = r.product?.id;
         if (!id) {
           if (!bidon) throw new Error("Aucune unité disponible pour créer l'article");
-          const base = r.l.name.trim();
-          const litres = num(r.l.liters);
-          // Filtres, colles… : pas de contenance
-          const name = litersFromName(base) || !(litres > 0) ? base : `${base} ${fmtL(litres)}`;
+          const litres = Number(r.liters) || 0;
+          // « SHELL HELIX — 4 L » ; filtres, colles… : le nom seul
+          const name = composeName(r.fam, litres);
           const created = await apiSend<{ data: { id: string } }>("/api/products", {
             name,
             centerId,
@@ -436,7 +455,7 @@ function ReceiptForm({
             purchasePrice: cost,
             sellingPrice: r.sell,
             stockAlertQty: 7,
-            ...(litres > 0 || litersFromName(base) ? { attributes: { contenance: fmtL(litres > 0 ? litres : litersFromName(base)!) } } : {}),
+            ...(litres > 0 ? { attributes: { contenance: fmtL(litres) } } : {}),
             ...(packagings.length ? { packagings } : {}),
           });
           id = created.data.id;
@@ -474,9 +493,13 @@ function ReceiptForm({
 
   const err = (msg?: string) => (tried ? msg : undefined);
   const names = useMemo(() => {
+    // Une ligne par marque/produit (les formats se choisissent ensuite)
     const all = new Map<string, { name: string; kind: "stock" | "suggestion" }>();
-    for (const p of products) all.set(norm(p.name), { name: p.name, kind: "stock" });
-    for (const s of suggestions) if (!all.has(norm(s.name))) all.set(norm(s.name), { name: s.name, kind: "suggestion" });
+    for (const p of products) all.set(norm(familyOf(p.name)), { name: familyOf(p.name), kind: "stock" });
+    for (const s of suggestions) {
+      const f = splitName(s.name).family;
+      if (!all.has(norm(f))) all.set(norm(f), { name: f, kind: "suggestion" });
+    }
     return [...all.values()].sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name, "fr") : a.kind === "stock" ? -1 : 1));
   }, [products, suggestions]);
 
@@ -586,7 +609,7 @@ function ReceiptForm({
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{r.l.fresh && !r.product ? `Nouveau produit (article ${i + 1})` : `Article ${i + 1}`}</span>
                 <span className="flex items-center gap-3">
-                  {r.l.name.trim() && (r.product ? <Badge tone="green">Déjà en stock</Badge> : <Badge tone="blue">Nouvel article</Badge>)}
+                  {r.l.name.trim() && (r.product ? <Badge tone="green">Déjà en stock</Badge> : r.familyFormats.length ? <Badge tone="blue">Nouveau format</Badge> : <Badge tone="blue">Nouvel article</Badge>)}
                   {draft.lines.length > 1 && (
                     <button className="text-sm text-red-600 hover:underline" onClick={() => setDraft((d) => ({ ...d, lines: d.lines.filter((_, j) => j !== i) }))}>
                       Retirer
@@ -638,16 +661,30 @@ function ReceiptForm({
                 )}
               </div>
 
+              {r.l.name.trim() && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs text-gray-500">Bidon de :</span>
+                  {[...new Set([...r.familyFormats.map((x) => formatLiters(x.name)).filter((x): x is number => !!x), ...COMMON_FORMATS])].map((f) => {
+                    const has = r.familyFormats.some((x) => formatLiters(x.name) === f);
+                    const on = Number(r.liters) === f;
+                    return (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => setLine(i, { liters: String(f) })}
+                        className={`rounded-lg border px-2.5 py-1 text-sm ${on ? "border-blue-600 bg-blue-50 font-semibold text-blue-800" : has ? "border-green-300 bg-green-50 text-green-800" : "border-gray-300 text-gray-700"}`}
+                      >
+                        {f === 0.25 ? "¼ L" : f === 0.5 ? "½ L" : fmtL(f)}
+                        {has && " ✓"}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {r.product ? (
-                  <Field label={`Contenance (par ${one})`}>
-                    <Input value={r.liters ? fmtL(r.liters) : "—"} disabled readOnly />
-                  </Field>
-                ) : (
-                  <Field label="Contenance (litres par bidon)" hint="Vide pour un filtre, une colle…">
-                    <Input inputMode="decimal" value={r.l.liters} onChange={(e) => setLine(i, { liters: e.target.value })} placeholder="ex. 1" />
-                  </Field>
-                )}
+                <Field label="Format du bidon (litres)" hint="Vide pour un filtre, une colle…">
+                  <Input inputMode="decimal" value={r.l.liters} onChange={(e) => setLine(i, { liters: e.target.value })} placeholder="ex. 1" />
+                </Field>
                 {!r.product && (
                   <label className="col-span-2 flex items-center gap-2 self-end rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
                     <input type="checkbox" checked={!!r.l.retail} onChange={(e) => setLine(i, { retail: e.target.checked, buyMode: e.target.checked ? "unit" : r.l.buyMode })} />

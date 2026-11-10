@@ -1,6 +1,7 @@
 "use client";
 
 import { matchesSearch } from "@/lib/search-aliases";
+import { familyOf, formatOf, groupByFamily } from "@/lib/product-name";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getOfflineDB, type OfflinePackaging, type OfflineProduct } from "@/lib/offline/db";
 import { applySaleToLocalStock, createOfflineSale, getLocalStock } from "@/lib/offline/sales";
@@ -132,7 +133,7 @@ export default function POSInterface({
   // Nom du client tapé à la caisse (facultatif) : personne ou entreprise
   const [customerName, setCustomerName] = useState("");
   // Article touché : on demande la quantité avant de l'ajouter
-  const [askQty, setAskQty] = useState<{ product: OfflineProduct; packaging?: OfflinePackaging } | null>(null);
+  const [askQty, setAskQty] = useState<{ product: OfflineProduct; packaging?: OfflinePackaging; family?: OfflineProduct[] } | null>(null);
   const [quote, setQuote] = useState<LoadedQuote | null>(null);
   const [quoteInput, setQuoteInput] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -532,25 +533,50 @@ export default function POSInterface({
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-3">
-              {filteredProducts.map((p) => {
-                const left = stockMap.get(p.id);
-                const tone = left === undefined ? "text-gray-400" : left <= 0 ? "text-red-600" : left <= (p.stockAlertQty || 7) ? "text-amber-600" : "text-green-700";
+              {groupByFamily(filteredProducts).map((g) => {
+                // Une carte par marque/produit ; les formats (1 L, 4 L…) se choisissent en la touchant
+                const one = g.items.length === 1 ? g.items[0] : null;
+                const stockOf = (id: string) => stockMap.get(id);
+                const total = g.items.reduce((t, x) => t + (stockOf(x.id) ?? 0), 0);
+                const known = g.items.some((x) => stockOf(x.id) !== undefined);
+                const minPrice = Math.min(...g.items.map((x) => x.sellingPrice));
+                const toneOf = (left: number | undefined, alert: number) =>
+                  left === undefined ? "text-gray-400" : left <= 0 ? "text-red-600" : left <= (alert || 7) ? "text-amber-600" : "text-green-700";
                 return (
                   <button
-                    key={p.id}
-                    onClick={() => setAskQty({ product: p })}
+                    key={g.family}
+                    onClick={() => setAskQty({ product: g.items[0], family: g.items.length > 1 ? g.items : undefined })}
                     className="flex min-h-[7.5rem] flex-col justify-between rounded-2xl border border-gray-200 bg-white p-3 sm:p-4 text-left shadow-sm transition hover:border-blue-300 hover:shadow active:scale-[0.98]"
                   >
-                    <span className="block text-[15px] font-semibold leading-snug text-gray-900">{p.name}</span>
-                    <span className="mt-3 block">
-                      <span className="block text-lg font-bold text-blue-700">
-                        {fmt(p.sellingPrice)}
-                        <span className="text-sm font-normal text-gray-400"> / {p.baseUnitSymbol}</span>
-                      </span>
-                      <span className={cn("mt-0.5 block text-sm font-medium", tone)}>
-                        {left === undefined ? "Stock : —" : left <= 0 ? "Épuisé" : `En stock : ${fmtQty(left)}`}
-                      </span>
+                    <span className="block text-[15px] font-semibold leading-snug text-gray-900">
+                      {g.family}
+                      {one && formatOf(one.name) && <span className="font-normal text-gray-500"> · {formatOf(one.name)}</span>}
                     </span>
+                    {one ? (
+                      <span className="mt-3 block">
+                        <span className="block text-lg font-bold text-blue-700">
+                          {fmt(one.sellingPrice)}
+                          <span className="text-sm font-normal text-gray-400"> / {one.baseUnitSymbol}</span>
+                        </span>
+                        <span className={cn("mt-0.5 block text-sm font-medium", toneOf(stockOf(one.id), one.stockAlertQty))}>
+                          {stockOf(one.id) === undefined ? "Stock : —" : stockOf(one.id)! <= 0 ? "Épuisé" : `En stock : ${fmtQty(stockOf(one.id)!)}`}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="mt-3 block space-y-0.5">
+                        {g.items.slice(0, 4).map((x) => (
+                          <span key={x.id} className="grid grid-cols-[1fr_auto_2.5rem] items-baseline gap-2 text-sm">
+                            <span className="truncate text-gray-600">{formatOf(x.name) || x.baseUnitSymbol}</span>
+                            <span className="font-semibold text-blue-700">{fmt(x.sellingPrice)}</span>
+                            <span className={cn("text-right font-medium", toneOf(stockOf(x.id), x.stockAlertQty))}>
+                              {stockOf(x.id) === undefined ? "—" : stockOf(x.id)! <= 0 ? "0" : fmtQty(stockOf(x.id)!)}
+                            </span>
+                          </span>
+                        ))}
+                        {g.items.length > 4 && <span className="block text-xs text-gray-400">+ {g.items.length - 4} format(s) · dès {fmt(minPrice)}</span>}
+                        {!known && <span className="block text-xs text-gray-400">Stock : {total}</span>}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -793,7 +819,17 @@ export default function POSInterface({
       </aside>
       {askQty && (
         <QuantityDialog
-          name={askQty.product.name}
+          name={askQty.family ? familyOf(askQty.product.name) : askQty.product.name}
+          formats={
+            askQty.family?.map((x) => ({
+              key: x.id,
+              label: formatOf(x.name) || x.baseUnitSymbol,
+              price: x.sellingPrice,
+              stock: stockMap.get(x.id),
+              active: x.id === askQty.product.id,
+              pick: () => setAskQty({ product: x, family: askQty.family }),
+            })) ?? []
+          }
           unit={askQty.packaging?.symbol ?? askQty.product.baseUnitSymbol}
           price={askQty.packaging?.sellingPrice ?? askQty.product.sellingPrice}
           allowsDecimal={askQty.packaging ? false : askQty.product.allowsDecimal}
@@ -802,13 +838,13 @@ export default function POSInterface({
           options={
             (askQty.product.packagings ?? []).length
               ? [
-                  { key: "", label: askQty.product.baseUnitSymbol === "L" ? "Au litre" : `Au ${askQty.product.baseUnitSymbol}`, price: askQty.product.sellingPrice, active: !askQty.packaging, pick: () => setAskQty({ product: askQty.product }) },
+                  { key: "", label: askQty.product.baseUnitSymbol === "L" ? "Au litre" : `Au ${askQty.product.baseUnitSymbol}`, price: askQty.product.sellingPrice, active: !askQty.packaging, pick: () => setAskQty({ product: askQty.product, family: askQty.family }) },
                   ...askQty.product.packagings.map((pk) => ({
                     key: pk.unitId,
                     label: /\d/.test(pk.name) ? pk.name : `${pk.name} (${fmtQty(pk.factor)})`,
                     price: pk.sellingPrice,
                     active: askQty.packaging?.unitId === pk.unitId,
-                    pick: () => setAskQty({ product: askQty.product, packaging: pk }),
+                    pick: () => setAskQty({ product: askQty.product, packaging: pk, family: askQty.family }),
                   })),
                 ]
               : []
@@ -836,10 +872,13 @@ function QuantityDialog({
   stock,
   baseUnit,
   options = [],
+  formats = [],
   fmt,
   onCancel,
   onConfirm,
 }: {
+  /** Formats de la même marque (bidon 1 L, 4 L, 5 L…) */
+  formats?: Array<{ key: string; label: string; price: number; stock?: number; active: boolean; pick: () => void }>;
   name: string;
   unit: string;
   price: number;
@@ -871,6 +910,26 @@ function QuantityDialog({
           {fmt(price)} / {unit}
           {stock !== undefined && ` · en stock : ${fmtQty(stock)} ${baseUnit ?? ""}`}
         </p>
+        {formats.length > 1 && (
+          <div className="mt-3">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Format</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {formats.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={f.pick}
+                  className={cn("rounded-lg border px-2.5 py-2 text-left text-sm", f.active ? "border-blue-600 bg-blue-50 text-blue-900" : "border-gray-300 text-gray-700")}
+                >
+                  <span className="block font-semibold">{f.label}</span>
+                  <span className="block text-xs">
+                    {fmt(f.price)} · {f.stock === undefined ? "stock —" : f.stock <= 0 ? "épuisé" : `${fmtQty(f.stock)} en stock`}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {options.length > 1 && (
           <div className="mt-3 flex flex-wrap gap-1.5">
             {options.map((o) => (

@@ -25,7 +25,8 @@ export async function GET(req: NextRequest) {
     });
 
     const centers = await prisma.center.findMany({
-      where: auth.role === "COMPANY_OWNER" ? { companyId: auth.companyId ?? "" } : { id: { in: auth.centerIds } },
+      // Boutiques en service seulement (une boutique mise en pause disparaît des écrans)
+      where: { status: "ACTIVE", ...(auth.role === "COMPANY_OWNER" ? { companyId: auth.companyId ?? "" } : { id: { in: auth.centerIds } }) },
       select: { id: true, name: true, code: true, status: true },
       orderBy: { name: "asc" },
     });

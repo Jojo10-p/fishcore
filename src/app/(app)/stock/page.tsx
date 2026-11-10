@@ -7,6 +7,8 @@ import { useSession } from "@/components/app/session-provider";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Qty, Select, Spinner, Table, Td, Textarea } from "@/components/ui";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
 import type { Permission } from "@/lib/rbac";
+import { formatOf, groupByFamily } from "@/lib/product-name";
+import { formatCurrency } from "@/lib/utils";
 
 interface BatchRow {
   id: string;
@@ -70,12 +72,19 @@ function StockPage() {
   const [onlyExpiry, setOnlyExpiry] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [adjusting, setAdjusting] = useState<{ row: StockRow; batchId?: string } | null>(null);
+  const [overview, setOverview] = useState<Overview[] | null>(null);
+  const [show, setShow] = useState<"all" | "in" | "out">("all");
+  const [details, setDetails] = useState(false);
 
   const load = useCallback(async () => {
     if (!centerId) return;
     try {
-      const res = await apiGet<{ data: StockRow[] }>(`/api/stock?centerId=${centerId}${alertOnly ? "&lowStock=true" : ""}`);
+      const [res, ov] = await Promise.all([
+        apiGet<{ data: StockRow[] }>(`/api/stock?centerId=${centerId}${alertOnly ? "&lowStock=true" : ""}`),
+        apiGet<{ data: Overview[] }>(`/api/stock/overview?centerId=${centerId}`),
+      ]);
       setRows(res.data);
+      setOverview(ov.data);
       setError(null);
     } catch (e) {
       setError(errorMessage(e));
@@ -113,6 +122,29 @@ function StockPage() {
         )}
       </div>
       {error && <Alert>{error}</Alert>}
+      {!alertOnly && (
+        <StockCards
+          items={overview}
+          search={search}
+          show={show}
+          setShow={setShow}
+          currency={session?.company?.currency ?? "XOF"}
+          onMove={
+            canMove
+              ? (productId) => {
+                  const row = rows?.find((r) => r.productId === productId);
+                  if (row) setAdjusting({ row });
+                }
+              : undefined
+          }
+        />
+      )}
+      {!alertOnly && (
+        <button className="mb-3 mt-6 text-sm text-blue-600 hover:underline" onClick={() => setDetails((d) => !d)}>
+          {details ? "Masquer" : "Afficher"} le tableau détaillé (réservé caisses, lots)
+        </button>
+      )}
+      {(alertOnly || details) && (
       <Card>
         {!filtered ? (
           <Spinner />
@@ -194,6 +226,7 @@ function StockPage() {
           </Table>
         )}
       </Card>
+      )}
       {adjusting && centerId && (
         <MovementModal
           row={adjusting.row}
@@ -204,6 +237,125 @@ function StockPage() {
           onClose={() => setAdjusting(null)}
           onDone={load}
         />
+      )}
+    </>
+  );
+}
+
+interface Overview {
+  id: string;
+  name: string;
+  unit: { symbol: string; allowsDecimal: boolean };
+  sellingPrice: number;
+  stockAlertQty: number;
+  quantity: number;
+  reserved: number;
+  packagings: Array<{ name: string; symbol: string; factor: number; sellingPrice: number | null }>;
+  lastPurchase: { unitPrice: number; quantity: number | null; total: number | null; date: string | null; supplier: string | null; supplierPhone: string | null } | null;
+}
+
+/** Les infos clés de chaque article : stock, prix de vente, dernier prix d'achat chez le fournisseur. */
+function StockCards({
+  items,
+  search,
+  show,
+  setShow,
+  currency,
+  onMove,
+}: {
+  items: Overview[] | null;
+  search: string;
+  show: "all" | "in" | "out";
+  setShow: (s: "all" | "in" | "out") => void;
+  currency: string;
+  onMove?: (productId: string) => void;
+}) {
+  if (!items) return <Spinner />;
+  const money = (v: number) => formatCurrency(v, currency);
+  const q = search.trim();
+  const list = items.filter((i) => (!q || matchesSearch(i.name, q)) && (show === "all" || (show === "in" ? i.quantity > 0 : i.quantity <= 0)));
+  const counts = { all: items.length, in: items.filter((i) => i.quantity > 0).length, out: items.filter((i) => i.quantity <= 0).length };
+  const groups = groupByFamily(list);
+  return (
+    <>
+      <div className="mb-4 inline-flex rounded-xl border border-gray-300 bg-white p-1 text-sm">
+        {([
+          ["all", `Tous (${counts.all})`],
+          ["in", `Disponibles (${counts.in})`],
+          ["out", `Épuisés (${counts.out})`],
+        ] as const).map(([k, label]) => (
+          <button key={k} type="button" onClick={() => setShow(k)} className={`rounded-lg px-3 py-1.5 font-medium ${show === k ? "bg-blue-600 text-white" : "text-gray-700 hover:bg-gray-100"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {groups.length === 0 ? (
+        <Card>
+          <EmptyState icon="📦" title="Aucun article">
+            Les articles apparaissent ici dès le premier ajout de stock.
+          </EmptyState>
+        </Card>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {groups.map((g) => (
+            <Card key={g.family} className="p-4">
+              <p className="text-base font-bold text-gray-900">{g.family}</p>
+              <div className="mt-2 divide-y divide-gray-100">
+                {g.items.map((i) => {
+                  const out = i.quantity <= 0;
+                  const low = !out && i.quantity <= i.stockAlertQty;
+                  const bidon = i.packagings.find((p) => p.symbol === "bidon");
+                  const litre = i.unit.symbol === "L";
+                  const buy = i.lastPurchase?.unitPrice ?? 0;
+                  const margin = buy > 0 ? i.sellingPrice - buy : null;
+                  return (
+                    <div key={i.id} className="py-2.5 text-sm">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="font-semibold text-gray-800">{formatOf(i.name) || "Article"}</span>
+                        <span className={`font-bold ${out ? "text-red-600" : low ? "text-amber-600" : "text-green-700"}`}>
+                          {out ? "Épuisé" : `${i.quantity.toLocaleString("fr-FR")} ${litre ? "L" : i.unit.symbol}${litre && bidon ? ` (${(i.quantity / bidon.factor).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} bidons)` : ""}`}
+                        </span>
+                      </div>
+                      <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-gray-600">
+                        <span>
+                          Vente : <strong className="text-gray-900">{money(i.sellingPrice)}</strong>
+                          {litre ? " / L" : ""}
+                        </span>
+                        <span>
+                          Achat : <strong className="text-gray-900">{buy > 0 ? money(buy) : "—"}</strong>
+                          {litre && buy > 0 ? " / L" : ""}
+                        </span>
+                        {litre && bidon?.sellingPrice != null && (
+                          <span>
+                            Bidon : <strong className="text-gray-900">{money(bidon.sellingPrice)}</strong>
+                          </span>
+                        )}
+                        {margin != null && (
+                          <span className={margin >= 0 ? "text-green-700" : "text-red-700"}>
+                            {margin >= 0 ? "Bénéfice" : "Perte"} : {money(Math.abs(margin))}
+                            {litre ? " / L" : ""}
+                          </span>
+                        )}
+                      </div>
+                      {i.lastPurchase?.supplier && (
+                        <p className="mt-0.5 text-xs text-gray-500">
+                          Acheté chez {i.lastPurchase.supplier}
+                          {i.lastPurchase.supplierPhone ? ` (${i.lastPurchase.supplierPhone})` : ""}
+                          {i.lastPurchase.date ? ` le ${new Date(i.lastPurchase.date).toLocaleDateString("fr-FR")}` : ""}
+                        </p>
+                      )}
+                      {onMove && !out && (
+                        <button className="mt-1 text-xs text-blue-600 hover:underline" onClick={() => onMove(i.id)}>
+                          Mouvement (perte, correction…)
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          ))}
+        </div>
       )}
     </>
   );
