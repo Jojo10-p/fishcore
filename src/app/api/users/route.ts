@@ -1,3 +1,4 @@
+import { superAdminEmail } from "@/lib/super-admin";
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
@@ -66,6 +67,7 @@ export async function POST(req: NextRequest) {
       await readJson(req)
     );
 
+    if (role === "COMPANY_OWNER" && superAdminEmail()) throw new ApiError(403, "Il n'y a qu'un seul super administrateur : ce rôle ne peut pas être attribué", "SINGLE_OWNER");
     // Seul un propriétaire peut créer un autre propriétaire
     if (role === "COMPANY_OWNER" && user.role !== "COMPANY_OWNER") {
       throw new ApiError(403, "Seul le propriétaire peut créer un compte propriétaire", "FORBIDDEN");

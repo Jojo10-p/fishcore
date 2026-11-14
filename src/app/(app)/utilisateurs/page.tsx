@@ -18,7 +18,7 @@ interface UserRow {
 }
 
 const ROLES: Record<string, string> = {
-  COMPANY_OWNER: "Propriétaire",
+  COMPANY_OWNER: "Super administrateur",
   CENTER_MANAGER: "Gérant",
   CASHIER: "Caissier",
   ACCOUNTANT: "Comptable",
@@ -262,7 +262,7 @@ function InviteModal({
           </div>
           <Field label="Poste">
             <Select value={role} onChange={(e) => setRole(e.target.value)}>
-              {["CASHIER", "CENTER_MANAGER", "STOCK_MANAGER", "ACCOUNTANT", ...(isOwner ? ["COMPANY_OWNER"] : [])].map((k) => (
+              {["CASHIER", "CENTER_MANAGER", "STOCK_MANAGER", "ACCOUNTANT"].map((k) => (
                 <option key={k} value={k}>
                   {ROLES[k]}
                 </option>
@@ -409,7 +409,8 @@ function EditUserModal({
       <Field label="Rôle" hint={self ? "Vous ne pouvez pas changer votre propre rôle." : undefined}>
         <Select value={form.role} onChange={set("role")} disabled={self}>
           {Object.entries(ROLES)
-            .filter(([k]) => k !== "COMPANY_OWNER" || isOwner)
+            // Un seul super administrateur : ce rôle ne s'attribue pas
+            .filter(([k]) => k !== "COMPANY_OWNER" || (self && form.role === "COMPANY_OWNER"))
             .map(([k, v]) => (
               <option key={k} value={k}>
                 {v}

@@ -1,3 +1,4 @@
+import { superAdminEmail } from "@/lib/super-admin";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest) {
     await requirePermission(user, "user:create");
     const companyId = requireCompany(user);
     const { role, centerId, label, kind } = parseBody(schema, await readJson(req));
+    if (role === "COMPANY_OWNER" && superAdminEmail()) throw new ApiError(403, "Il n'y a qu'un seul super administrateur : ce rôle ne peut pas être attribué", "SINGLE_OWNER");
     if (role === "COMPANY_OWNER" && user.role !== "COMPANY_OWNER") throw new ApiError(403, "Seul le propriétaire peut inviter un propriétaire", "FORBIDDEN");
     let center: string | null = null;
     if (role !== "COMPANY_OWNER") {
