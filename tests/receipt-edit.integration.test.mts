@@ -95,3 +95,30 @@ test("ce qui est déjà vendu ne peut pas être retiré", async () => {
   assert.equal(ok.status, 200, JSON.stringify(ok.json));
   assert.equal(await stock(ctx.p5), 1);
 });
+
+test("supprimer : refusé si une partie est vendue", async () => {
+  const r = await call(editRoute.DELETE, { path: `/api/goods-receipts/${ctx.receipt}`, method: "DELETE", cookie: ctx.owner, body: { reason: "erreur" }, params: { id: ctx.receipt } });
+  assert.equal(r.status, 409, JSON.stringify(r.json));
+  assert.ok(await prisma.goodsReceipt.findUnique({ where: { id: ctx.receipt } }));
+});
+
+test("supprimer : l'arrivage disparaît, sa marchandise sort du stock, l'article aussi s'il ne venait que de là", async () => {
+  const r = await call(receiptsRoute.POST, {
+    path: "/api/goods-receipts",
+    cookie: ctx.owner,
+    body: { centerId: ctx.center, supplierId: ctx.s1, receivedAt: "2026-11-15", lines: [{ productId: ctx.p1, quantity: 4, unitPrice: 2800, totalPrice: 11200 }] },
+  });
+  const rid = r.json.data.id;
+  await call(validateRoute.POST, { path: `/api/goods-receipts/${rid}/validate`, cookie: ctx.owner, body: {}, params: { id: rid } });
+  await waitForStockAlerts();
+  assert.equal(await stock(ctx.p1), 4);
+  const cashier = await call(editRoute.DELETE, { path: `/api/goods-receipts/${rid}`, method: "DELETE", cookie: ctx.cashier, body: { reason: "erreur" }, params: { id: rid } });
+  assert.equal(cashier.status, 403);
+  const d = await call(editRoute.DELETE, { path: `/api/goods-receipts/${rid}`, method: "DELETE", cookie: ctx.owner, body: { reason: "saisi deux fois" }, params: { id: rid } });
+  await waitForStockAlerts();
+  assert.equal(d.status, 200, JSON.stringify(d.json));
+  assert.equal(await stock(ctx.p1), 0);
+  assert.equal(await prisma.goodsReceipt.findUnique({ where: { id: rid } }), null);
+  assert.equal(await prisma.purchase.count({ where: { totalAmount: 11200 } }), 0);
+  assert.equal((await prisma.product.findUniqueOrThrow({ where: { id: ctx.p1 } })).isActive, false);
+});

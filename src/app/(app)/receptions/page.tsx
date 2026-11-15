@@ -5,7 +5,7 @@ import { COMMON_FORMATS, FORMAT_SEP, composeName, familyOf, formatLiters, liters
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { useOnline } from "@/components/app/connection-badge";
-import { Alert, Badge, Button, Card, EmptyState, Field, Input, Money, PageHeader, Qty, Select, Spinner, Table, Td } from "@/components/ui";
+import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, Money, PageHeader, Qty, Select, Spinner, Table, Td } from "@/components/ui";
 import { useAutosaveDraft } from "@/hooks/use-autosave-draft";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
 
@@ -112,6 +112,7 @@ export default function ReceptionsPage() {
   const canEdit = session?.user.role === "COMPANY_OWNER" || session?.user.role === "CENTER_MANAGER";
   const [editing, setEditing] = useState<{ id: string; draft: ReceiptDraft } | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<Receipt | null>(null);
   const [receipts, setReceipts] = useState<Receipt[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<false | "stock" | "new">(false);
@@ -247,7 +248,13 @@ export default function ReceptionsPage() {
                         </Button>
                       )}
                       {canEdit && (
-                        <RowMenu busy={opening === r.id} items={[{ label: "✏️ Modifier l'arrivage", onClick: () => void openEdit(r.id) }]} />
+                        <RowMenu
+                          busy={opening === r.id}
+                          items={[
+                            { label: "✏️ Modifier l'arrivage", onClick: () => void openEdit(r.id) },
+                            { label: "🗑️ Supprimer l'arrivage", onClick: () => setRemoving(r), danger: true },
+                          ]}
+                        />
                       )}
                     </span>
                   </Td>
@@ -257,7 +264,73 @@ export default function ReceptionsPage() {
           </Table>
         )}
       </Card>
+      {removing && (
+        <DeleteReceiptModal
+          receipt={removing}
+          onClose={() => setRemoving(null)}
+          onDone={async () => {
+            setRemoving(null);
+            if (editing?.id === removing.id) setEditing(null);
+            await load();
+          }}
+        />
+      )}
     </>
+  );
+}
+
+/** Supprimer un arrivage : sa marchandise sort du stock, il disparaît de la liste. */
+function DeleteReceiptModal({ receipt, onClose, onDone }: { receipt: Receipt; onClose: () => void; onDone: () => Promise<void> }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiSend(`/api/goods-receipts/${receipt.id}`, { reason: reason.trim() }, "DELETE");
+      await onDone();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      title="Supprimer l'arrivage"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Annuler
+          </Button>
+          <Button variant="danger" onClick={() => void remove()} loading={busy} disabled={reason.trim().length < 3}>
+            Supprimer
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-gray-700">
+          L&apos;arrivage du <strong>{new Date(receipt.receivedAt).toLocaleDateString("fr-FR")}</strong>
+          {receipt.supplier ? ` (${receipt.supplier.name})` : ""} va disparaître, et sa marchandise sort du stock :
+        </p>
+        <ul className="list-disc pl-5 text-sm text-gray-700">
+          {receipt.lines.map((l) => (
+            <li key={l.id}>
+              {l.product.name} — <Qty value={l.quantity} unit={l.product.baseUnit.symbol} />
+            </li>
+          ))}
+        </ul>
+        <p className="text-xs text-gray-500">Impossible si une partie a déjà été vendue : dans ce cas, modifiez l&apos;arrivage. La suppression est notée dans l&apos;historique et la direction est prévenue.</p>
+        {error && <Alert>{error}</Alert>}
+        <Field label="Motif">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ex. : arrivage saisi deux fois, erreur…" autoFocus />
+        </Field>
+      </div>
+    </Modal>
   );
 }
 
@@ -299,7 +372,7 @@ function draftFromReceipt(r: EditableReceipt): ReceiptDraft {
 }
 
 /** Menu « ⋮ » d'une ligne du tableau. */
-function RowMenu({ items, busy }: { items: Array<{ label: string; onClick: () => void }>; busy?: boolean }) {
+function RowMenu({ items, busy }: { items: Array<{ label: string; onClick: () => void; danger?: boolean }>; busy?: boolean }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLSpanElement>(null);
   useEffect(() => {
@@ -325,7 +398,7 @@ function RowMenu({ items, busy }: { items: Array<{ label: string; onClick: () =>
                 setOpen(false);
                 it.onClick();
               }}
-              className="px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+              className={`px-4 py-2.5 text-left text-sm hover:bg-gray-50 ${it.danger ? "text-red-600" : "text-gray-700"}`}
             >
               {it.label}
             </button>

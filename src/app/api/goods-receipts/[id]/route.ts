@@ -247,3 +247,112 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return handleApiError(error, "GOODS_RECEIPTS");
   }
 }
+
+// DELETE /api/goods-receipts/[id] — Supprimer un arrivage (direction et gérant) :
+// sa marchandise sort du stock, sa dette fournisseur disparaît ; impossible si une
+// partie a déjà été vendue ou si le fournisseur a déjà été payé.
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await getCurrentUser(req);
+    requireEditor(user);
+    const companyId = requireCompany(user);
+    const { id } = await params;
+    const body = await readJson(req);
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (reason.length < 3) throw new ApiError(400, "Motif obligatoire (min. 3 caractères)");
+
+    const receipt = await prisma.goodsReceipt.findFirst({
+      where: { id, center: { companyId } },
+      include: {
+        lines: { select: { productId: true, quantity: true, product: { select: { name: true, baseUnitId: true, baseUnit: { select: { symbol: true } } } } } },
+        purchase: { select: { id: true, paidAmount: true } },
+      },
+    });
+    if (!receipt) throw new ApiError(404, "Arrivage introuvable");
+    await requireCenterAccess(user, receipt.centerId);
+    if (receipt.purchase && !new D(receipt.purchase.paidAmount).isZero()) {
+      throw new ApiError(409, "Le fournisseur a déjà été (en partie) payé pour cet arrivage : modifiez-le plutôt que de le supprimer", "ALREADY_PAID");
+    }
+    const byProduct = sumBy(receipt.lines);
+    const names = new Map(receipt.lines.map((l) => [l.productId, l.product]));
+    const summary = [...byProduct].map(([pid, q]) => `${names.get(pid)?.name} (${Number(q)} ${names.get(pid)?.baseUnit.symbol ?? ""})`.replace(" )", ")"));
+
+    await prisma.$transaction(async (tx) => {
+      if (receipt.isValidated) {
+        const batches = await tx.batch.findMany({ where: { receiptId: id } });
+        if (batches.some((b) => new D(b.remainingQty).lt(b.initialQty ?? 0))) {
+          throw new ApiError(409, "Une partie de cet arrivage a déjà été vendue : il ne peut plus être supprimé (modifiez-le plutôt)", "ALREADY_SOLD");
+        }
+        for (const [productId, qty] of byProduct) {
+          const rows = await tx.$queryRaw<{ id: string }[]>`
+            UPDATE "stocks" SET "quantity" = "quantity" - ${qty.toString()}::numeric, "version" = "version" + 1, "updatedAt" = NOW()
+             WHERE "centerId" = ${receipt.centerId} AND "productId" = ${productId}
+               AND "quantity" - ${qty.toString()}::numeric >= "reservedQty"
+         RETURNING "id"`;
+          if (!rows.length) throw new ApiError(409, `« ${names.get(productId)?.name} » : une partie a déjà été vendue, l'arrivage ne peut plus être supprimé`, "ALREADY_SOLD");
+          await tx.stockMovement.create({
+            data: {
+              stockId: rows[0].id,
+              type: "CORRECTION",
+              quantity: qty.neg(),
+              unitId: names.get(productId)?.baseUnitId ?? null,
+              referenceType: "GoodsReceipt",
+              referenceId: id,
+              notes: `Arrivage supprimé : ${reason}`,
+              performedById: user.id,
+              centerId: receipt.centerId,
+            },
+          });
+        }
+        await tx.batch.deleteMany({ where: { receiptId: id } });
+      }
+      if (receipt.purchase) {
+        await tx.goodsReceipt.update({ where: { id }, data: { purchaseId: null } });
+        await tx.purchase.delete({ where: { id: receipt.purchase.id } });
+      }
+      await tx.goodsReceipt.delete({ where: { id } });
+      // Article venu seulement de cet arrivage (jamais vendu, plus rien en stock) : il disparaît aussi du stock
+      for (const productId of byProduct.keys()) {
+        const [left, otherReceipts, sold] = await Promise.all([
+          tx.stock.aggregate({ where: { productId }, _sum: { quantity: true } }),
+          tx.goodsReceiptLine.count({ where: { productId } }),
+          tx.saleLine.count({ where: { productId } }),
+        ]);
+        if (new D(left._sum.quantity ?? 0).lte(0) && otherReceipts === 0 && sold === 0) {
+          await tx.product.update({ where: { id: productId }, data: { isActive: false } });
+        }
+      }
+      await writeAuditLog(
+        {
+          eventType: "STOCK_ADJUSTED",
+          companyId,
+          centerId: receipt.centerId,
+          userId: user.id,
+          referenceType: "GoodsReceipt",
+          referenceId: id,
+          result: "SUCCESS",
+          reason,
+          oldValues: { lines: Object.fromEntries([...byProduct].map(([k, v]) => [k, v.toString()])), supplierId: receipt.supplierId, receivedAt: receipt.receivedAt.toISOString() },
+          newValues: { via: "arrivage supprimé" },
+          ipAddress: user.ipAddress,
+          userAgent: user.userAgent,
+        },
+        tx
+      );
+    });
+
+    scheduleStockAlerts(companyId);
+    notifyManagers({
+      companyId,
+      centerId: receipt.centerId,
+      actorId: user.id,
+      type: "STOCK_EDITED",
+      title: "Arrivage supprimé",
+      message: `${await actorLabel(user.id)} a supprimé l'arrivage du ${receipt.receivedAt.toLocaleDateString("fr-FR")} : ${summary.join(", ")}. Motif : ${reason}`,
+      link: "/receptions",
+    });
+    return NextResponse.json({ success: true, data: { id } });
+  } catch (error) {
+    return handleApiError(error, "GOODS_RECEIPTS/DELETE");
+  }
+}
