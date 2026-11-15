@@ -18,9 +18,18 @@ export async function hideSuggestion(tx: Prisma.TransactionClient, productName: 
   }
 }
 
-/** Article recréé dans la boutique : sa suggestion revient. */
+/**
+ * Nouvel article enregistré : son nom rejoint la liste des suggestions (pour toutes
+ * les boutiques), sans rien retirer aux autres ; s'il avait été masqué ici, il revient.
+ */
 export async function showSuggestion(tx: Prisma.TransactionClient, productName: string, centerId: string) {
-  for (const s of await matching(tx, productName, centerId)) {
+  const found = await matching(tx, productName, centerId);
+  if (!found.length) {
+    const name = familyOf(productName).trim();
+    if (name.length >= 2) await tx.productSuggestion.createMany({ data: [{ name }], skipDuplicates: true });
+    return;
+  }
+  for (const s of found) {
     if (s.hiddenCenterIds.includes(centerId)) await tx.productSuggestion.update({ where: { id: s.id }, data: { hiddenCenterIds: s.hiddenCenterIds.filter((c) => c !== centerId) } });
   }
 }

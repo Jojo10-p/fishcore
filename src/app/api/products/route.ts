@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
           taxRate: data.taxRate ?? (company.vatEnabled ? company.defaultTaxRate : 0),
         },
       });
-      // Article recréé dans une boutique où il avait été supprimé : sa suggestion revient
+      // Le nom rejoint les suggestions (ou revient s'il avait été supprimé de cette boutique)
       if (centerId) await showSuggestion(tx, created.name, centerId);
 
       if (packagings?.length) {

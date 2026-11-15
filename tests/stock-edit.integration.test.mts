@@ -11,6 +11,7 @@ const usersRoute = await import("@/app/api/users/route");
 const editRoute = await import("@/app/api/stock/edit/route");
 const overviewRoute = await import("@/app/api/stock/overview/route");
 const suggRoute = await import("@/app/api/product-suggestions/route");
+const productsRoute = await import("@/app/api/products/route");
 const { waitForNotifications } = await import("@/lib/notify");
 
 const ctx: Json = {};
@@ -78,4 +79,15 @@ test("l'article supprimé disparaît aussi des suggestions de l'ajout de stock d
   assert.ok(names.includes("ORYX"));
   const other = await call(suggRoute.GET, { path: "/api/product-suggestions?centerId=autre", cookie: ctx.owner });
   assert.ok(other.json.data.some((x: Json) => x.name === "VIGO"), "toujours proposé ailleurs");
+});
+
+test("un nouveau nom d'article s'ajoute aux suggestions, sans retirer les autres", async () => {
+  const before = await prisma.productSuggestion.count();
+  const company = (await prisma.company.findFirstOrThrow({ select: { id: true } })).id;
+  const unit = await prisma.unit.findFirstOrThrow({ where: { companyId: company } });
+  const r = await call(productsRoute.POST, { path: "/api/products", cookie: ctx.owner, body: { name: "TOTAL QUARTZ 7000 — 4 L", baseUnitId: unit.id, sellingPrice: 9000, purchasePrice: 7000, stockAlertQty: 7, centerId: ctx.center } });
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  assert.equal(await prisma.productSuggestion.count(), before + 1);
+  assert.ok(await prisma.productSuggestion.findUnique({ where: { name: "TOTAL QUARTZ 7000" } }));
+  assert.ok(await prisma.productSuggestion.findUnique({ where: { name: "ORYX" } }));
 });
