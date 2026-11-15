@@ -10,6 +10,7 @@ const centersRoute = await import("@/app/api/centers/route");
 const usersRoute = await import("@/app/api/users/route");
 const editRoute = await import("@/app/api/stock/edit/route");
 const overviewRoute = await import("@/app/api/stock/overview/route");
+const suggRoute = await import("@/app/api/product-suggestions/route");
 const { waitForNotifications } = await import("@/lib/notify");
 
 const ctx: Json = {};
@@ -28,6 +29,7 @@ before(async () => {
   const p = await prisma.product.create({ data: { companyId: company, centerId: ctx.center, name: "VIGO — 25 L", baseUnitId: unit.id, sellingPrice: 375, purchasePrice: 300 } });
   ctx.product = p.id;
   await prisma.stock.create({ data: { centerId: ctx.center, productId: p.id, quantity: 50 } });
+  await prisma.productSuggestion.createMany({ data: [{ name: "VIGO" }, { name: "ORYX" }], skipDuplicates: true });
   for (const [email, role] of [["gerant@test.bj", "CENTER_MANAGER"], ["caisse@test.bj", "CASHIER"]] as const) {
     const r = await call(usersRoute.POST, { path: "/api/users", cookie: ctx.owner, body: { email, password: "Motdepasse1", firstName: role, lastName: "Test", role, centerIds: [ctx.center] } });
     assert.equal(r.status, 201, JSON.stringify(r.json));
@@ -67,4 +69,13 @@ test("la direction supprime l'article : stock à 0, il disparaît de la boutique
   assert.equal(Number(s?.quantity), 0);
   const ov = await call(overviewRoute.GET, { path: `/api/stock/overview?centerId=${ctx.center}`, cookie: ctx.owner });
   assert.equal(ov.json.data.length, 0);
+});
+
+test("l'article supprimé disparaît aussi des suggestions de l'ajout de stock de cette boutique", async () => {
+  const r = await call(suggRoute.GET, { path: `/api/product-suggestions?centerId=${ctx.center}`, cookie: ctx.owner });
+  const names = r.json.data.map((x: Json) => x.name);
+  assert.ok(!names.includes("VIGO"), JSON.stringify(names));
+  assert.ok(names.includes("ORYX"));
+  const other = await call(suggRoute.GET, { path: "/api/product-suggestions?centerId=autre", cookie: ctx.owner });
+  assert.ok(other.json.data.some((x: Json) => x.name === "VIGO"), "toujours proposé ailleurs");
 });

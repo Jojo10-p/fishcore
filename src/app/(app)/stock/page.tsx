@@ -648,7 +648,7 @@ function DeleteItemModal({ item, centerId, onClose, onDone }: { item: Overview; 
           <strong>{item.name}</strong> va disparaître du stock de cette boutique
           {item.quantity > 0 ? ` (il en reste ${item.quantity.toLocaleString("fr-FR")} ${item.unit.symbol === "L" ? "L" : item.unit.symbol})` : ""}. Les ventes et achats passés restent dans l&apos;historique, et la direction est prévenue.
         </p>
-        <p className="text-xs text-gray-500">Vous pourrez le remettre en stock plus tard avec « Ajouter du stock ».</p>
+        <p className="text-xs text-gray-500">Il disparaît aussi de « Ajouter du stock » (si plus aucun format de cet article ne reste). Pour le remettre plus tard, retapez simplement son nom dans « Ajouter du stock ».</p>
         {error && <Alert>{error}</Alert>}
         <Field label="Motif">
           <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ex. : article créé par erreur, plus vendu…" autoFocus />

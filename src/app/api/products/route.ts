@@ -1,3 +1,4 @@
+import { showSuggestion } from "@/lib/suggestions";
 import { NextRequest, NextResponse } from "next/server";
 import { LOW_STOCK_THRESHOLD } from "@/lib/app-config";
 import { Prisma } from "@prisma/client";
@@ -138,6 +139,8 @@ export async function POST(req: NextRequest) {
           taxRate: data.taxRate ?? (company.vatEnabled ? company.defaultTaxRate : 0),
         },
       });
+      // Article recréé dans une boutique où il avait été supprimé : sa suggestion revient
+      if (centerId) await showSuggestion(tx, created.name, centerId);
 
       if (packagings?.length) {
         await replacePackagings(tx, { companyId, productId: created.id, baseUnitId: data.baseUnitId, packagings, productBarcode: data.barcode });

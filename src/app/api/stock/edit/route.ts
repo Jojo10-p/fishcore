@@ -6,6 +6,8 @@ import { writeAuditLog } from "@/lib/audit";
 import { ApiError, getCurrentUser, handleApiError, parseBody, readJson, requireCenterAccess, requireCompany, type AuthUser } from "@/lib/auth";
 import { actorLabel, notifyManagers } from "@/lib/notify";
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
+import { familyOf } from "@/lib/product-name";
+import { hideSuggestion } from "@/lib/suggestions";
 
 const D = Prisma.Decimal;
 
@@ -128,6 +130,12 @@ export async function DELETE(req: NextRequest) {
       const elsewhere = await tx.stock.count({ where: { productId, centerId: { not: centerId }, quantity: { gt: 0 } } });
       const archived = product.centerId === centerId || elsewhere === 0;
       if (archived) await tx.product.update({ where: { id: productId }, data: { isActive: false } });
+      // Plus aucun format de cette famille dans la boutique : elle disparaît aussi de l'ajout de stock
+      const fam = familyOf(product.name);
+      const siblings = await tx.product.count({
+        where: { companyId, isActive: true, id: { not: productId }, OR: [{ centerId }, { centerId: null }], name: { startsWith: fam, mode: "insensitive" } },
+      });
+      if (archived && siblings === 0) await hideSuggestion(tx, product.name, centerId);
       await writeAuditLog(
         {
           eventType: "STOCK_ADJUSTED",

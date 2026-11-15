@@ -10,7 +10,8 @@ export async function GET(req: NextRequest) {
     // Suggestions de la boutique choisie (huile de moteur ou huile d'arachide) + communes
     const centerId = req.nextUrl.searchParams.get("centerId");
     const list = await prisma.productSuggestion.findMany({
-      where: centerId ? { OR: [{ centerId: null }, { centerId }] } : {},
+      // Sauf les articles supprimés de cette boutique (menu « ⋮ » du stock)
+      where: centerId ? { OR: [{ centerId: null }, { centerId }], NOT: { hiddenCenterIds: { has: centerId } } } : {},
       select: { id: true, name: true, liters: true, unitsPerCarton: true, category: true },
       orderBy: { name: "asc" },
       take: 2000,

@@ -1563,6 +1563,8 @@ model ProductSuggestion {
   category       String?
   /// Boutique concernée (huile de moteur, huile d'arachide…) ; vide = toutes
   centerId       String?
+  /// Boutiques où l'article a été supprimé : la suggestion n'y apparaît plus
+  hiddenCenterIds String[] @default([])
 
   @@index([centerId])
   @@map("product_suggestions")
