@@ -8,6 +8,10 @@ import { Money } from "@/components/ui";
 // ─────────────────────────────────────────────
 
 export interface CloseResult {
+  sessionId?: string;
+  cashierId?: string;
+  isValidated?: boolean;
+  validatedBy?: string | null;
   theoreticalBalance: string;
   declaredBalance: string;
   discrepancy: string;

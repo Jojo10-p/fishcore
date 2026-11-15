@@ -246,8 +246,8 @@ export async function POST(req: NextRequest) {
         centerId: session.cashRegister.centerId,
         actorId: user.id,
         type: "CASH_CLOSED",
-        title: `Caisse fermée — ${journal?.journal.cashier.firstName ?? ""}`.trim(),
-        message: `${await actorLabel(session.cashierId)} : ${journal?.journal.salesCount ?? 0} vente(s), ${Number(result.totalSales).toLocaleString("fr-FR")} F encaissés. Écart : ${Number(result.discrepancy).toLocaleString("fr-FR")} F.`,
+        title: `Caisse clôturée — ${journal?.journal.cashier.firstName ?? ""} · à valider`,
+        message: `${await actorLabel(session.cashierId)} : ${journal?.journal.salesCount ?? 0} vente(s), ${Number(result.totalSales).toLocaleString("fr-FR")} F encaissés. Écart : ${Number(result.discrepancy).toLocaleString("fr-FR")} F. Ouvrez le journal et validez si c'est bon.`,
         link: `/caisses?journal=${sessionId}`,
         data: { sessionId, totalSales: result.totalSales.toString(), discrepancy: result.discrepancy.toString() },
       });
@@ -261,8 +261,9 @@ export async function POST(req: NextRequest) {
       const session = await loadSession(user, sessionId);
 
       if (!session.closedAt) throw new ApiError(409, "La session n'est pas encore clôturée", "NOT_CLOSED");
-      if (session.cashierId === user.id) {
-        throw new ApiError(403, "La clôture doit être validée par une autre personne que le caissier", "SELF_APPROVAL");
+      // Contrôle par une autre personne. Exception : la direction, qui n'a personne au-dessus d'elle.
+      if (session.cashierId === user.id && user.role !== "COMPANY_OWNER") {
+        throw new ApiError(403, "La clôture doit être validée par une autre personne que celle qui a tenu la caisse", "SELF_APPROVAL");
       }
 
       await prisma.$transaction(async (tx) => {
@@ -290,6 +291,20 @@ export async function POST(req: NextRequest) {
         );
       });
 
+      // Le caissier voit dans sa cloche que sa caisse est validée
+      if (session.cashierId !== user.id) {
+        notifyManagers({
+          companyId,
+          centerId: session.cashRegister.centerId,
+          actorId: user.id,
+          type: "CASH_VALIDATED",
+          title: "Caisse validée ✅",
+          message: `${await actorLabel(user.id)} a vérifié et validé votre clôture de caisse.`,
+          link: `/caisses?journal=${sessionId}`,
+          data: { sessionId },
+          userIds: [session.cashierId],
+        });
+      }
       return NextResponse.json({ success: true, message: "Clôture validée." });
     }
 
@@ -434,8 +449,12 @@ export async function GET(req: NextRequest) {
       orderBy: { openedAt: "desc" },
       take: 50,
     });
+    // Qui a dit « oui, c'est bon »
+    const vIds = [...new Set(sessions.map((s) => s.validatedById).filter((v): v is string => !!v))];
+    const validators = vIds.length ? await prisma.user.findMany({ where: { id: { in: vIds } }, select: { id: true, firstName: true, lastName: true } }) : [];
+    const vName = new Map(validators.map((v) => [v.id, `${v.firstName} ${v.lastName}`.trim()]));
 
-    return NextResponse.json({ success: true, data: sessions });
+    return NextResponse.json({ success: true, data: sessions.map((s) => ({ ...s, validatedBy: s.validatedById ? vName.get(s.validatedById) ?? null : null })) });
   } catch (error) {
     return handleApiError(error, "CASH");
   }

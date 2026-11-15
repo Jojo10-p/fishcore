@@ -16,6 +16,9 @@ export async function sessionJournal(sessionId: string) {
         closedAt: true,
         openingBalance: true,
         notes: true,
+        cashierId: true,
+        isValidated: true,
+        validatedById: true,
         cashier: { select: { firstName: true, lastName: true, role: true } },
         cashRegister: { select: { name: true, centerId: true } },
       },
@@ -25,8 +28,14 @@ export async function sessionJournal(sessionId: string) {
     prisma.sale.count({ where: { sessionId, status: { not: "CANCELLED" } } }),
   ]);
   if (!closure) return null;
+  const validator = session.validatedById
+    ? await prisma.user.findUnique({ where: { id: session.validatedById }, select: { firstName: true, lastName: true } })
+    : null;
   return {
     sessionId,
+    cashierId: session.cashierId,
+    isValidated: session.isValidated,
+    validatedBy: validator ? `${validator.firstName} ${validator.lastName}`.trim() : null,
     theoreticalBalance: closure.theoreticalBalance.toString(),
     declaredBalance: closure.declaredBalance.toString(),
     discrepancy: closure.discrepancy.toString(),

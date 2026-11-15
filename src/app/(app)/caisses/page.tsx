@@ -17,6 +17,7 @@ interface SessionRow {
   openedAt: string;
   closedAt: string | null;
   isValidated: boolean;
+  validatedBy?: string | null;
   cashierId: string;
   openingBalance: string;
   theoreticalBalance: string | null;
@@ -74,6 +75,11 @@ export default function CaissesPage() {
     return () => clearTimeout(t);
   }, [load]);
 
+  // « Oui, c'est bon » : le gérant ou la direction, jamais celui qui a tenu la caisse
+  // (sauf la direction, qui n'a personne au-dessus d'elle)
+  const canValidate = (cashierId?: string) =>
+    can("cash:close_session_validate") && (cashierId !== session?.user.id || session?.user.role === "COMPANY_OWNER");
+
   const validate = async (id: string) => {
     setBusyId(id);
     try {
@@ -101,7 +107,7 @@ export default function CaissesPage() {
     <>
       <PageHeader
         title="Caisses & clôtures"
-        description="Une clôture est validée par une autre personne que le caissier."
+        description="Quand une caisse est clôturée, le gérant ou la direction ouvre le journal, vérifie et valide : « Oui, c'est bon »."
         actions={can("cash:register_manage") && <Button variant="secondary" onClick={() => setNewRegister("")}>Ajouter une caisse</Button>}
       />
       {error && <Alert>{error}</Alert>}
@@ -166,13 +172,19 @@ export default function CaissesPage() {
                     {!s.closedAt ? (
                       <Badge tone="blue">En cours</Badge>
                     ) : s.isValidated ? (
-                      <Badge tone="green">Validée</Badge>
-                    ) : can("cash:close_session_validate") && s.cashierId !== session?.user.id ? (
-                      <Button variant="success" className="px-3 py-1.5" loading={busyId === s.id} onClick={() => validate(s.id)}>
-                        Valider
-                      </Button>
+                      <div>
+                        <Badge tone="green">Clôturée · validée ✅</Badge>
+                        {s.validatedBy && <p className="mt-0.5 text-xs text-gray-500">par {s.validatedBy}</p>}
+                      </div>
                     ) : (
-                      <Badge tone="amber">À valider</Badge>
+                      <div className="flex flex-col items-start gap-1">
+                        <Badge tone="amber">Clôturée · à valider</Badge>
+                        {canValidate(s.cashierId) && (
+                          <button className="text-xs font-semibold text-green-700 hover:underline" onClick={() => setJournalId(s.id)}>
+                            Vérifier et valider →
+                          </button>
+                        )}
+                      </div>
                     )}
                   </Td>
                   <Td>
@@ -194,7 +206,18 @@ export default function CaissesPage() {
         )}
       </Card>
 
-      {journalId && <JournalModal sessionId={journalId} currency={currency} onClose={() => setJournalId(null)} />}
+      {journalId && (
+        <JournalModal
+          sessionId={journalId}
+          currency={currency}
+          canValidate={canValidate}
+          busy={busyId === journalId}
+          onValidate={async () => {
+            await validate(journalId);
+          }}
+          onClose={() => setJournalId(null)}
+        />
+      )}
 
       <Modal
         open={newRegister !== null}
@@ -220,14 +243,34 @@ export default function CaissesPage() {
 }
 
 /** Journal d'une caisse fermée, à revoir et réimprimer à tout moment. */
-function JournalModal({ sessionId, currency, onClose }: { sessionId: string; currency: string; onClose: () => void }) {
+function JournalModal({
+  sessionId,
+  currency,
+  canValidate,
+  busy,
+  onValidate,
+  onClose,
+}: {
+  sessionId: string;
+  currency: string;
+  canValidate: (cashierId?: string) => boolean;
+  busy: boolean;
+  onValidate: () => Promise<void>;
+  onClose: () => void;
+}) {
   const [r, setR] = useState<CloseResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const reload = useCallback(
+    () =>
+      apiGet<{ data: CloseResult }>(`/api/cash/sessions/${sessionId}/journal`)
+        .then((res) => setR(res.data))
+        .catch((e) => setError(errorMessage(e))),
+    [sessionId]
+  );
   useEffect(() => {
-    apiGet<{ data: CloseResult }>(`/api/cash/sessions/${sessionId}/journal`)
-      .then((res) => setR(res.data))
-      .catch((e) => setError(errorMessage(e)));
-  }, [sessionId]);
+    void reload();
+  }, [reload]);
+  const gap = r ? Number(r.discrepancy) : 0;
   return (
     <Modal
       open
@@ -248,6 +291,36 @@ function JournalModal({ sessionId, currency, onClose }: { sessionId: string; cur
       {!r && !error && <Spinner />}
       {r && (
         <>
+          {r.isValidated ? (
+            <div className="rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+              <p className="font-semibold">✅ Caisse clôturée et validée</p>
+              {r.validatedBy && <p>Vérifiée par {r.validatedBy}.</p>}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="font-semibold">🔒 Caisse clôturée — en attente de validation</p>
+              {canValidate(r.cashierId) ? (
+                <>
+                  <p className="mt-1">
+                    Vérifiez le journal ci-dessous{gap !== 0 ? " (attention : il y a un écart)" : ""}. Si tout est juste, validez.
+                  </p>
+                  <Button
+                    variant="success"
+                    className="mt-2 w-full"
+                    loading={busy}
+                    onClick={async () => {
+                      await onValidate();
+                      await reload();
+                    }}
+                  >
+                    ✅ Oui, c&apos;est bon — valider la clôture
+                  </Button>
+                </>
+              ) : (
+                <p className="mt-1">Le gérant ou la direction doit vérifier et valider.</p>
+              )}
+            </div>
+          )}
           <CashJournal r={r} currency={currency} />
           <PrintableJournal r={r} currency={currency} />
         </>

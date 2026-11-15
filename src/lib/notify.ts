@@ -19,7 +19,8 @@ export type NotifyType =
   | "CANCEL_REQUESTED"
   | "CANCEL_DECIDED"
   | "CASH_CLOSED"
-  | "SALE_MADE";
+  | "SALE_MADE"
+  | "CASH_VALIDATED";
 
 export interface NotifyInput {
   companyId: string;

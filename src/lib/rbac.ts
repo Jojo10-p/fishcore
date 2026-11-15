@@ -105,7 +105,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "product:view", "product:create", "product:edit", "product:price", "unit:manage", "product:import",
     "stock:view", "stock:receive", "stock:adjust", "stock:transfer", "stock:loss",
     "inventory:start", "inventory:validate",
-    "sale:view", "sale:view_all",
+    "sale:create", "sale:view", "sale:view_all",
     "sale:cancel_approve", "sale:refund", "sale:discount",
     "cash:open_session", "cash:close_session", "cash:close_session_validate",
     "cash:view_session", "cash:view_all_sessions", "cash:movement", "cash:register_manage",
