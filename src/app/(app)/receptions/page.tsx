@@ -2,7 +2,7 @@
 
 import { matchesSearch } from "@/lib/search-aliases";
 import { COMMON_FORMATS, FORMAT_SEP, composeName, familyOf, formatLiters, litersLabel } from "@/lib/product-name";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { useOnline } from "@/components/app/connection-badge";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Money, PageHeader, Qty, Select, Spinner, Table, Td } from "@/components/ui";
@@ -69,6 +69,8 @@ interface DraftLine {
   retail?: boolean;
   /** Prix du bidon entier (vente au détail) */
   bidonPrice?: string;
+  /** Article d'origine (modification d'un arrivage) : gardé tant que le nom et le format ne changent pas */
+  productId?: string;
 }
 interface ReceiptDraft {
   supplierId: string;
@@ -105,7 +107,11 @@ const emptyDraft = (fresh = false): ReceiptDraft => ({
 const num = (v: string) => Number((v || "0").replace(",", "."));
 
 export default function ReceptionsPage() {
-  const { centerId, currency, can } = useSession();
+  const { centerId, currency, can, session } = useSession();
+  // Modifier un arrivage : direction et gérant (le serveur revérifie)
+  const canEdit = session?.user.role === "COMPANY_OWNER" || session?.user.role === "CENTER_MANAGER";
+  const [editing, setEditing] = useState<{ id: string; draft: ReceiptDraft } | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
   const [receipts, setReceipts] = useState<Receipt[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<false | "stock" | "new">(false);
@@ -127,6 +133,21 @@ export default function ReceptionsPage() {
     return () => clearTimeout(t);
   }, [load]);
 
+  const openEdit = async (id: string) => {
+    setOpening(id);
+    setError(null);
+    try {
+      const r = await apiGet<{ data: EditableReceipt }>(`/api/goods-receipts/${id}`);
+      setCreating(false);
+      setEditing({ id, draft: draftFromReceipt(r.data) });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setOpening(null);
+    }
+  };
+
   const validate = async (id: string) => {
     if (!window.confirm("Valider cette réception ? Le stock sera augmenté et la réception ne pourra plus être modifiée.")) return;
     setValidating(id);
@@ -146,7 +167,7 @@ export default function ReceptionsPage() {
         title="Ajouter du stock"
         description="Marchandise reçue du fournisseur : le stock augmente dès que l'arrivage est enregistré."
         actions={
-          !creating && (
+          !creating && !editing && (
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" onClick={() => setCreating("new")}>
                 ✨ Ajouter un nouveau produit
@@ -157,6 +178,22 @@ export default function ReceptionsPage() {
         }
       />
       {error && <Alert>{error}</Alert>}
+      {editing && centerId && (
+        <div className="mb-6">
+          <ReceiptForm
+            key={editing.id}
+            editId={editing.id}
+            initial={editing.draft}
+            centerId={centerId}
+            currency={currency}
+            onCancel={() => setEditing(null)}
+            onSaved={async () => {
+              setEditing(null);
+              await load();
+            }}
+          />
+        </div>
+      )}
       {creating && centerId && (
         <div className="mb-6">
           <ReceiptForm
@@ -203,11 +240,16 @@ export default function ReceptionsPage() {
                   </Td>
                   <Td>{r.isValidated ? <Badge tone="green">Validée</Badge> : <Badge tone="gray">Brouillon</Badge>}</Td>
                   <Td>
-                    {!r.isValidated && can("stock:receive") && (
-                      <Button variant="success" className="px-3 py-1.5" loading={validating === r.id} onClick={() => validate(r.id)}>
-                        Valider
-                      </Button>
-                    )}
+                    <span className="flex items-center justify-end gap-2">
+                      {!r.isValidated && can("stock:receive") && (
+                        <Button variant="success" className="px-3 py-1.5" loading={validating === r.id} onClick={() => validate(r.id)}>
+                          Valider
+                        </Button>
+                      )}
+                      {canEdit && (
+                        <RowMenu busy={opening === r.id} items={[{ label: "✏️ Modifier l'arrivage", onClick: () => void openEdit(r.id) }]} />
+                      )}
+                    </span>
                   </Td>
                 </tr>
               );
@@ -216,6 +258,81 @@ export default function ReceptionsPage() {
         )}
       </Card>
     </>
+  );
+}
+
+interface EditableReceipt {
+  reference: string | null;
+  receivedAt: string;
+  transportCost: string;
+  handlingCost: string;
+  supplier: { id: string } | null;
+  lines: Array<{ quantity: string; totalPrice: string; product: { id: string; name: string; sellingPrice: string; baseUnit: { symbol: string } } }>;
+}
+
+/** Arrivage enregistré → formulaire pré-rempli (achat « à l'unité », prix total de la ligne). */
+function draftFromReceipt(r: EditableReceipt): ReceiptDraft {
+  return {
+    supplierId: r.supplier?.id ?? "",
+    reference: r.reference ?? "",
+    receivedAt: r.receivedAt.slice(0, 10),
+    transportCost: Number(r.transportCost) ? String(Number(r.transportCost)) : "",
+    handlingCost: Number(r.handlingCost) ? String(Number(r.handlingCost)) : "",
+    lines: r.lines.map((l) => {
+      const retail = l.product.baseUnit.symbol === "L";
+      const liters = formatLiters(l.product.name);
+      const qty = Number(l.quantity);
+      return {
+        ...emptyLine(),
+        productId: l.product.id,
+        name: familyOf(l.product.name),
+        liters: liters ? String(liters) : "",
+        buyMode: "unit" as const,
+        retail,
+        // Détail : stock compté en litres → nombre de bidons reçus
+        quantity: String(retail && liters ? Math.round((qty / liters) * 1000) / 1000 : qty),
+        lotPrice: String(Number(l.totalPrice)),
+        sellingPrice: String(Number(l.product.sellingPrice)),
+      };
+    }),
+  };
+}
+
+/** Menu « ⋮ » d'une ligne du tableau. */
+function RowMenu({ items, busy }: { items: Array<{ label: string; onClick: () => void }>; busy?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  return (
+    <span className="relative" ref={box}>
+      <button type="button" aria-label="Actions" disabled={busy} onClick={() => setOpen((o) => !o)} className="flex h-9 w-9 items-center justify-center rounded-full text-xl font-bold leading-none text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+        {busy ? "…" : "⋮"}
+      </button>
+      {open && (
+        <span className="absolute right-0 z-30 mt-1 flex w-56 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white py-1 text-left shadow-lg">
+          {items.map((it) => (
+            <button
+              key={it.label}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                it.onClick();
+              }}
+              className="px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+            >
+              {it.label}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -258,12 +375,17 @@ function ReceiptForm({
   centerId,
   currency,
   startNew = false,
+  editId,
+  initial,
   onCancel,
   onSaved,
 }: {
   centerId: string;
   currency: string;
   startNew?: boolean;
+  /** Modification d'un arrivage déjà enregistré */
+  editId?: string;
+  initial?: ReceiptDraft;
   onCancel: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -271,7 +393,9 @@ function ReceiptForm({
   const { can } = useSession();
   // Prix d'un article déjà en stock : seuls la direction et le gérant les changent
   const canPrice = can("product:price");
-  const [draft, setDraft] = useState<ReceiptDraft>(() => emptyDraft(startNew));
+  const [draft, setDraft] = useState<ReceiptDraft>(() => initial ?? emptyDraft(startNew));
+  const [hydrated, setHydrated] = useState(!editId);
+  const [phoneEdit, setPhoneEdit] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductFull[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suppliers, setSuppliers] = useState<Array<Supplier & { phone?: string | null }>>([]);
@@ -284,7 +408,8 @@ function ReceiptForm({
   const [error, setError] = useState<string | null>(null);
 
   const touched = useMemo(() => draft.supplierId !== "" || draft.reference !== "" || draft.lines.some((l) => l.name || l.quantity || l.lotPrice), [draft]);
-  const autosave = useAutosaveDraft(`goods-receipt:v4:${centerId}`, draft, { enabled: touched });
+  // Un arrivage en cours de modification n'est pas gardé comme brouillon local
+  const autosave = useAutosaveDraft(`goods-receipt:v4:${centerId}`, draft, { enabled: touched && !editId });
 
   const loadProducts = useCallback(() => {
     apiGet<{ data: ProductFull[] }>(`/api/products?centerId=${centerId}`).then((r) => setProducts(r.data)).catch(() => undefined);
@@ -297,10 +422,38 @@ function ReceiptForm({
   }, [loadProducts, centerId]);
 
   const byName = useMemo(() => new Map(products.map((p) => [norm(p.name), p])), [products]);
+  useEffect(() => {
+    if (hydrated || !products.length || !units.length) return;
+    const bidonId = units.find((u) => u.symbol === "bidon")?.id;
+    const cartonId = units.find((u) => u.symbol === "carton")?.id;
+    const t = setTimeout(() => {
+      setDraft((d) => ({
+        ...d,
+        lines: d.lines.map((l) => {
+          const p = (l.productId ? products.find((x) => x.id === l.productId) : undefined) ?? byName.get(norm(composeName(l.name, num(l.liters) || null))) ?? byName.get(norm(l.name));
+          const bidon = p?.unitConversions?.find((u) => u.fromUnitId === bidonId);
+          const carton = p?.unitConversions?.find((u) => u.fromUnitId === cartonId);
+          return {
+            ...l,
+            bidonPrice: l.retail && bidon?.sellingPrice ? String(Number(bidon.sellingPrice)) : l.bidonPrice,
+            cartonSellingPrice: carton?.sellingPrice ? String(Number(carton.sellingPrice)) : l.cartonSellingPrice,
+            perCarton: carton ? String(Number(carton.factor)) : l.perCarton,
+          };
+        }),
+      }));
+      setHydrated(true);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [hydrated, products, units, byName]);
   const sugByName = useMemo(() => new Map(suggestions.map((s) => [norm(s.name), s])), [suggestions]);
   const supplier = suppliers.find((s) => s.id === draft.supplierId);
   const setField = (k: keyof Omit<ReceiptDraft, "lines">) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setDraft((d) => ({ ...d, [k]: e.target.value }));
-  const setLine = (i: number, patch: Partial<DraftLine>) => setDraft((d) => ({ ...d, lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) }));
+  // Changer le nom ou le format détache la ligne de l'article d'origine
+  const setLine = (i: number, patch: Partial<DraftLine>) =>
+    setDraft((d) => ({
+      ...d,
+      lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch, ...((patch.name !== undefined && patch.name !== l.name) || (patch.liters !== undefined && patch.liters !== l.liters) ? { productId: undefined } : {}) } : l)),
+    }));
 
   // Choisir un nom (article existant ou suggestion) : pré-remplit ce qu'on connaît
   const pickName = (i: number, picked: string) => {
@@ -339,7 +492,9 @@ function ReceiptForm({
     const fam = sp.family;
     const wantL = num(l.liters) || sp.liters || null;
     const sameFamily = l.name.trim() ? products.filter((x) => norm(familyOf(x.name)) === norm(fam)) : [];
+    const pinned = l.productId ? products.find((x) => x.id === l.productId) : undefined;
     const product =
+      pinned ??
       (l.name.trim()
         ? (byName.get(norm(composeName(fam, wantL))) ??
           (wantL ? sameFamily.find((x) => formatLiters(x.name) === wantL) : byName.get(norm(l.name))))
@@ -382,6 +537,17 @@ function ReceiptForm({
       setSuppliers((s) => [...s, res.data].sort((a, b) => a.name.localeCompare(b.name)));
       setDraft((d) => ({ ...d, supplierId: res.data.id }));
       setNewSupplier(null);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+
+  const savePhone = async () => {
+    if (!supplier || phoneEdit === null) return;
+    try {
+      await apiSend(`/api/suppliers/${supplier.id}`, { phone: phoneEdit.trim() }, "PATCH");
+      setSuppliers((list) => list.map((s) => (s.id === supplier.id ? { ...s, phone: phoneEdit.trim() } : s)));
+      setPhoneEdit(null);
     } catch (e) {
       setError(errorMessage(e));
     }
@@ -471,7 +637,7 @@ function ReceiptForm({
         }
         lines.push({ productId: id, quantity: r.qty, unitPrice: cost, totalPrice: Math.round(r.lot) });
       }
-      const res = await apiSend<{ data: { id: string } }>("/api/goods-receipts", {
+      const body = {
         centerId,
         supplierId: draft.supplierId || undefined,
         reference: draft.reference || undefined,
@@ -479,8 +645,14 @@ function ReceiptForm({
         transportCost: num(draft.transportCost),
         handlingCost: num(draft.handlingCost),
         lines,
-      });
-      await apiSend(`/api/goods-receipts/${res.data.id}/validate`, {});
+      };
+      if (editId) {
+        // Le stock est corrigé de la différence, l'historique garde tout
+        await apiSend(`/api/goods-receipts/${editId}`, body, "PUT");
+      } else {
+        const res = await apiSend<{ data: { id: string } }>("/api/goods-receipts", body);
+        await apiSend(`/api/goods-receipts/${res.data.id}/validate`, {});
+      }
       await autosave.clear();
       await onSaved();
     } catch (e) {
@@ -506,14 +678,17 @@ function ReceiptForm({
   return (
     <Card className="p-4 sm:p-6 space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold text-gray-900">Nouvel arrivage</h2>
+        <h2 className="text-lg font-semibold text-gray-900">{editId ? "Modifier l'arrivage" : "Nouvel arrivage"}</h2>
         <span className="text-xs text-gray-500">
           {autosave.status === "saved" && autosave.savedAt && `Brouillon gardé sur cet appareil (${autosave.savedAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })})`}
           {autosave.status === "error" && <span className="text-red-600">Sauvegarde locale impossible</span>}
         </span>
       </div>
 
-      {autosave.restored && (
+      {editId && (
+        <Alert tone="blue">Changez ce que vous voulez : fournisseur, articles, format, quantités, prix. En enregistrant, le stock est corrigé de la différence et la modification est notée dans l&apos;historique.</Alert>
+      )}
+      {!editId && autosave.restored && (
         <Alert tone="blue">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span>Un arrivage non terminé a été retrouvé ({new Date(autosave.restored.updatedAt).toLocaleString("fr-FR")}).</span>
@@ -565,7 +740,27 @@ function ReceiptForm({
             <Input type="date" value={draft.receivedAt} onChange={setField("receivedAt")} />
           </Field>
         </div>
-        {supplier && <p className="text-sm text-gray-600">📞 Contact du fournisseur : {supplier.phone ? <strong>{supplier.phone}</strong> : <span className="text-gray-400">non renseigné</span>}</p>}
+        {supplier &&
+          (phoneEdit !== null ? (
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label={`Téléphone de ${supplier.name}`}>
+                <Input type="tel" value={phoneEdit} onChange={(e) => setPhoneEdit(e.target.value)} placeholder="+229 …" autoFocus />
+              </Field>
+              <Button variant="secondary" disabled={!online} onClick={() => void savePhone()}>
+                Enregistrer
+              </Button>
+              <Button variant="ghost" onClick={() => setPhoneEdit(null)}>
+                ✕
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-600">
+              📞 Contact du fournisseur : {supplier.phone ? <strong>{supplier.phone}</strong> : <span className="text-gray-400">non renseigné</span>}{" "}
+              <button className="ml-1 text-blue-600 hover:underline" onClick={() => setPhoneEdit(supplier.phone ?? "")}>
+                Modifier
+              </button>
+            </p>
+          ))}
         {newSupplier ? (
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end rounded-xl bg-gray-50 p-3">
             <Field label="Nom du nouveau fournisseur">
@@ -829,7 +1024,7 @@ function ReceiptForm({
             Fermer
           </Button>
           <Button variant="success" onClick={save} loading={busy} disabled={!online || busy}>
-            Enregistrer l&apos;arrivage
+            {editId ? "Enregistrer les modifications" : "Enregistrer l'arrivage"}
           </Button>
         </div>
       </div>
