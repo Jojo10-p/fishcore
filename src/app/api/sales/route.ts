@@ -19,6 +19,7 @@ import { priceLines, settlePayments } from "@/lib/sales";
 import { consumeStockForSale, type BatchAllocation } from "@/lib/stock";
 import { nextCompanyNumber, resolveSessionNumber } from "@/lib/invoice-numbers";
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
+import { actorLabel, notifyManagers } from "@/lib/notify";
 
 
 // Lignes dans l'ordre de saisie (identifiants croissants)
@@ -335,6 +336,7 @@ export async function POST(req: NextRequest) {
     });
 
     scheduleStockAlerts(companyId);
+    notifySale(sale, user.id);
     return NextResponse.json({ success: true, data: sale }, { status: 201 });
   } catch (error) {
     // Deux envois simultanés de la même vente : la seconde échoue sur la clé
@@ -434,4 +436,50 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     return handleApiError(error, "SALES");
   }
+}
+
+// ─────────────────────────────────────────────
+// Alerte de vente : la direction voit chaque vente en direct (cloche + téléphone)
+// ─────────────────────────────────────────────
+const PAY_LABELS: Record<string, string> = {
+  CASH: "espèces",
+  MOBILE_MONEY: "mobile money",
+  CARD: "carte",
+  TRANSFER: "virement",
+  MIXED: "paiement mixte",
+  CREDIT: "crédit",
+};
+
+type CreatedSale = Prisma.SaleGetPayload<{ include: typeof saleInclude }>;
+
+function notifySale(sale: CreatedSale, actorId: string) {
+  notifyManagers({
+    companyId: sale.companyId,
+    centerId: sale.centerId,
+    actorId,
+    type: "SALE_MADE",
+    title: `Vente ${sale.saleNumber} — ${Number(sale.totalAmount).toLocaleString("fr-FR")} F`,
+    message: "",
+    link: "/ventes",
+    data: { saleId: sale.id, saleNumber: sale.saleNumber, total: Number(sale.totalAmount) },
+  }, async () => {
+    const [products, units, who] = await Promise.all([
+      prisma.product.findMany({ where: { id: { in: sale.lines.map((l) => l.productId) } }, select: { id: true, name: true } }),
+      prisma.unit.findMany({ where: { id: { in: sale.lines.map((l) => l.unitId).filter((u): u is string => !!u) } }, select: { id: true, symbol: true } }),
+      actorLabel(actorId),
+    ]);
+    const name = new Map(products.map((p) => [p.id, p.name]));
+    const sym = new Map(units.map((u) => [u.id, u.symbol]));
+    const detail = sale.lines
+      .map((l) => {
+        const q = Number(l.quantity).toLocaleString("fr-FR");
+        const u = l.unitId ? sym.get(l.unitId) : undefined;
+        const qty = u && /[½¼]/.test(u) ? `${q === "1" ? "" : `${q} × `}${u}` : `${q} ×`;
+        return `${qty} ${name.get(l.productId) ?? "article"}`;
+      })
+      .join(", ");
+    const pays = [...new Set(sale.payments.map((p) => PAY_LABELS[p.method] ?? p.method))].join(" + ");
+    const offline = sale.createdOffline ? " (vendue hors connexion)" : "";
+    return `${who} a vendu ${detail}. Total : ${Number(sale.totalAmount).toLocaleString("fr-FR")} F${pays ? ` en ${pays}` : ""}${offline}.`;
+  });
 }

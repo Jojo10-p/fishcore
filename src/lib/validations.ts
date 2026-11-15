@@ -106,7 +106,13 @@ export const passwordRule = z
   .regex(/[A-Z]/, "Au moins une majuscule")
   .regex(/[0-9]/, "Au moins un chiffre");
 
+export const changeEmailSchema = z.object({
+  password: z.string().min(1, "Mot de passe requis"),
+  newEmail: z.string().trim().toLowerCase().email("Email invalide"),
+});
+
 export const updateUserSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Email invalide").optional(),
   firstName: z.string().trim().min(1, "Prénom requis").optional(),
   lastName: z.string().trim().min(1, "Nom requis").optional(),
   phone: z.string().trim().max(30).nullable().optional(),

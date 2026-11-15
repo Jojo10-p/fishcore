@@ -35,8 +35,10 @@ const sell = async (qty: number, product = ctx.product) => {
   });
   assert.equal(r.status, 201, JSON.stringify(r.json));
   await waitForStockAlerts();
+  await waitForNotifications();
 };
-const take = () => sent.splice(0, sent.length);
+// Ici on suit les alertes de stock : les alertes de vente (testées ailleurs) sont écartées
+const take = () => sent.splice(0, sent.length).filter((x) => !String(x.payload.tag ?? "").startsWith("SALE_MADE"));
 const sub = (name: string) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${name}`, keys: { p256dh: "BPk" + "x".repeat(60), auth: "auth-" + name } });
 
 before(async () => {

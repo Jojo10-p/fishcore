@@ -12,6 +12,7 @@ import { getPendingSyncCount } from "@/lib/offline/sync";
 import { APP_NAME } from "@/lib/app-config";
 import { InstallAppButton } from "@/components/app/install-app";
 import { ChangePasswordButton } from "@/components/app/change-password";
+import { ChangeEmailButton } from "@/components/app/change-email";
 import { NotificationBell } from "@/components/app/notification-bell";
 import { boutiqueIcon } from "@/lib/boutiques";
 import { AddBoutiqueButton } from "@/components/app/add-boutique";
@@ -202,6 +203,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <p className="text-xs text-gray-500 truncate">{session.company?.tradeName}</p>
       </div>
       <InstallAppButton appName={appName} />
+      <ChangeEmailButton currentEmail={session.user.email} />
       <ChangePasswordButton />
       <button onClick={logout} disabled={loggingOut} className="w-full text-left text-sm text-red-600 hover:bg-red-50 rounded-lg px-3 py-2">
         {loggingOut ? "Déconnexion…" : "Se déconnecter"}

@@ -342,7 +342,7 @@ function EditUserModal({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const [form, setForm] = useState({ firstName: user.firstName, lastName: user.lastName, phone: user.phone ?? "", role: user.role });
+  const [form, setForm] = useState({ email: user.email, firstName: user.firstName, lastName: user.lastName, phone: user.phone ?? "", role: user.role });
   const [centerIds, setCenterIds] = useState<string[]>(user.centers.map((c) => c.center.id));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -384,9 +384,9 @@ function EditUserModal({
             Annuler
           </Button>
           <Button
-            onClick={() => send({ ...form, phone: form.phone || null, ...(self ? { role: undefined } : {}), ...(form.role === "COMPANY_OWNER" ? {} : { centerIds }) })}
+            onClick={() => send({ ...form, email: !self && form.email.trim().toLowerCase() !== user.email ? form.email : undefined, phone: form.phone || null, ...(self ? { role: undefined } : {}), ...(form.role === "COMPANY_OWNER" ? {} : { centerIds }) })}
             loading={busy}
-            disabled={!form.firstName || (form.role !== "COMPANY_OWNER" && centerIds.length === 0)}
+            disabled={!form.firstName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()) || (form.role !== "COMPANY_OWNER" && centerIds.length === 0)}
           >
             Enregistrer
           </Button>
@@ -394,7 +394,9 @@ function EditUserModal({
       }
     >
       {error && <Alert>{error}</Alert>}
-      <p className="text-sm text-gray-500">{user.email}</p>
+      <Field label="Adresse e-mail (pour se connecter)" hint={self ? "Pour votre propre adresse : menu « Changer mon adresse e-mail » (mot de passe demandé)." : "Il se connectera ensuite avec la nouvelle adresse, même mot de passe."}>
+        <Input type="email" value={form.email} onChange={set("email")} disabled={self} />
+      </Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Prénom">
           <Input value={form.firstName} onChange={set("firstName")} />

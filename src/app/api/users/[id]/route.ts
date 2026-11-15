@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 import { updateUserSchema } from "@/lib/validations";
-import { ApiError, getCurrentUser, handleApiError, parseBody, readJson, requireCompany, requirePermission } from "@/lib/auth";
+import { ApiError, getCurrentUser, handleApiError, isUniqueViolation, parseBody, readJson, requireCompany, requirePermission } from "@/lib/auth";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -20,7 +20,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
     const target = await prisma.user.findFirst({
       where: { id, companyId },
-      select: { id: true, role: true, isActive: true, firstName: true, lastName: true, phone: true, centers: { where: { isActive: true }, select: { centerId: true } } },
+      select: { id: true, email: true, role: true, isActive: true, firstName: true, lastName: true, phone: true, centers: { where: { isActive: true }, select: { centerId: true } } },
     });
     if (!target) throw new ApiError(404, "Utilisateur introuvable");
     const isOwner = user.role === "COMPANY_OWNER";
@@ -31,6 +31,9 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     if (target.id === user.id && (data.isActive === false || (data.role && data.role !== target.role))) {
       throw new ApiError(400, "Vous ne pouvez ni désactiver votre propre compte ni changer votre rôle", "SELF_CHANGE");
     }
+    const emailChange = data.email && data.email !== target.email ? data.email : undefined;
+    if (emailChange && target.id === user.id) throw new ApiError(400, "Changez votre propre adresse dans « Changer mon adresse e-mail » (mot de passe demandé)", "SELF_EMAIL");
+    if (emailChange && (await prisma.user.count({ where: { email: emailChange } }))) throw new ApiError(409, "Un compte avec cet email existe déjà", "EMAIL_TAKEN");
     // Un responsable n'agit que sur les employés de ses centres
     if (!isOwner && !target.centers.some((c) => user.centerIds.includes(c.centerId))) {
       throw new ApiError(403, "Ce compte n'est pas affecté à vos centres", "FORBIDDEN");
@@ -53,6 +56,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       const u = await tx.user.update({
         where: { id: target.id },
         data: {
+          ...(emailChange ? { email: emailChange } : {}),
           ...(data.firstName !== undefined ? { firstName: data.firstName } : {}),
           ...(data.lastName !== undefined ? { lastName: data.lastName } : {}),
           ...(data.phone !== undefined ? { phone: data.phone || null } : {}),
@@ -82,7 +86,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
           referenceType: "User",
           referenceId: target.id,
           result: "SUCCESS",
-          oldValues: { role: target.role, isActive: target.isActive, centerIds: target.centers.map((c) => c.centerId) },
+          oldValues: { ...(emailChange ? { email: target.email } : {}), role: target.role, isActive: target.isActive, centerIds: target.centers.map((c) => c.centerId) },
           newValues: { ...data, ...(centerIds ? { centerIds } : {}) },
           ipAddress: user.ipAddress,
           userAgent: user.userAgent,
@@ -93,6 +97,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     });
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
+    if (isUniqueViolation(error)) return NextResponse.json({ success: false, error: "Un compte avec cet email existe déjà" }, { status: 409 });
     return handleApiError(error, "USERS");
   }
 }

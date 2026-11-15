@@ -18,7 +18,8 @@ export type NotifyType =
   | "PRODUCT_CREATED"
   | "CANCEL_REQUESTED"
   | "CANCEL_DECIDED"
-  | "CASH_CLOSED";
+  | "CASH_CLOSED"
+  | "SALE_MADE";
 
 export interface NotifyInput {
   companyId: string;
@@ -89,10 +90,10 @@ async function deliver(n: NotifyInput): Promise<void> {
 const pending = new Set<Promise<void>>();
 
 /** Envoie après la réponse (l'action n'attend pas les notifications). */
-export function notifyManagers(n: NotifyInput): void {
+export function notifyManagers(n: NotifyInput, buildMessage?: () => Promise<string>): void {
   const job = async () => {
     try {
-      await deliver(n);
+      await deliver(buildMessage ? { ...n, message: await buildMessage() } : n);
     } catch (e) {
       console.error("[notify]", e);
     }

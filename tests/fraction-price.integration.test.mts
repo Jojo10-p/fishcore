@@ -90,3 +90,34 @@ test("vendre un ½ L et un ¼ L : leur prix, et le stock baisse de 0,75 L", asyn
   const st = await prisma.stock.findFirstOrThrow({ where: { productId: ctx.product } });
   assert.equal(Number(st.quantity), 49.25);
 });
+
+test("alerte de vente : le patron reçoit la vente du caissier en direct", async () => {
+  const usersRoute = await import("@/app/api/users/route");
+  const u = await call(usersRoute.POST, { path: "/api/users", cookie: ctx.owner, body: { email: "caisse@test.bj", password: "Motdepasse1", firstName: "Samson", lastName: "Test", role: "CASHIER", centerIds: [ctx.center] } });
+  assert.equal(u.status, 201, JSON.stringify(u.json));
+  const cashier = await login("caisse@test.bj");
+  const reg = await prisma.cashRegister.create({ data: { centerId: ctx.center, name: "Caisse 2" } });
+  const s = await call(cashRoute.POST, { path: "/api/cash/sessions", cookie: cashier, body: { action: "open", cashRegisterId: reg.id, openingBalance: 0 } });
+  assert.equal(s.status, 201, JSON.stringify(s.json));
+  const r = await call(salesRoute.POST, {
+    path: "/api/sales",
+    cookie: cashier,
+    body: {
+      sessionId: s.json.data.id,
+      idempotencyKey: randomUUID(),
+      lines: [
+        { productId: ctx.product, unitId: ctx.half, quantity: 1, unitPrice: 400 },
+        { productId: ctx.product, quantity: 2, unitPrice: 750 },
+      ],
+      payments: [{ method: "MOBILE_MONEY", amount: 1900 }],
+    },
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.json));
+  await waitForNotifications();
+  const owner = await prisma.user.findFirstOrThrow({ where: { email: "direction@test.bj" } });
+  const n = await prisma.notification.findFirstOrThrow({ where: { userId: owner.id, type: "SALE_MADE" } });
+  assert.match(n.title, /1\s900 F/);
+  assert.match(n.message, /Samson \(Caissier\) a vendu ½ L VIGO — 25 L, 2 × VIGO — 25 L\. Total : 1\s900 F en mobile money\./);
+  const cashierId = (await prisma.user.findFirstOrThrow({ where: { email: "caisse@test.bj" } })).id;
+  assert.equal(await prisma.notification.count({ where: { userId: cashierId, type: "SALE_MADE" } }), 0);
+});
