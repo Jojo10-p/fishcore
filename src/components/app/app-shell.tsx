@@ -14,6 +14,7 @@ import { InstallAppButton } from "@/components/app/install-app";
 import { ChangePasswordButton } from "@/components/app/change-password";
 import { NotificationBell } from "@/components/app/notification-bell";
 import { boutiqueIcon } from "@/lib/boutiques";
+import { AddBoutiqueButton } from "@/components/app/add-boutique";
 
 interface NavItem {
   href: string;
@@ -178,13 +179,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {c.name}
             </button>
           ))}
+          <AddBoutiqueButton />
         </div>
       </div>
     ) : session.centers[0] ? (
-      <p className="px-1 text-sm font-semibold text-gray-800">
-        {boutiqueIcon(session.centers[0].name)} {session.centers[0].name}
-      </p>
-    ) : null;
+      <div className="space-y-2">
+        <p className="px-1 text-sm font-semibold text-gray-800">
+          {boutiqueIcon(session.centers[0].name)} {session.centers[0].name}
+        </p>
+        <AddBoutiqueButton />
+      </div>
+    ) : (
+      <AddBoutiqueButton />
+    );
 
   const userBox = (
     <div className="border-t border-gray-200 pt-4 mt-4 space-y-3">

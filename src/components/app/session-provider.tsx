@@ -7,7 +7,7 @@ import { getBusinessProfile, type BusinessProfile } from "@/lib/business-profile
 import { applyBrand } from "@/lib/client/brand";
 
 export interface SessionData {
-  user: { id: string; email: string; firstName: string; lastName: string; role: string; avatarUrl?: string | null };
+  user: { id: string; email: string; firstName: string; lastName: string; role: string; avatarUrl?: string | null; isSuperAdmin?: boolean };
   company: {
     id: string;
     tradeName: string;

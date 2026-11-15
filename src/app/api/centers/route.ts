@@ -1,3 +1,4 @@
+import { ownerRoleLocked } from "@/lib/super-admin";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { centerSchema } from "@/lib/validations";
@@ -66,6 +67,11 @@ export async function POST(req: NextRequest) {
     await requirePermission(user, "center:create");
     const companyId = requireCompany(user);
     const data = parseBody(centerSchema, await readJson(req));
+    // Seul le super administrateur ouvre une nouvelle boutique
+    if ((await ownerRoleLocked(companyId)) && !(await prisma.user.count({ where: { id: user.id, isSuperAdmin: true } }))) {
+      throw new ApiError(403, "Seul le super administrateur peut ouvrir une nouvelle boutique", "FORBIDDEN");
+    }
+    const code = data.code ?? (await freeCenterCode(companyId, data.name));
 
     if (data.managerId) {
       const manager = await prisma.user.findFirst({
@@ -80,7 +86,7 @@ export async function POST(req: NextRequest) {
         data: {
           companyId,
           name: data.name,
-          code: data.code,
+          code,
           address: data.address,
           city: data.city,
           phone: data.phone,
@@ -130,4 +136,18 @@ export async function POST(req: NextRequest) {
     }
     return handleApiError(error, "CENTERS");
   }
+}
+
+/** Code interne unique tiré du nom : « Abomey-Calavi » → ABOMEY, puis ABOMEY2… */
+async function freeCenterCode(companyId: string, name: string): Promise<string> {
+  const base =
+    name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 6) || "BOUT";
+  const taken = new Set((await prisma.center.findMany({ where: { companyId, code: { startsWith: base } }, select: { code: true } })).map((c) => c.code));
+  if (!taken.has(base)) return base;
+  for (let i = 2; ; i++) if (!taken.has(`${base}${i}`)) return `${base}${i}`;
 }

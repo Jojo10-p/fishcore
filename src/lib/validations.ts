@@ -60,11 +60,13 @@ export const companySchema = z.object({
 
 export const centerSchema = z.object({
   name: z.string().min(2, "Nom du centre requis"),
+  // Facultatif : tiré du nom s'il manque (« Cotonou » → COTONO)
   code: z
     .string()
     .min(2, "Code requis")
     .max(10, "Code trop long")
-    .regex(/^[A-Z0-9_-]+$/, "Code : lettres majuscules, chiffres, tirets uniquement"),
+    .regex(/^[A-Z0-9_-]+$/, "Code : lettres majuscules, chiffres, tirets uniquement")
+    .optional(),
   address: z.string().optional(),
   city: z.string().optional(),
   phone: z.string().optional(),

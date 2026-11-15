@@ -108,3 +108,16 @@ test("trop de mauvais codes : bloqué une heure", async () => {
   const r = await call(checkRoute.POST, { path: "/api/auth/setup/check", body: { email: ADMIN, code: CODE } });
   assert.equal(r.status, 429);
 });
+
+test("le super admin ouvre d'autres boutiques (code tiré du nom), chacune avec sa caisse", async () => {
+  const a = await call(centersRoute.POST, { path: "/api/centers", cookie: ctx.admin, body: { name: "Cotonou", city: "Cotonou" } });
+  assert.equal(a.status, 201, JSON.stringify(a.json));
+  const b = await call(centersRoute.POST, { path: "/api/centers", cookie: ctx.admin, body: { name: "Cotonou" } });
+  assert.equal(b.status, 201, JSON.stringify(b.json));
+  const centers = await prisma.center.findMany({ where: { name: "Cotonou" }, select: { code: true, cashRegisters: { select: { name: true } } }, orderBy: { createdAt: "asc" } });
+  assert.deepEqual(centers.map((c) => c.code), ["COTONO", "COTONO2"]);
+  assert.ok(centers.every((c) => c.cashRegisters.length === 1));
+  const me = await call(meRoute.GET, { path: "/api/auth/me", cookie: ctx.admin });
+  assert.equal(me.json.data.user.isSuperAdmin, true);
+  assert.ok(me.json.data.centers.length >= 3);
+});

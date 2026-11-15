@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
         lastName: true,
         role: true,
         avatarUrl: true,
+        isSuperAdmin: true,
         company: {
           select: { id: true, tradeName: true, appName: true, logoUrl: true, currency: true, timezone: true, businessType: true, vatEnabled: true, requiresPickup: true, invoiceFormat: true },
         },
@@ -41,6 +42,7 @@ export async function GET(req: NextRequest) {
           lastName: user.lastName,
           role: user.role,
           avatarUrl: user.avatarUrl,
+          isSuperAdmin: user.isSuperAdmin,
         },
         company: user.company,
         centers,

@@ -1,5 +1,6 @@
 "use client";
 
+import { AddBoutiqueButton } from "@/components/app/add-boutique";
 import { boutiqueIcon } from "@/lib/boutiques";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -111,7 +112,7 @@ export default function DashboardPage() {
         actions={
           <>
             {(session?.centers.length ?? 0) > 1 && can("sale:view_all") && (
-              // Le boss choisit le tableau de bord d'une boutique, ou les deux ensemble
+              // Le boss choisit le tableau de bord d'une boutique, ou la vue d'ensemble
               <div className="inline-flex flex-wrap rounded-xl border border-gray-300 bg-white p-1 text-sm">
                 {session!.centers.map((c) => (
                   <button
@@ -131,10 +132,11 @@ export default function DashboardPage() {
                   onClick={() => setConsolidated(true)}
                   className={`rounded-lg px-3 py-1.5 font-medium ${consolidated ? "bg-blue-600 text-white" : "text-gray-700 hover:bg-gray-100"}`}
                 >
-                  Les deux
+                  Vue d&apos;ensemble
                 </button>
               </div>
             )}
+            <AddBoutiqueButton className="rounded-xl border border-dashed border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50" />
             <Input type="date" aria-label="Date" value={date} onChange={(e) => setDate(e.target.value)} className="w-auto" />
           </>
         }
