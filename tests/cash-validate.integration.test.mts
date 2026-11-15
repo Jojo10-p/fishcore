@@ -93,16 +93,19 @@ test("le caissier ne valide pas sa propre caisse ; le gérant dit « oui, c'est 
   assert.equal(await prisma.notification.count({ where: { userId: cashier.id, type: "CASH_VALIDATED" } }), 1);
 });
 
-test("la caisse du gérant : validée par la direction, pas par lui-même", async () => {
-  const self = await call(cashRoute.POST, { path: "/api/cash/sessions", cookie: ctx.manager, body: { action: "validate", sessionId: ctx.managerSession } });
-  assert.equal(self.status, 403);
-  const ok = await call(cashRoute.POST, { path: "/api/cash/sessions", cookie: ctx.owner, body: { action: "validate", sessionId: ctx.managerSession } });
-  assert.equal(ok.status, 200);
+test("le gérant clôture : validée d'office, la direction reçoit une simple information", async () => {
+  const s = await prisma.cashSession.findUniqueOrThrow({ where: { id: ctx.managerSession } });
+  assert.equal(s.isValidated, true);
+  await waitForNotifications();
+  const owner = await prisma.user.findFirstOrThrow({ where: { email: "direction@test.bj" } });
+  const n = await prisma.notification.findFirstOrThrow({ where: { userId: owner.id, type: "CASH_CLOSED", data: { path: ["sessionId"], equals: ctx.managerSession } } });
+  assert.equal(n.title, "Caisse clôturée — Paul");
+  assert.match(n.message, /^Paul \(Gérant\) a clôturé la caisse : 750 F encaissés/);
+  assert.doesNotMatch(n.message, /valid/);
 });
 
-test("la direction peut valider sa propre caisse (personne au-dessus)", async () => {
+test("la direction clôture : validée d'office aussi", async () => {
   const reg3 = (await prisma.cashRegister.create({ data: { centerId: ctx.center, name: "Caisse 3" } })).id;
   const id = await openAndSell(ctx.owner, reg3);
-  const ok = await call(cashRoute.POST, { path: "/api/cash/sessions", cookie: ctx.owner, body: { action: "validate", sessionId: id } });
-  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  assert.equal((await prisma.cashSession.findUniqueOrThrow({ where: { id } })).isValidated, true);
 });

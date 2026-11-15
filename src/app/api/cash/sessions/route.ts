@@ -144,6 +144,9 @@ export async function POST(req: NextRequest) {
         throw new ApiError(403, "Vous ne pouvez clôturer que votre propre session", "FORBIDDEN");
       }
       if (session.closedAt) throw new ApiError(409, "Session déjà clôturée", "ALREADY_CLOSED");
+      // Le gérant ou la direction qui clôture : c'est clôturé et validé d'office.
+      // Seule la caisse d'un caissier attend le « Oui, c'est bon » du gérant ou de la direction.
+      const autoValidated = hasPermission(user.role, "cash:close_session_validate");
 
       const result = await prisma.$transaction(async (tx) => {
         // Fige la session : plus aucune vente ne peut s'y rattacher pendant le calcul
@@ -164,6 +167,7 @@ export async function POST(req: NextRequest) {
             theoreticalBalance: totals.theoreticalBalance,
             discrepancy,
             notes,
+            ...(autoValidated ? { isValidated: true, validatedById: user.id } : {}),
           },
         });
 
@@ -183,6 +187,7 @@ export async function POST(req: NextRequest) {
             discrepancy,
             cashierId: session.cashierId,
             notes,
+            ...(autoValidated ? { validatedById: user.id } : {}),
           },
         });
 
@@ -229,6 +234,7 @@ export async function POST(req: NextRequest) {
               discrepancy: discrepancy.toString(),
               invoicesNumbered: numbers.used,
               invoiceNumbersReturned: numbers.returned.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(", "),
+              ...(autoValidated ? { validated: "automatiquement (clôturée par le gérant ou la direction)" } : {}),
             },
             sessionId,
             ...meta,
@@ -246,8 +252,12 @@ export async function POST(req: NextRequest) {
         centerId: session.cashRegister.centerId,
         actorId: user.id,
         type: "CASH_CLOSED",
-        title: `Caisse clôturée — ${journal?.journal.cashier.firstName ?? ""} · à valider`,
-        message: `${await actorLabel(session.cashierId)} : ${journal?.journal.salesCount ?? 0} vente(s), ${Number(result.totalSales).toLocaleString("fr-FR")} F encaissés. Écart : ${Number(result.discrepancy).toLocaleString("fr-FR")} F. Ouvrez le journal et validez si c'est bon.`,
+        title: autoValidated
+          ? `Caisse clôturée — ${journal?.journal.cashier.firstName ?? ""}`.trim()
+          : `Caisse clôturée — ${journal?.journal.cashier.firstName ?? ""} · à valider`,
+        message: autoValidated
+          ? `${await actorLabel(user.id)} a clôturé la caisse : ${Number(result.totalSales).toLocaleString("fr-FR")} F encaissés (${journal?.journal.salesCount ?? 0} vente(s)). Écart : ${Number(result.discrepancy).toLocaleString("fr-FR")} F.`
+          : `${await actorLabel(session.cashierId)} : ${journal?.journal.salesCount ?? 0} vente(s), ${Number(result.totalSales).toLocaleString("fr-FR")} F encaissés. Écart : ${Number(result.discrepancy).toLocaleString("fr-FR")} F. Ouvrez le journal et validez si c'est bon.`,
         link: `/caisses?journal=${sessionId}`,
         data: { sessionId, totalSales: result.totalSales.toString(), discrepancy: result.discrepancy.toString() },
       });
