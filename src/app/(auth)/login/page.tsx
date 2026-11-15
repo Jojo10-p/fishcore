@@ -13,7 +13,7 @@ interface LoginForm {
   password: string;
 }
 
-type Step = "email" | "password" | "code";
+type Step = "email" | "password" | "setup";
 
 function LoginForm() {
   const router = useRouter();
@@ -27,7 +27,6 @@ function LoginForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState<Step>("email");
   const [code, setCode] = useState("");
-  const [wait, setWait] = useState(0);
   // Application installée par une entreprise : on garde son nom et son logo
   useEffect(() => {
     const t = setTimeout(() => {
@@ -36,17 +35,10 @@ function LoginForm() {
     }, 0);
     return () => clearTimeout(t);
   }, []);
-  // Délai avant de pouvoir redemander un code
-  useEffect(() => {
-    if (wait <= 0) return;
-    const t = setTimeout(() => setWait((w) => w - 1), 1000);
-    return () => clearTimeout(t);
-  }, [wait]);
 
   const {
     register,
     handleSubmit,
-    getValues,
     formState: { errors },
   } = useForm<LoginForm>();
 
@@ -65,48 +57,30 @@ function LoginForm() {
     return { ok: res.ok, result: await res.json().catch(() => ({})) };
   };
 
-  /** 1re étape : l'adresse décide entre code par e-mail et mot de passe */
-  const askCode = async (email: string) => {
-    const { ok, result } = await post("/api/auth/code/request", { email });
-    if (result?.data?.mode === "password") {
-      setStep("password");
-      return;
-    }
-    if (result?.data?.mode === "code") {
-      setStep("code");
-      setWait(result.data.wait ?? 60);
-    }
-    if (!ok || !result.success) setError(result.error ?? "Erreur de connexion");
+  /** 1re étape : tant que le super administrateur n'existe pas, on demande le code d'installation */
+  const start = async (email: string) => {
+    const { ok, result } = await post("/api/auth/start", { email });
+    if (!ok || !result.success) return setError(result.error ?? "Erreur de connexion");
+    setStep(result.data.mode === "setup" ? "setup" : "password");
   };
 
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true);
     setError(null);
     try {
-      if (step === "email") return await askCode(data.email);
-      if (step === "code") {
-        const { ok, result } = await post("/api/auth/code/verify", { email: data.email, code });
-        if (!ok || !result.success) return setError(result.error ?? "Code invalide");
-        return finish(result);
+      if (step === "email") return await start(data.email);
+      if (step === "setup") {
+        const { ok, result } = await post("/api/auth/setup/check", { email: data.email, code });
+        if (!ok || !result.success) return setError(result.error ?? "Code incorrect");
+        // Le code reste dans cet onglet le temps de choisir le mot de passe
+        sessionStorage.setItem("fishcore-setup", JSON.stringify({ email: data.email, code, mode: result.data.mode }));
+        return router.push("/installation");
       }
       const { ok, result } = await post("/api/auth/login", data);
-      if (!ok || !result.success) {
-        if (result.code === "USE_EMAIL_CODE") return await askCode(data.email);
-        return setError(result.error ?? "Erreur de connexion");
-      }
+      if (!ok || !result.success) return setError(result.error ?? "Erreur de connexion");
       finish(result);
     } catch {
       setError("Impossible de se connecter. Vérifiez votre connexion Internet.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const resend = async () => {
-    setError(null);
-    setIsLoading(true);
-    try {
-      await askCode(getValues("email"));
     } finally {
       setIsLoading(false);
     }
@@ -205,40 +179,38 @@ function LoginForm() {
                   Mot de passe oublié ?
                 </Link>
               </div>
+              <div className="mt-1 text-right">
+                <button type="button" onClick={() => setStep("setup")} className="text-xs text-gray-500 hover:underline">
+                  Super administrateur : nouveau mot de passe avec le code d&apos;installation
+                </button>
+              </div>
             </div>
           )}
 
-          {/* Code reçu par e-mail (super administrateur) */}
-          {step === "code" && (
+          {/* Code d'installation (1re connexion du super administrateur) */}
+          {step === "setup" && (
             <div>
-              <p className="mb-3 rounded-xl bg-blue-50 p-3 text-sm text-blue-800">
-                Un code à 8 caractères vient d&apos;être envoyé à cette adresse. Il est valable 10 minutes.
+              <p className="mb-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+                Entrez le code d&apos;installation qui vous a été remis. Il fait de vous le super administrateur.
               </p>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Code reçu par e-mail</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Code d&apos;installation</label>
               <input
-                type="text"
-                inputMode="text"
-                autoComplete="one-time-code"
-                autoCapitalize="characters"
+                type="password"
+                inputMode="tel"
+                autoComplete="off"
                 autoFocus
-                maxLength={9}
-                placeholder="XXXX XXXX"
+                maxLength={40}
                 value={code}
-                onChange={(e) => setCode(e.target.value.toUpperCase())}
+                onChange={(e) => setCode(e.target.value)}
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl text-center text-xl font-bold tracking-[0.3em] focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <div className="mt-1.5 text-right">
-                <button type="button" onClick={() => void resend()} disabled={wait > 0 || isLoading} className="text-xs text-blue-600 hover:underline disabled:text-gray-400 disabled:no-underline">
-                  {wait > 0 ? `Renvoyer le code (${wait} s)` : "Renvoyer le code"}
-                </button>
-              </div>
             </div>
           )}
 
           {/* Bouton connexion */}
           <button
             type="submit"
-            disabled={isLoading || (step === "code" && code.replace(/[^A-Z0-9]/g, "").length < 8)}
+            disabled={isLoading || (step === "setup" && code.trim().length < 4)}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold rounded-xl transition-colors text-sm shadow-sm"
           >
             {isLoading ? (
@@ -251,6 +223,8 @@ function LoginForm() {
               </span>
             ) : step === "email" ? (
               "Continuer"
+            ) : step === "setup" ? (
+              "Valider le code"
             ) : (
               "Se connecter"
             )}

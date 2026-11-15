@@ -5,7 +5,6 @@ import bcrypt from "bcryptjs";
 import { loginSchema } from "@/lib/validations";
 import { writeAuditLog } from "@/lib/audit";
 import { getJwtSecret, SESSION_COOKIE, SESSION_DURATION_MS } from "@/lib/secrets";
-import { isSuperAdminEmail } from "@/lib/super-admin";
 import { hashSessionToken, requestMeta } from "@/lib/auth";
 
 // Hash factice : compare un mot de passe même quand l'email est inconnu,
@@ -28,11 +27,6 @@ export async function POST(req: NextRequest) {
 
     const email = parsed.data.email.trim().toLowerCase();
     const { password } = parsed.data;
-
-    // Le super administrateur se connecte uniquement avec un code reçu par e-mail
-    if (isSuperAdminEmail(email)) {
-      return NextResponse.json({ success: false, error: "Cette adresse se connecte avec un code reçu par e-mail.", code: "USE_EMAIL_CODE" }, { status: 400 });
-    }
 
     // Trouver l'utilisateur
     const user = await prisma.user.findUnique({

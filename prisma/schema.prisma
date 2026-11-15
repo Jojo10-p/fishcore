@@ -372,6 +372,8 @@ model User {
 
   email        String   @unique
   passwordHash String
+  /// Super administrateur unique (créé avec le code d'installation)
+  isSuperAdmin Boolean  @default(false)
   firstName    String
   lastName     String
   phone        String?
@@ -1566,18 +1568,14 @@ model ProductSuggestion {
   @@map("product_suggestions")
 }
 
-/// Code à usage unique envoyé par e-mail (connexion du super administrateur, sans mot de passe)
-model LoginCode {
-  id        String    @id @default(cuid())
-  createdAt DateTime  @default(now())
+/// Essais du code d'installation (protège contre les essais en rafale)
+model SetupAttempt {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
   email     String
-  /// Empreinte HMAC du code (jamais le code en clair)
-  codeHash  String
-  expiresAt DateTime
-  attempts  Int       @default(0)
-  usedAt    DateTime?
+  success   Boolean  @default(false)
   ipAddress String?
 
-  @@index([email, createdAt])
-  @@map("login_codes")
+  @@index([createdAt])
+  @@map("setup_attempts")
 }

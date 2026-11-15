@@ -3,16 +3,15 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 import { passwordResetSchema } from "@/lib/validations";
-import { isSuperAdminEmail } from "@/lib/super-admin";
 import { hashResetToken } from "@/lib/password-reset";
 import { ApiError, handleApiError, parseBody, readJson, requestMeta } from "@/lib/auth";
 
 async function findValid(token: string) {
   const row = await prisma.passwordResetToken.findUnique({
     where: { tokenHash: hashResetToken(token) },
-    include: { user: { select: { id: true, email: true, firstName: true, isActive: true, companyId: true, company: { select: { tradeName: true } } } } },
+    include: { user: { select: { id: true, firstName: true, isActive: true, companyId: true, company: { select: { tradeName: true } } } } },
   });
-  if (!row || row.usedAt || row.expiresAt < new Date() || !row.user.isActive || isSuperAdminEmail(row.user.email)) {
+  if (!row || row.usedAt || row.expiresAt < new Date() || !row.user.isActive) {
     throw new ApiError(400, "Ce lien n'est plus valable : demandez-en un nouveau à votre responsable", "RESET_LINK_INVALID");
   }
   return row;

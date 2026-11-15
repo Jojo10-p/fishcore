@@ -1,72 +1,52 @@
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
-import { getJwtSecret } from "@/lib/secrets";
 
 // ─────────────────────────────────────────────
-// Super administrateur unique : connexion par code reçu par e-mail
+// Super administrateur unique, créé avec le code d'installation
 // ─────────────────────────────────────────────
-// L'adresse est fixée par SUPER_ADMIN_EMAIL. Elle seule se connecte sans
-// mot de passe et reçoit le rôle de propriétaire (COMPANY_OWNER) de
-// l'entreprise ; personne ne peut lui retirer ce rôle ni créer un autre
-// propriétaire.
+// Tant qu'il n'existe pas, la première adresse qui se connecte doit saisir le
+// code d'installation (connu seulement du responsable). Elle devient alors le
+// super administrateur (direction), choisit son mot de passe et renseigne
+// l'entreprise. Ensuite : connexion normale e-mail + mot de passe. Le même code
+// permet au super administrateur de redéfinir son mot de passe s'il l'oublie.
+// Le code n'est jamais stocké en clair : SETUP_CODE_HASH = sha256(code) en hex.
 
-export const CODE_LENGTH = 8;
-export const CODE_TTL_MIN = 10;
-export const CODE_MAX_ATTEMPTS = 5;
-export const CODE_RESEND_SECONDS = 60;
-export const CODE_MAX_PER_HOUR = 6;
-// Sans caractères ambigus (0/O, 1/I/L)
-const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+export const SETUP_MAX_FAILS_PER_HOUR = 10;
 
-export function superAdminEmail(): string | null {
-  const v = process.env.SUPER_ADMIN_EMAIL?.trim().toLowerCase();
-  return v || null;
+export const normalizeSetupCode = (code: string) => code.replace(/\s+/g, "");
+
+export function setupCodeConfigured(): boolean {
+  return /^[0-9a-f]{64}$/i.test(process.env.SETUP_CODE_HASH?.trim() ?? "");
 }
 
-export function isSuperAdminEmail(email: string | null | undefined): boolean {
-  const admin = superAdminEmail();
-  return !!admin && !!email && email.trim().toLowerCase() === admin;
+export function checkSetupCode(code: string): boolean {
+  if (!setupCodeConfigured()) return false;
+  const want = Buffer.from(process.env.SETUP_CODE_HASH!.trim().toLowerCase(), "hex");
+  const got = crypto.createHash("sha256").update(normalizeSetupCode(code)).digest();
+  return want.length === got.length && crypto.timingSafeEqual(want, got);
 }
 
-export function generateCode(): string {
-  const bytes = crypto.randomBytes(CODE_LENGTH);
-  let s = "";
-  for (let i = 0; i < CODE_LENGTH; i++) s += ALPHABET[bytes[i] % ALPHABET.length];
-  return s;
+export async function superAdmin() {
+  return prisma.user.findFirst({ where: { isSuperAdmin: true }, select: { id: true, email: true, companyId: true, isActive: true } });
 }
 
-/** Saisie tolérante : espaces, tirets et minuscules ignorés. */
-export const normalizeCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g, "");
-
-export function hashCode(email: string, code: string): string {
-  return crypto.createHmac("sha256", getJwtSecret()).update(`${email.toLowerCase()}:${normalizeCode(code)}`).digest("hex");
+/** Trop d'essais ratés dans l'heure : on bloque (protège contre les essais en rafale). */
+export async function setupLocked(): Promise<boolean> {
+  const fails = await prisma.setupAttempt.count({ where: { success: false, createdAt: { gte: new Date(Date.now() - 3600_000) } } });
+  return fails >= SETUP_MAX_FAILS_PER_HOUR;
 }
 
-export function sameHash(a: string, b: string): boolean {
-  const x = Buffer.from(a, "hex");
-  const y = Buffer.from(b, "hex");
-  return x.length === y.length && crypto.timingSafeEqual(x, y);
+/** Vérifie le code et garde une trace de l'essai. */
+export async function verifySetupCode(email: string, code: string, ipAddress?: string | null): Promise<"ok" | "bad" | "locked"> {
+  if (await setupLocked()) return "locked";
+  const ok = checkSetupCode(code);
+  await prisma.setupAttempt.create({ data: { email, success: ok, ipAddress: ipAddress ?? null } });
+  return ok ? "ok" : "bad";
 }
 
-/** Entreprise du super admin : SUPER_ADMIN_COMPANY_ID, sinon la plus ancienne entreprise active. */
-export async function superAdminCompanyId(): Promise<string | null> {
-  const id = process.env.SUPER_ADMIN_COMPANY_ID?.trim();
-  if (id) return id;
-  const c = await prisma.company.findFirst({ where: { isActive: true }, orderBy: { createdAt: "asc" }, select: { id: true } });
-  return c?.id ?? null;
+/** Un super administrateur existe dans cette entreprise : le rôle de direction ne s'attribue plus. */
+export async function ownerRoleLocked(companyId: string): Promise<boolean> {
+  return (await prisma.user.count({ where: { companyId, isSuperAdmin: true } })) > 0;
 }
 
-export const formatCode = (code: string) => `${code.slice(0, 4)} ${code.slice(4)}`;
-
-export function codeMail(code: string, appName: string) {
-  const pretty = formatCode(code);
-  return {
-    subject: `${pretty} — votre code de connexion ${appName}`,
-    text: `Votre code de connexion : ${pretty}\n\nIl est valable ${CODE_TTL_MIN} minutes et ne sert qu'une fois.\nSi vous n'avez pas demandé ce code, ignorez ce message.`,
-    html: `<div style="font-family:Arial,sans-serif;max-width:420px;margin:auto;padding:24px;color:#111">
-<p style="font-size:15px">Votre code de connexion à <b>${appName}</b> :</p>
-<p style="font-size:34px;font-weight:bold;letter-spacing:6px;text-align:center;background:#F3F4F6;border-radius:12px;padding:18px 0;margin:18px 0">${pretty}</p>
-<p style="font-size:13px;color:#555">Valable ${CODE_TTL_MIN} minutes, une seule fois. Si vous n'avez pas demandé ce code, ignorez ce message.</p>
-</div>`,
-  };
-}
+export const SINGLE_OWNER_MSG = "Il n'y a qu'un seul super administrateur : ce rôle ne peut pas être attribué";

@@ -1,4 +1,4 @@
-import { superAdminEmail } from "@/lib/super-admin";
+import { ownerRoleLocked, SINGLE_OWNER_MSG } from "@/lib/super-admin";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
@@ -24,7 +24,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     });
     if (!target) throw new ApiError(404, "Utilisateur introuvable");
     const isOwner = user.role === "COMPANY_OWNER";
-    if (superAdminEmail() && data.role === "COMPANY_OWNER" && target.role !== "COMPANY_OWNER") throw new ApiError(403, "Il n'y a qu'un seul super administrateur : ce rôle ne peut pas être attribué", "SINGLE_OWNER");
+    if (data.role === "COMPANY_OWNER" && target.role !== "COMPANY_OWNER" && (await ownerRoleLocked(companyId))) throw new ApiError(403, SINGLE_OWNER_MSG, "SINGLE_OWNER");
     if (!isOwner && (target.role === "COMPANY_OWNER" || data.role === "COMPANY_OWNER")) {
       throw new ApiError(403, "Seul le propriétaire peut modifier un compte propriétaire", "FORBIDDEN");
     }
