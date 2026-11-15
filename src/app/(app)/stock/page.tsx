@@ -2,6 +2,7 @@
 
 import { matchesSearch } from "@/lib/search-aliases";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "@/components/app/session-provider";
@@ -77,6 +78,7 @@ function StockPage() {
   const [show, setShow] = useState<"all" | "in" | "out">("all");
   const [details, setDetails] = useState(false);
   const [editing, setEditing] = useState<Overview | null>(null);
+  const [printing, setPrinting] = useState(false);
   const [removing, setRemoving] = useState<Overview | null>(null);
   // Modifier / supprimer le stock : direction et gérant (le serveur revérifie)
   const canEdit = session?.user.role === "COMPANY_OWNER" || session?.user.role === "CENTER_MANAGER";
@@ -116,9 +118,29 @@ function StockPage() {
 
   return (
     <>
-      <PageHeader title={alertOnly ? "Stocks en alerte" : "Stock"} description={centerName ? `Centre : ${centerName}` : undefined} />
+      <PageHeader
+        title={alertOnly ? "Stocks en alerte" : "Stock"}
+        description={centerName ? `Centre : ${centerName}` : undefined}
+        actions={
+          !alertOnly && overview && overview.length > 0 ? (
+            <Button variant="secondary" onClick={() => setPrinting(true)}>
+              🖨️ Imprimer le stock
+            </Button>
+          ) : undefined
+        }
+      />
+      {printing && overview && (
+        <PrintStockModal
+          items={overview}
+          boutique={centerName ?? ""}
+          company={session?.company?.tradeName ?? ""}
+          by={session ? `${session.user.firstName} ${session.user.lastName}`.trim() : ""}
+          currency={session?.company?.currency ?? "XOF"}
+          onClose={() => setPrinting(false)}
+        />
+      )}
       <div className="flex flex-col sm:flex-row gap-3 mb-4">
-        <Input placeholder="Rechercher (désignation, marque, catégorie)" value={search} onChange={(e) => setSearch(e.target.value)} className="sm:max-w-sm" />
+        <Input type="search" placeholder="🔍 Rechercher un article (ex. VIGO, CHAMPION 20W50, ORYX)" value={search} onChange={(e) => setSearch(e.target.value)} className="sm:max-w-lg" />
         {riskCount > 0 && (
           <label className="inline-flex items-center gap-2 text-sm text-amber-800">
             <input type="checkbox" checked={onlyExpiry} onChange={(e) => setOnlyExpiry(e.target.checked)} />
@@ -655,5 +677,201 @@ function DeleteItemModal({ item, centerId, onClose, onDone }: { item: Overview; 
         </Field>
       </div>
     </Modal>
+  );
+}
+
+// ── Impression du stock (A4, classé par marque, par nom ou par quantité) ──────
+
+type PrintSort = "brand" | "name" | "qty";
+type PrintShow = "all" | "in" | "out";
+
+function PrintStockModal({ items, boutique, company, by, currency, onClose }: { items: Overview[]; boutique: string; company: string; by: string; currency: string; onClose: () => void }) {
+  const [sort, setSort] = useState<PrintSort>("brand");
+  const [show, setShow] = useState<PrintShow>("all");
+  const [buyPrice, setBuyPrice] = useState(true);
+  const list = items.filter((i) => show === "all" || (show === "in" ? i.quantity > 0 : i.quantity <= 0));
+  const print = () => {
+    const before = document.title;
+    const d = new Date();
+    document.title = `Stock ${boutique} ${d.toLocaleDateString("fr-FR").replace(/\//g, "-")}`;
+    window.print();
+    document.title = before;
+  };
+  return (
+    <>
+      <Modal
+        open
+        title="Imprimer le stock"
+        onClose={onClose}
+        footer={
+          <>
+            <Button variant="secondary" onClick={onClose}>
+              Fermer
+            </Button>
+            <Button onClick={print} disabled={list.length === 0}>
+              🖨️ Imprimer ({list.length} article{list.length > 1 ? "s" : ""})
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Field label="Classer">
+            <Select value={sort} onChange={(e) => setSort(e.target.value as PrintSort)}>
+              <option value="brand">Par marque (A → Z), formats regroupés</option>
+              <option value="name">Par nom d&apos;article (A → Z)</option>
+              <option value="qty">Par quantité (les plus bas d&apos;abord)</option>
+            </Select>
+          </Field>
+          <Field label="Articles">
+            <Select value={show} onChange={(e) => setShow(e.target.value as PrintShow)}>
+              <option value="all">Tous</option>
+              <option value="in">Disponibles seulement</option>
+              <option value="out">Épuisés seulement</option>
+            </Select>
+          </Field>
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={buyPrice} onChange={(e) => setBuyPrice(e.target.checked)} />
+            Afficher le prix d&apos;achat et la valeur du stock
+          </label>
+          <p className="text-xs text-gray-500">Sur l&apos;écran d&apos;impression, choisissez votre imprimante ou « Enregistrer en PDF ».</p>
+        </div>
+      </Modal>
+      <PrintableStock items={list} sort={sort} buyPrice={buyPrice} boutique={boutique} company={company} by={by} currency={currency} />
+    </>
+  );
+}
+
+function PrintableStock({
+  items,
+  sort,
+  buyPrice,
+  boutique,
+  company,
+  by,
+  currency,
+}: {
+  items: Overview[];
+  sort: PrintSort;
+  buyPrice: boolean;
+  boutique: string;
+  company: string;
+  by: string;
+  currency: string;
+}) {
+  if (typeof document === "undefined") return null;
+  const money = (v: number) => formatCurrency(v, currency);
+  const qtyText = (i: Overview) => {
+    const litre = i.unit.symbol === "L";
+    const bidon = i.packagings.find((p) => p.symbol === "bidon");
+    const base = `${i.quantity.toLocaleString("fr-FR")} ${litre ? "L" : i.unit.symbol}`;
+    return litre && bidon && i.quantity > 0 ? `${base} (${(i.quantity / bidon.factor).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} bidons)` : base;
+  };
+  const cost = (i: Overview) => (i.lastPurchase?.unitPrice ?? 0) * Math.max(0, i.quantity);
+  const sorted =
+    sort === "name"
+      ? [...items].sort((a, b) => a.name.localeCompare(b.name, "fr"))
+      : sort === "qty"
+        ? [...items].sort((a, b) => a.quantity - b.quantity || a.name.localeCompare(b.name, "fr"))
+        : groupByFamily(items).flatMap((g) => g.items);
+  const groups = sort === "brand" ? groupByFamily(items) : [{ family: "", items: sorted }];
+  const total = items.reduce((s, i) => s + cost(i), 0);
+  const now = new Date();
+  const cell = "border-b border-gray-300 px-2 py-1.5 text-left align-top";
+  return createPortal(
+    <div className="stock-print hidden bg-white p-[10mm] text-[11px] text-black print:block">
+      <style>{`@page { size: A4; margin: 10mm; } @media print { body > *:not(.stock-print) { display: none !important; } .stock-print tr { break-inside: avoid; } }`}</style>
+      <div className="mb-4 flex items-end justify-between border-b-2 border-black pb-2">
+        <div>
+          <p className="text-[16px] font-bold">{company}</p>
+          <p className="text-[13px] font-semibold">État du stock — {boutique}</p>
+        </div>
+        <div className="text-right">
+          <p>
+            {now.toLocaleDateString("fr-FR")} à {String(now.getHours()).padStart(2, "0")}h{String(now.getMinutes()).padStart(2, "0")}
+          </p>
+          {by && <p>Imprimé par {by}</p>}
+          <p>
+            {items.length} article{items.length > 1 ? "s" : ""} · classés {sort === "brand" ? "par marque" : sort === "name" ? "par nom" : "par quantité"}
+          </p>
+        </div>
+      </div>
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="bg-gray-100">
+            <th className={cell}>Article</th>
+            <th className={cell}>En stock</th>
+            <th className={cell}>Prix de vente</th>
+            {buyPrice && <th className={cell}>Dernier prix d&apos;achat</th>}
+            {buyPrice && <th className={`${cell} text-right`}>Valeur (achat)</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <PrintGroup key={g.family || "all"} g={g} sort={sort} buyPrice={buyPrice} cell={cell} money={money} qtyText={qtyText} cost={cost} />
+          ))}
+        </tbody>
+      </table>
+      {buyPrice && (
+        <div className="mt-3 flex justify-between border-t-2 border-black px-2 pt-2 text-[12px] font-bold">
+          <span>Valeur totale du stock (au dernier prix d&apos;achat)</span>
+          <span>{money(total)}</span>
+        </div>
+      )}
+    </div>,
+    document.body
+  );
+}
+
+function PrintGroup({
+  g,
+  sort,
+  buyPrice,
+  cell,
+  money,
+  qtyText,
+  cost,
+}: {
+  g: { family: string; items: Overview[] };
+  sort: PrintSort;
+  buyPrice: boolean;
+  cell: string;
+  money: (v: number) => string;
+  qtyText: (i: Overview) => string;
+  cost: (i: Overview) => number;
+}) {
+  return (
+    <>
+      {sort === "brand" && (
+        <tr>
+          <td colSpan={buyPrice ? 5 : 3} className="border-b border-gray-400 px-2 pb-1 pt-3 text-[12px] font-bold uppercase">
+            {g.family}
+          </td>
+        </tr>
+      )}
+      {g.items.map((i) => (
+        <tr key={i.id}>
+          <td className={cell}>{sort === "brand" ? formatOf(i.name) || i.name : i.name}</td>
+          <td className={`${cell} ${i.quantity <= 0 ? "font-bold" : ""}`}>{i.quantity <= 0 ? "ÉPUISÉ" : qtyText(i)}</td>
+          <td className={cell}>
+            {money(i.sellingPrice)}
+            {i.unit.symbol === "L" ? " / L" : ""}
+            {i.packagings
+              .filter((p) => p.sellingPrice != null)
+              .map((p) => (
+                <span key={p.symbol} className="block text-[10px] text-gray-700">
+                  {p.symbol === "bidon" ? "bidon" : p.name} : {money(p.sellingPrice!)}
+                </span>
+              ))}
+          </td>
+          {buyPrice && (
+            <td className={cell}>
+              {i.lastPurchase ? money(i.lastPurchase.unitPrice) : "—"}
+              {i.lastPurchase?.supplier && <span className="block text-[10px] text-gray-700">{i.lastPurchase.supplier}</span>}
+            </td>
+          )}
+          {buyPrice && <td className={`${cell} text-right`}>{i.quantity > 0 && i.lastPurchase ? money(cost(i)) : "—"}</td>}
+        </tr>
+      ))}
+    </>
   );
 }

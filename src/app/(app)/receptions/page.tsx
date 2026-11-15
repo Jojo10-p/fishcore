@@ -118,6 +118,19 @@ export default function ReceptionsPage() {
   const [opening, setOpening] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Receipt | null>(null);
   const [receipts, setReceipts] = useState<Receipt[] | null>(null);
+  // Recherche : article, fournisseur, référence ou date (ex. « VIGO », « 15/11 »)
+  const [search, setSearch] = useState("");
+  const shown = useMemo(() => {
+    const q = search.trim();
+    if (!receipts || !q) return receipts;
+    return receipts.filter(
+      (r) =>
+        r.lines.some((l) => matchesSearch(l.product.name, q)) ||
+        matchesSearch(r.supplier?.name ?? "", q) ||
+        matchesSearch(r.reference ?? "", q) ||
+        new Date(r.receivedAt).toLocaleDateString("fr-FR").includes(q)
+    );
+  }, [receipts, search]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<false | "stock" | "new">(false);
   const [validating, setValidating] = useState<string | null>(null);
@@ -213,14 +226,27 @@ export default function ReceptionsPage() {
           />
         </div>
       )}
+      {receipts && receipts.length > 0 && (
+        <div className="mb-3">
+          <Input
+            type="search"
+            placeholder="🔍 Rechercher un arrivage : article, fournisseur, référence, date (ex. VIGO, 15/11)"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="sm:max-w-lg"
+          />
+        </div>
+      )}
       <Card>
-        {!receipts ? (
+        {!receipts || !shown ? (
           <Spinner />
         ) : receipts.length === 0 ? (
           <EmptyState icon="🚚" title="Aucun arrivage enregistré" />
+        ) : shown.length === 0 ? (
+          <EmptyState icon="🔍" title="Aucun arrivage ne correspond">Essayez un autre mot (nom de l&apos;article, du fournisseur…).</EmptyState>
         ) : (
           <Table head={["Date", "Fournisseur", "Articles reçus", "Coût total", "Statut", ""]}>
-            {receipts.map((r) => {
+            {shown.map((r) => {
               const goods = r.lines.reduce((s, l) => s + Number(l.totalPrice), 0);
               const fees = num(r.transportCost) + num(r.iceCost) + num(r.handlingCost) + num(r.otherCosts);
               return (
