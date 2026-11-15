@@ -1,5 +1,6 @@
 "use client";
 
+import { fractionUnits, HALF, QUARTER } from "@/lib/client/fraction-units";
 import Link from "next/link";
 import { LOW_STOCK_THRESHOLD } from "@/lib/app-config";
 import { useCallback, useEffect, useState } from "react";
@@ -542,11 +543,22 @@ function UnitsModal({ units, onClose, onChanged }: { units: Unit[]; onClose: () 
 const fmtNum = (v: number) => v.toLocaleString("fr-FR", { maximumFractionDigits: 2 }).replace(/[  ]/g, " ");
 
 function PriceModal({ product, currency, onClose, onSaved }: { product: Product; currency: string; onClose: () => void; onSaved: () => Promise<void> }) {
+  // Vente au litre : le ½ L et le ¼ L ont leur propre prix (sinon prix du litre × ½ ou ¼)
+  const litre = product.baseUnit.symbol === "L";
+  const fraction = (f: number) => product.unitConversions.find((c) => Number(c.factor) === f && (c.fromUnit.symbol === (f === 0.5 ? HALF.symbol : QUARTER.symbol)));
+  const half = fraction(0.5);
+  const quarter = fraction(0.25);
   const rows = [
     { key: "base", label: `Prix ${product.baseUnit.name.toLowerCase()} (1 ${product.baseUnit.symbol})`, current: Number(product.sellingPrice) },
     ...product.unitConversions
-      .filter((c) => c.sellingPrice != null)
+      .filter((c) => c.sellingPrice != null && c !== half && c !== quarter)
       .map((c) => ({ key: c.fromUnitId, label: `Prix ${c.fromUnit.name.toLowerCase()} (${Number(c.factor)} ${product.baseUnit.symbol})`, current: Number(c.sellingPrice) })),
+    ...(litre
+      ? [
+          { key: "half", label: "Prix du ½ litre", current: half?.sellingPrice != null ? Number(half.sellingPrice) : Math.round(Number(product.sellingPrice) * 0.5 * 100) / 100 },
+          { key: "quarter", label: "Prix du ¼ litre", current: quarter?.sellingPrice != null ? Number(quarter.sellingPrice) : Math.round(Number(product.sellingPrice) * 0.25 * 100) / 100 },
+        ]
+      : []),
   ];
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(rows.map((r) => [r.key, String(r.current)])));
   const [reason, setReason] = useState("");
@@ -561,16 +573,28 @@ function PriceModal({ product, currency, onClose, onSaved }: { product: Product;
     setBusy(true);
     setError(null);
     try {
+      const packagings = product.unitConversions
+        .filter((c) => c !== half && c !== quarter)
+        .map((c) => ({
+          unitId: c.fromUnitId,
+          factor: Number(c.factor),
+          sellingPrice: c.sellingPrice != null ? num(values[c.fromUnitId]) : null,
+          barcode: c.barcode,
+        }));
+      if (litre) {
+        // ½ L / ¼ L : gardés s'ils existaient, créés si leur prix change
+        const want = (key: "half" | "quarter", conv: typeof half) => conv || rows.find((r) => r.key === key && num(values[key]) !== r.current);
+        if (want("half", half) || want("quarter", quarter)) {
+          const u = await fractionUnits();
+          if (want("half", half)) packagings.push({ unitId: half?.fromUnitId ?? u.half, factor: 0.5, sellingPrice: num(values.half), barcode: half?.barcode ?? null });
+          if (want("quarter", quarter)) packagings.push({ unitId: quarter?.fromUnitId ?? u.quarter, factor: 0.25, sellingPrice: num(values.quarter), barcode: quarter?.barcode ?? null });
+        }
+      }
       await apiSend(
         `/api/products/${product.id}`,
         {
           sellingPrice: num(values.base),
-          packagings: product.unitConversions.map((c) => ({
-            unitId: c.fromUnitId,
-            factor: Number(c.factor),
-            sellingPrice: c.sellingPrice != null ? num(values[c.fromUnitId]) : null,
-            barcode: c.barcode,
-          })),
+          packagings,
           ...(reason.trim() ? { priceReason: reason.trim() } : {}),
         },
         "PATCH"

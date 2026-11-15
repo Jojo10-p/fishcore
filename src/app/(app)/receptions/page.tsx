@@ -1,5 +1,6 @@
 "use client";
 
+import { fractionUnits, HALF, QUARTER } from "@/lib/client/fraction-units";
 import { matchesSearch } from "@/lib/search-aliases";
 import { COMMON_FORMATS, FORMAT_SEP, composeName, familyOf, formatLiters, litersLabel } from "@/lib/product-name";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -69,6 +70,9 @@ interface DraftLine {
   retail?: boolean;
   /** Prix du bidon entier (vente au détail) */
   bidonPrice?: string;
+  /** Prix propres du ½ litre et du ¼ litre (sinon prix du litre × ½ ou ¼) */
+  halfPrice?: string;
+  quarterPrice?: string;
   /** Article d'origine (modification d'un arrivage) : gardé tant que le nom et le format ne changent pas */
   productId?: string;
 }
@@ -371,6 +375,14 @@ function draftFromReceipt(r: EditableReceipt): ReceiptDraft {
   };
 }
 
+/** Prix déjà fixé pour le ½ L (0.5) ou le ¼ L (0.25) d'un article, en texte. */
+function priceOfFraction(p: ProductFull | null | undefined, units: Unit[], f: 0.5 | 0.25): string | undefined {
+  const symbol = f === 0.5 ? HALF.symbol : QUARTER.symbol;
+  const unitId = units.find((u) => u.symbol === symbol)?.id;
+  const c = unitId ? p?.unitConversions?.find((u) => u.fromUnitId === unitId) : undefined;
+  return c?.sellingPrice != null ? String(Number(c.sellingPrice)) : undefined;
+}
+
 /** Menu « ⋮ » d'une ligne du tableau. */
 function RowMenu({ items, busy }: { items: Array<{ label: string; onClick: () => void; danger?: boolean }>; busy?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -509,6 +521,8 @@ function ReceiptForm({
           return {
             ...l,
             bidonPrice: l.retail && bidon?.sellingPrice ? String(Number(bidon.sellingPrice)) : l.bidonPrice,
+            halfPrice: priceOfFraction(p, units, 0.5) ?? l.halfPrice,
+            quarterPrice: priceOfFraction(p, units, 0.25) ?? l.quarterPrice,
             cartonSellingPrice: carton?.sellingPrice ? String(Number(carton.sellingPrice)) : l.cartonSellingPrice,
             perCarton: carton ? String(Number(carton.factor)) : l.perCarton,
           };
@@ -549,6 +563,8 @@ function ReceiptForm({
       // Suggestion marquée « détail » (ex. VIGO, huile d'arachide) : vente au litre cochée d'office
       retail: l.retail || (!p && sug?.category === "detail"),
       bidonPrice: l.bidonPrice || (retailBidon?.sellingPrice ? String(Number(retailBidon.sellingPrice)) : ""),
+      halfPrice: l.halfPrice || priceOfFraction(p, units, 0.5) || "",
+      quarterPrice: l.quarterPrice || priceOfFraction(p, units, 0.25) || "",
       buyMode: !p && sug?.category === "detail" ? "unit" : l.buyMode,
       liters: litres ? String(litres) : l.liters || (sug?.liters ? String(sug.liters) : ""),
       perCarton: l.perCarton || (carton ? String(Number(carton.factor)) : sug?.unitsPerCarton ? String(sug.unitsPerCarton) : ""),
@@ -653,7 +669,15 @@ function ReceiptForm({
           const litres = r.qty * L;
           const costL = Math.round((r.lot / litres) * 100) / 100;
           const bidonSell = num(r.l.bidonPrice ?? "") > 0 ? num(r.l.bidonPrice ?? "") : Math.round(r.sell * L);
-          const pk = [{ unitId: bidonUnit.id, factor: L, sellingPrice: bidonSell }];
+          const pk: Array<{ unitId: string; factor: number; sellingPrice: number }> = [{ unitId: bidonUnit.id, factor: L, sellingPrice: bidonSell }];
+          // ½ L et ¼ L à leur propre prix (s'ils sont remplis ou existaient déjà)
+          const halfSell = num(r.l.halfPrice ?? "");
+          const quarterSell = num(r.l.quarterPrice ?? "");
+          const fu = halfSell > 0 || quarterSell > 0 ? await fractionUnits(units) : null;
+          if (fu && halfSell > 0) pk.push({ unitId: fu.half, factor: 0.5, sellingPrice: halfSell });
+          if (fu && quarterSell > 0) pk.push({ unitId: fu.quarter, factor: 0.25, sellingPrice: quarterSell });
+          const fractionChanged =
+            (halfSell > 0 && priceOfFraction(r.product, units, 0.5) !== String(halfSell)) || (quarterSell > 0 && priceOfFraction(r.product, units, 0.25) !== String(quarterSell));
           let rid = r.product?.id;
           if (!rid) {
             const created = await apiSend<{ data: { id: string } }>("/api/products", {
@@ -667,9 +691,10 @@ function ReceiptForm({
               packagings: pk,
             });
             rid = created.data.id;
-          } else if (canPrice && (Number(r.product!.sellingPrice) !== r.sell || Number(r.retailBidon?.sellingPrice ?? 0) !== bidonSell)) {
+          } else if (canPrice && (Number(r.product!.sellingPrice) !== r.sell || Number(r.retailBidon?.sellingPrice ?? 0) !== bidonSell || fractionChanged)) {
+            const replaced = new Set(pk.map((x) => x.unitId));
             const keep = (r.product!.unitConversions ?? [])
-              .filter((u) => u.fromUnitId !== bidonUnit.id)
+              .filter((u) => !replaced.has(u.fromUnitId))
               .map((u) => ({ unitId: u.fromUnitId, factor: Number(u.factor), sellingPrice: u.sellingPrice != null ? Number(u.sellingPrice) : null, barcode: u.barcode }));
             await apiSend(`/api/products/${rid}`, { sellingPrice: r.sell, packagings: [...keep, ...pk] }, "PATCH");
           }
@@ -1022,11 +1047,17 @@ function ReceiptForm({
                         placeholder={r.sell > 0 && Number(r.liters) > 0 ? (r.sell * Number(r.liters)).toLocaleString("fr-FR") : "ex. 35 000"}
                       />
                     </Field>
+                    <Field label="Prix du ½ litre" hint="Facultatif · vide : litre ÷ 2">
+                      <Input inputMode="numeric" value={r.l.halfPrice ?? ""} onChange={(e) => setLine(i, { halfPrice: e.target.value })} placeholder={r.sell > 0 ? (r.sell / 2).toLocaleString("fr-FR") : "ex. 800"} />
+                    </Field>
+                    <Field label="Prix du ¼ litre" hint="Facultatif · vide : litre ÷ 4">
+                      <Input inputMode="numeric" value={r.l.quarterPrice ?? ""} onChange={(e) => setLine(i, { quarterPrice: e.target.value })} placeholder={r.sell > 0 ? (r.sell / 4).toLocaleString("fr-FR") : "ex. 400"} />
+                    </Field>
                   </fieldset>
                   {r.sell > 0 && (
                     <p className="text-sm text-gray-700">
-                      À la caisse : 1 L = <strong><Money value={r.sell} currency={currency} /></strong> · ½ L = <strong><Money value={r.sell / 2} currency={currency} /></strong> · ¼ L ={" "}
-                      <strong><Money value={r.sell / 4} currency={currency} /></strong>
+                      À la caisse : 1 L = <strong><Money value={r.sell} currency={currency} /></strong> · ½ L = <strong><Money value={num(r.l.halfPrice ?? "") > 0 ? num(r.l.halfPrice ?? "") : r.sell / 2} currency={currency} /></strong> · ¼ L ={" "}
+                      <strong><Money value={num(r.l.quarterPrice ?? "") > 0 ? num(r.l.quarterPrice ?? "") : r.sell / 4} currency={currency} /></strong>
                     </p>
                   )}
                   {costPer > 0 && r.sell > 0 && Number(r.liters) > 0 && (

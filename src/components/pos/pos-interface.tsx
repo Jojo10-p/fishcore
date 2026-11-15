@@ -240,6 +240,17 @@ export default function POSInterface({
     });
   }, []);
 
+  /** ¼, ½, ¾ de litre : au prix fixé pour ½ L / ¼ L s'il existe, sinon au prix du litre. */
+  const pickFraction = (item: CartItem, v: number) => {
+    const product = products.find((p) => p.id === item.productId);
+    const half = product?.packagings?.find((pk) => pk.factor === 0.5);
+    const quarter = product?.packagings?.find((pk) => pk.factor === 0.25);
+    const parts = v === 0.75 ? [half, quarter] : [v === 0.5 ? half : v === 0.25 ? quarter : undefined];
+    if (!product || parts.some((p) => !p)) return setQuantity(item.key, v);
+    setCart((prev) => prev.filter((i) => i.key !== item.key));
+    for (const pk of parts) addToCart(product, pk, 1);
+  };
+
   const setQuantity = useCallback((key: string, qty: number) => {
     setCart((prev) =>
       qty <= 0
@@ -725,7 +736,7 @@ export default function POSInterface({
                       ].map(([v, label]) => (
                         <button
                           key={label}
-                          onClick={() => setQuantity(item.key, v as number)}
+                          onClick={() => pickFraction(item, v as number)}
                           className={cn(
                             "rounded-md border px-2 py-0.5 text-xs",
                             item.quantity === v ? "border-blue-600 bg-blue-50 text-blue-800" : "border-gray-300 text-gray-700 hover:bg-gray-50"
@@ -841,7 +852,7 @@ export default function POSInterface({
                   { key: "", label: askQty.product.baseUnitSymbol === "L" ? "Au litre" : `Au ${askQty.product.baseUnitSymbol}`, price: askQty.product.sellingPrice, active: !askQty.packaging, pick: () => setAskQty({ product: askQty.product, family: askQty.family }) },
                   ...askQty.product.packagings.map((pk) => ({
                     key: pk.unitId,
-                    label: /\d/.test(pk.name) ? pk.name : `${pk.name} (${fmtQty(pk.factor)})`,
+                    label: /\d/.test(pk.name) || pk.factor < 1 ? pk.name : `${pk.name} (${fmtQty(pk.factor)})`,
                     price: pk.sellingPrice,
                     active: askQty.packaging?.unitId === pk.unitId,
                     pick: () => setAskQty({ product: askQty.product, packaging: pk, family: askQty.family }),
@@ -849,6 +860,11 @@ export default function POSInterface({
                 ]
               : []
           }
+          fractions={Object.fromEntries(
+            (askQty.product.packagings ?? [])
+              .filter((pk) => pk.factor === 0.5 || pk.factor === 0.25)
+              .map((pk) => [pk.factor, () => setAskQty({ product: askQty.product, packaging: pk, family: askQty.family })])
+          )}
           fmt={fmt}
           onCancel={() => setAskQty(null)}
           onConfirm={(qty) => {
@@ -873,10 +889,13 @@ function QuantityDialog({
   baseUnit,
   options = [],
   formats = [],
+  fractions = {},
   fmt,
   onCancel,
   onConfirm,
 }: {
+  /** ½ L, ¼ L vendus à leur propre prix : le bouton choisit ce conditionnement */
+  fractions?: Record<number, () => void>;
   /** Formats de la même marque (bidon 1 L, 4 L, 5 L…) */
   formats?: Array<{ key: string; label: string; price: number; stock?: number; active: boolean; pick: () => void }>;
   name: string;
@@ -966,7 +985,12 @@ function QuantityDialog({
             <button
               key={v}
               type="button"
-              onClick={() => setValue(String(v).replace(".", ","))}
+              onClick={() => {
+                if (allowsDecimal && fractions[v]) {
+                  fractions[v]();
+                  setValue("1");
+                } else setValue(String(v).replace(".", ","));
+              }}
               className={cn("flex-1 rounded-lg border py-1.5 text-sm", qty === v ? "border-blue-600 bg-blue-50 font-semibold text-blue-800" : "border-gray-300")}
             >
               {v === 0.25 ? "¼" : v === 0.5 ? "½" : v}
