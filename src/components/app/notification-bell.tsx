@@ -16,6 +16,7 @@ interface Notif {
 
 const ICONS: Record<string, string> = {
   STOCK_ADDED: "🚚",
+  STOCK_EDITED: "✏️",
   PRICE_CHANGED: "🏷️",
   PRODUCT_CREATED: "✨",
   CANCEL_REQUESTED: "↩️",

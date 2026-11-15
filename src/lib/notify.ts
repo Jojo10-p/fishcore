@@ -13,6 +13,7 @@ import { boutiqueIcon } from "@/lib/boutiques";
 
 export type NotifyType =
   | "STOCK_ADDED"
+  | "STOCK_EDITED"
   | "PRICE_CHANGED"
   | "PRODUCT_CREATED"
   | "CANCEL_REQUESTED"

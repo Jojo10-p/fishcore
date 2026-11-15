@@ -1,7 +1,8 @@
 "use client";
 
 import { matchesSearch } from "@/lib/search-aliases";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Qty, Select, Spinner, Table, Td, Textarea } from "@/components/ui";
@@ -75,6 +76,10 @@ function StockPage() {
   const [overview, setOverview] = useState<Overview[] | null>(null);
   const [show, setShow] = useState<"all" | "in" | "out">("all");
   const [details, setDetails] = useState(false);
+  const [editing, setEditing] = useState<Overview | null>(null);
+  const [removing, setRemoving] = useState<Overview | null>(null);
+  // Modifier / supprimer le stock : direction et gérant (le serveur revérifie)
+  const canEdit = session?.user.role === "COMPANY_OWNER" || session?.user.role === "CENTER_MANAGER";
 
   const load = useCallback(async () => {
     if (!centerId) return;
@@ -129,6 +134,8 @@ function StockPage() {
           show={show}
           setShow={setShow}
           currency={session?.company?.currency ?? "XOF"}
+          onEdit={canEdit ? setEditing : undefined}
+          onDelete={canEdit ? setRemoving : undefined}
           onMove={
             canMove
               ? (productId) => {
@@ -227,6 +234,8 @@ function StockPage() {
         )}
       </Card>
       )}
+      {editing && centerId && <EditQtyModal item={editing} centerId={centerId} onClose={() => setEditing(null)} onDone={load} />}
+      {removing && centerId && <DeleteItemModal item={removing} centerId={centerId} onClose={() => setRemoving(null)} onDone={load} />}
       {adjusting && centerId && (
         <MovementModal
           row={adjusting.row}
@@ -262,6 +271,8 @@ function StockCards({
   setShow,
   currency,
   onMove,
+  onEdit,
+  onDelete,
 }: {
   items: Overview[] | null;
   search: string;
@@ -269,6 +280,8 @@ function StockCards({
   setShow: (s: "all" | "in" | "out") => void;
   currency: string;
   onMove?: (productId: string) => void;
+  onEdit?: (item: Overview) => void;
+  onDelete?: (item: Overview) => void;
 }) {
   if (!items) return <Spinner />;
   const money = (v: number) => formatCurrency(v, currency);
@@ -312,8 +325,19 @@ function StockCards({
                     <div key={i.id} className="py-2.5 text-sm">
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="font-semibold text-gray-800">{formatOf(i.name) || "Article"}</span>
-                        <span className={`font-bold ${out ? "text-red-600" : low ? "text-amber-600" : "text-green-700"}`}>
-                          {out ? "Épuisé" : `${i.quantity.toLocaleString("fr-FR")} ${litre ? "L" : i.unit.symbol}${litre && bidon ? ` (${(i.quantity / bidon.factor).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} bidons)` : ""}`}
+                        <span className="flex items-center gap-1">
+                          <span className={`font-bold ${out ? "text-red-600" : low ? "text-amber-600" : "text-green-700"}`}>
+                            {out ? "Épuisé" : `${i.quantity.toLocaleString("fr-FR")} ${litre ? "L" : i.unit.symbol}${litre && bidon ? ` (${(i.quantity / bidon.factor).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} bidons)` : ""}`}
+                          </span>
+                          {(onEdit || onDelete) && (
+                            <ItemMenu
+                              items={[
+                                ...(onEdit ? [{ label: "Modifier la quantité", onClick: () => onEdit(i) }] : []),
+                                ...(onEdit ? [{ label: "Changer le prix", href: "/produits" }] : []),
+                                ...(onDelete ? [{ label: "Supprimer l'article", onClick: () => onDelete(i), danger: true }] : []),
+                              ]}
+                            />
+                          )}
                         </span>
                       </div>
                       <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-gray-600">
@@ -461,6 +485,175 @@ function MovementModal({
       <Field label="Motif (obligatoire)">
         <Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
       </Field>
+    </Modal>
+  );
+}
+
+/** Menu « ⋮ » d'un article : modifier, changer le prix, supprimer. */
+function ItemMenu({ items }: { items: Array<{ label: string; onClick?: () => void; href?: string; danger?: boolean }> }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  return (
+    <span className="relative" ref={box}>
+      <button type="button" aria-label="Actions" onClick={() => setOpen((o) => !o)} className="flex h-8 w-8 items-center justify-center rounded-full text-lg font-bold leading-none text-gray-500 hover:bg-gray-100">
+        ⋮
+      </button>
+      {open && (
+        <span className="absolute right-0 z-30 mt-1 flex w-52 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white py-1 text-left shadow-lg">
+          {items.map((it) =>
+            it.href ? (
+              <Link key={it.label} href={it.href} className="px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">
+                {it.label}
+              </Link>
+            ) : (
+              <button
+                key={it.label}
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  it.onClick?.();
+                }}
+                className={`px-4 py-2.5 text-left text-sm hover:bg-gray-50 ${it.danger ? "text-red-600" : "text-gray-700"}`}
+              >
+                {it.label}
+              </button>
+            )
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Saisir la quantité réellement présente (en litres ou en bidons pour l'huile). */
+function EditQtyModal({ item, centerId, onClose, onDone }: { item: Overview; centerId: string; onClose: () => void; onDone: () => Promise<void> }) {
+  const bidon = item.packagings.find((p) => p.symbol === "bidon");
+  const litre = item.unit.symbol === "L";
+  const [unit, setUnit] = useState<"base" | "bidon">("base");
+  const [value, setValue] = useState(String(item.quantity));
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const n = Number(value.replace(",", "."));
+  const qty = unit === "bidon" && bidon ? n * bidon.factor : n;
+  const valid = value.trim() !== "" && Number.isFinite(n) && n >= 0 && reason.trim().length >= 3;
+  const unitLabel = litre ? "L" : item.unit.symbol;
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiSend("/api/stock/edit", { centerId, productId: item.id, quantity: qty, reason: reason.trim() });
+      await onDone();
+      onClose();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      title={`Modifier : ${item.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Annuler
+          </Button>
+          <Button onClick={() => void save()} loading={busy} disabled={!valid}>
+            Enregistrer
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600">
+          En stock aujourd&apos;hui : <strong>{item.quantity.toLocaleString("fr-FR")} {unitLabel}</strong>. Entrez la quantité réellement présente ; l&apos;écart est noté dans l&apos;historique et la direction est prévenue.
+        </p>
+        {error && <Alert>{error}</Alert>}
+        <Field label="Quantité réelle">
+          <div className="flex gap-2">
+            <Input type="number" inputMode="decimal" min={0} step="any" value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+            {bidon && (
+              <Select
+                value={unit}
+                onChange={(e) => {
+                  const u = e.target.value as "base" | "bidon";
+                  const v = Number(value.replace(",", "."));
+                  if (Number.isFinite(v)) setValue(String(u === "bidon" ? Math.round((v / bidon.factor) * 100) / 100 : v * bidon.factor));
+                  setUnit(u);
+                }}
+                className="w-40"
+              >
+                <option value="base">{unitLabel}</option>
+                <option value="bidon">bidons de {bidon.factor} {unitLabel}</option>
+              </Select>
+            )}
+          </div>
+        </Field>
+        {unit === "bidon" && Number.isFinite(qty) && <p className="-mt-2 text-xs text-gray-500">Soit {qty.toLocaleString("fr-FR")} {unitLabel}</p>}
+        <Field label="Motif">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ex. : erreur de saisie, comptage du soir…" />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
+/** Retirer un article de la boutique (stock à 0) ; ses ventes passées restent dans l'historique. */
+function DeleteItemModal({ item, centerId, onClose, onDone }: { item: Overview; centerId: string; onClose: () => void; onDone: () => Promise<void> }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiSend("/api/stock/edit", { centerId, productId: item.id, reason: reason.trim() }, "DELETE");
+      await onDone();
+      onClose();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      title="Supprimer l'article"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Annuler
+          </Button>
+          <Button variant="danger" onClick={() => void remove()} loading={busy} disabled={reason.trim().length < 3}>
+            Supprimer
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-gray-700">
+          <strong>{item.name}</strong> va disparaître du stock de cette boutique
+          {item.quantity > 0 ? ` (il en reste ${item.quantity.toLocaleString("fr-FR")} ${item.unit.symbol === "L" ? "L" : item.unit.symbol})` : ""}. Les ventes et achats passés restent dans l&apos;historique, et la direction est prévenue.
+        </p>
+        <p className="text-xs text-gray-500">Vous pourrez le remettre en stock plus tard avec « Ajouter du stock ».</p>
+        {error && <Alert>{error}</Alert>}
+        <Field label="Motif">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ex. : article créé par erreur, plus vendu…" autoFocus />
+        </Field>
+      </div>
     </Modal>
   );
 }
