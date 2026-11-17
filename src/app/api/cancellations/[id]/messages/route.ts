@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { handleApiError, parseBody, readJson } from "@/lib/auth";
 import { loadThread } from "@/lib/cancellation-thread";
 import { actorLabel, notifyManagers } from "@/lib/notify";
-import { decodeVoice, voiceSchema } from "@/lib/voice";
+import { decodeVoice, purgeOldVoiceNotes, voiceSchema } from "@/lib/voice";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -13,6 +13,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
     await loadThread(req, id);
+    await purgeOldVoiceNotes().catch(() => 0);
     const rows = await prisma.cancellationMessage.findMany({
       where: { cancellationId: id },
       orderBy: { createdAt: "asc" },
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     const by = new Map(authors.map((a) => [a.id, a]));
     return NextResponse.json({
       success: true,
-      data: rows.map((r) => ({ ...r, hasAudio: !!r.audioMime, author: by.get(r.authorId) ?? null })),
+      data: rows.map((r) => ({ ...r, hasAudio: !!r.audioMime, audioExpired: !r.audioMime && !!r.audioSeconds, author: by.get(r.authorId) ?? null })),
     });
   } catch (error) {
     return handleApiError(error, "CANCELLATIONS");

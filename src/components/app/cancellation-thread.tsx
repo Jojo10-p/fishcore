@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Spinner, Textarea } from "@/components/ui";
 import { useSession } from "@/components/app/session-provider";
 import { VoiceRecorder, type VoiceNote } from "@/components/app/voice-recorder";
+import { DictateButton } from "@/components/app/dictate-button";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
 
 interface Message {
@@ -12,6 +13,7 @@ interface Message {
   authorId: string;
   text: string | null;
   hasAudio: boolean;
+  audioExpired?: boolean;
   audioSeconds: number | null;
   author: { firstName: string; lastName: string; role: string } | null;
 }
@@ -80,6 +82,7 @@ export function CancellationThread({ cancellationId, reason, canWrite = true }: 
                     {m.author ? `${m.author.firstName} · ${ROLE[m.author.role] ?? ""}` : ""} · {new Date(m.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}
                     {m === first && reasonIsVoice ? " · motif" : ""}
                   </p>
+                  {m.audioExpired && <p className={`mt-1 text-xs italic ${mine ? "text-blue-100" : "text-gray-500"}`}>🔇 Note vocale de {m.audioSeconds} s effacée (gardée 30 jours)</p>}
                   {m.hasAudio && <audio controls preload="none" src={`/api/cancellations/${cancellationId}/messages/${m.id}`} className="mt-1 h-9 w-64 max-w-full" />}
                   {m.text && <p className="mt-1 whitespace-pre-line">{m.text}</p>}
                 </div>
@@ -93,7 +96,10 @@ export function CancellationThread({ cancellationId, reason, canWrite = true }: 
       {canWrite && (
         <div className="space-y-2 border-t border-gray-100 pt-3">
           <Textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Écrire un message (ex. « Explique-moi pourquoi »)…" />
-          <VoiceRecorder value={voice} onChange={setVoice} disabled={busy} />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <DictateButton disabled={busy} onText={(t) => setText((x) => (x.trim() ? `${x.trim()} ${t}` : t))} />
+            <VoiceRecorder value={voice} onChange={setVoice} disabled={busy} />
+          </div>
           <div className="flex justify-end">
             <Button onClick={send} loading={busy} disabled={!text.trim() && !voice}>
               Envoyer

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, Money, PageHeader, Spinner, Table, Td, Textarea } from "@/components/ui";
 import { VoiceRecorder, type VoiceNote } from "@/components/app/voice-recorder";
+import { DictateButton } from "@/components/app/dictate-button";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
 import { formatCurrency } from "@/lib/utils";
 
@@ -186,7 +187,11 @@ function CancelRequestModal({ sale, onClose, onDone }: { sale: SaleRow | null; o
       <Field label="Motif (obligatoire)" hint="Écrivez pourquoi, ou expliquez-le en note vocale.">
         <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ex. Le client s'est trompé de bidon" />
       </Field>
-      <VoiceRecorder value={voice} onChange={setVoice} disabled={busy} />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <DictateButton disabled={busy} onText={(t) => setReason((r) => (r.trim() ? `${r.trim()} ${t}` : t))} />
+        <VoiceRecorder value={voice} onChange={setVoice} disabled={busy} />
+      </div>
+      <p className="text-xs text-gray-500">« Dicter » écrit vos paroles dans le motif. La note vocale, elle, est gardée 30 jours.</p>
       {!ready && <p className="text-xs text-gray-500">Sans motif écrit ou vocal, la demande ne peut pas être envoyée.</p>}
     </Modal>
   );

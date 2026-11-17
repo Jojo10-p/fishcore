@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useSession } from "@/components/app/session-provider";
 import { Card, PageHeader } from "@/components/ui";
 
@@ -56,20 +55,15 @@ export default function MecefPage() {
         </div>
 
         {/* Fenêtre « En développement » */}
-        <div className="absolute inset-0 flex items-start justify-center p-4 pt-16">
-          <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-2xl">
-            <p className="text-5xl">🚧</p>
-            <h2 className="mt-3 text-xl font-bold text-gray-900">En développement</h2>
-            <p className="mt-2 text-sm text-gray-600">
-              La facture normalisée e-MECeF sera activée dès que la DGI aura validé le logiciel et remis le jeton de l&apos;entreprise.
+        <div className="absolute inset-0 flex items-start justify-center p-4 pt-20">
+          <div className="w-full max-w-xs rounded-2xl border border-gray-200 bg-white px-6 py-8 text-center shadow-2xl">
+            <p className="text-6xl" aria-hidden>
+              🧑‍💻
             </p>
-            <p className="mt-2 text-sm text-gray-600">
-              Vous verrez ici : le nombre de ventes normalisées, les avoirs, la TVA et les autres taxes à payer, et le QR code DGI imprimé sur chaque
-              facture (ticket, A5 ou A4).
+            <p className="mt-3 text-2xl" aria-hidden>
+              🚧
             </p>
-            <Link href="/dashboard" className="mt-5 inline-block rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">
-              Retour au tableau de bord
-            </Link>
+            <h2 className="mt-2 text-xl font-bold text-gray-900">En développement</h2>
           </div>
         </div>
       </div>

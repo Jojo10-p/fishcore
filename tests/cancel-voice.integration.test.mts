@@ -114,3 +114,18 @@ test("motif écrit seul : toujours accepté", async () => {
   const r = await call(cancelRoute.POST, { path: `/api/sales/${id}/cancel`, cookie: ctx.cashier, params: { id }, body: { action: "request", reason: "Erreur de bidon" } });
   assert.equal(r.status, 201);
 });
+
+test("après 30 jours, les notes vocales s'effacent ; le texte reste", async () => {
+  const { purgeOldVoiceNotes } = await import("@/lib/voice");
+  const later = new Date(Date.now() + 31 * 24 * 3600_000);
+  assert.ok((await purgeOldVoiceNotes(later)) >= 2);
+  const list = await call(messagesRoute.GET, { path: `/api/cancellations/${ctx.cancel}/messages`, cookie: ctx.owner, params: { id: ctx.cancel } });
+  const voiced = list.json.data.filter((m: Json) => m.audioSeconds);
+  assert.ok(voiced.length >= 2);
+  for (const m of voiced) {
+    assert.equal(m.hasAudio, false);
+    assert.equal(m.audioExpired, true);
+  }
+  assert.ok(list.json.data.some((m: Json) => m.text === "Le client a rapporté le bidon ?"), "le texte reste");
+  assert.equal(await prisma.cancellationMessage.count({ where: { audio: { not: null } } }), 0);
+});
