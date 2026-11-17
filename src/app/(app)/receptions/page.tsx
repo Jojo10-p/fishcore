@@ -127,6 +127,7 @@ export default function ReceptionsPage() {
   const { centerId, currency, can, session } = useSession();
   // Modifier un arrivage : direction et gérant (le serveur revérifie)
   const canEdit = session?.user.role === "COMPANY_OWNER" || session?.user.role === "CENTER_MANAGER";
+  const [now] = useState(() => Date.now());
   const [editing, setEditing] = useState<{ id: string; draft: ReceiptDraft } | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Receipt | null>(null);
@@ -270,7 +271,7 @@ export default function ReceptionsPage() {
                   </Td>
                   <Td>
                     {r.supplier?.name ?? "—"}
-                    <PayBadge r={r} />
+                    <PayBadge r={r} now={now} />
                   </Td>
                   <Td className="whitespace-normal">
                     {r.lines.map((l) => (
@@ -1288,12 +1289,12 @@ function FloorPrice({ floor, sell, per, bidon, currency }: { floor: number; sell
 }
 
 /** Déjà payé / à crédit (reste à payer, échéance) sous le nom du fournisseur. */
-function PayBadge({ r }: { r: Receipt }) {
+function PayBadge({ r, now }: { r: Receipt; now: number }) {
   if (r.paymentMode === "PAID") return <span className="mt-0.5 block text-xs font-medium text-green-700">✅ Payé</span>;
   if (r.paymentMode !== "CREDIT" || !r.purchase) return null;
   const left = Number(r.purchase.totalAmount) - Number(r.purchase.paidAmount);
   if (left <= 0) return <span className="mt-0.5 block text-xs font-medium text-green-700">✅ Crédit soldé</span>;
-  const late = r.purchase.dueDate && new Date(r.purchase.dueDate).getTime() < Date.now();
+  const late = r.purchase.dueDate && new Date(r.purchase.dueDate).getTime() < now;
   return (
     <span className={`mt-0.5 block text-xs font-medium ${late ? "text-red-700" : "text-amber-700"}`}>
       🕒 À crédit : {left.toLocaleString("fr-FR")} F à payer

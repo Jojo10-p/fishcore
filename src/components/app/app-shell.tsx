@@ -25,6 +25,8 @@ interface NavItem {
   any: Permission[];
   /** Seulement si l'entreprise sert la marchandise au magasin sur présentation de la facture. */
   pickupOnly?: boolean;
+  /** Réservé à ces rôles (en plus des permissions) */
+  roles?: string[];
 }
 
 // Chaque rôle ne voit que ce qui sert à son travail (cahier §2.1, §20)
@@ -62,6 +64,8 @@ const NAV: Array<{ group: string | null; items: NavItem[] }> = [
       { href: "/caisses", label: "Clôtures de caisse", icon: "💰", any: ["cash:view_all_sessions"] },
       { href: "/depenses", label: "Dépenses", icon: "💸", any: ["expense:view"] },
       { href: "/finances", label: "Bénéfices", icon: "📈", any: ["report:view"] },
+      { href: "/comptabilite", label: "Comptabilité", icon: "📒", any: ["report:view"], roles: ["COMPANY_OWNER"] },
+      { href: "/mecef", label: "e-MECeF (DGI)", icon: "🧾", any: [], roles: ["COMPANY_OWNER", "CENTER_MANAGER"] },
     ],
   },
   {
@@ -82,7 +86,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const pickup = !!session?.company?.requiresPickup;
-  const visible = (n: NavItem) => (!n.pickupOnly || pickup) && (n.any.length === 0 || n.any.some((p) => can(p)));
+  const visible = (n: NavItem) =>
+    (!n.pickupOnly || pickup) && (!n.roles || n.roles.includes(session?.user.role ?? "")) && (n.any.length === 0 || n.any.some((p) => can(p)));
   const groups = NAV.map((g) => ({ ...g, items: g.items.filter(visible) })).filter((g) => g.items.length > 0);
 
   if (loading) return <Spinner />;
