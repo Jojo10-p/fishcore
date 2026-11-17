@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { emitCreditNote } from "@/lib/mecef";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 import { cancellationDecisionSchema, cancellationRequestSchema } from "@/lib/validations";
@@ -292,7 +293,19 @@ export async function POST(req: NextRequest, { params }: Params) {
         data: { saleId, cancellationId, decision: "APPROVED" },
       });
 
-      return NextResponse.json({ success: true, message: "Annulation approuvée. Stock restauré et remboursement enregistré." });
+      // Facture normalisée : la DGI reçoit un avoir qui annule la facture d'origine
+      const creditNote = await emitCreditNote(sale.companyId, saleId, cancellationId);
+      const mecefNote =
+        creditNote.status === "DONE"
+          ? ` Avoir e-MECeF émis (${creditNote.codeMecef}).`
+          : creditNote.status === "OFF"
+            ? ""
+            : " L'avoir e-MECeF n'a pas encore pu être envoyé à la DGI : il repartira automatiquement.";
+      return NextResponse.json({
+        success: true,
+        message: `Annulation approuvée. Stock restauré et remboursement enregistré.${mecefNote}`,
+        data: { mecef: creditNote },
+      });
     }
 
     throw new ApiError(400, "Action invalide");

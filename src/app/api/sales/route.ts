@@ -20,6 +20,7 @@ import { consumeStockForSale, type BatchAllocation } from "@/lib/stock";
 import { nextCompanyNumber, resolveSessionNumber } from "@/lib/invoice-numbers";
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
 import { actorLabel, notifyManagers } from "@/lib/notify";
+import { emitSale, mecefActive, saleMecef, scheduleMecef, type MecefResult } from "@/lib/mecef";
 
 
 // Lignes dans l'ordre de saisie (identifiants croissants)
@@ -337,7 +338,18 @@ export async function POST(req: NextRequest) {
 
     scheduleStockAlerts(companyId);
     notifySale(sale, user.id);
-    return NextResponse.json({ success: true, data: sale }, { status: 201 });
+    // Facture normalisée e-MECeF : à la caisse en ligne, on attend le code de la DGI
+    // pour l'imprimer sur le ticket ; une vente arrivée d'une caisse hors connexion
+    // est normalisée juste après (sa facture sera réimprimée).
+    let mecef: MecefResult | null = null;
+    if (await mecefActive(companyId)) {
+      if (sale.createdOffline) scheduleMecef(companyId, sale.id);
+      else {
+        mecef = await emitSale(companyId, sale.id);
+        scheduleMecef(companyId);
+      }
+    }
+    return NextResponse.json({ success: true, data: { ...sale, mecef } }, { status: 201 });
   } catch (error) {
     // Deux envois simultanés de la même vente : la seconde échoue sur la clé
     // d'idempotence → on renvoie la vente créée par la première.
@@ -369,7 +381,8 @@ async function findExistingSale(idempotencyKey: string, companyId: string) {
   if (!sale) return null;
   // Une clé d'une autre entreprise ne doit rien révéler
   if (sale.companyId !== companyId) throw new ApiError(409, "Clé d'idempotence déjà utilisée", "IDEMPOTENCY_CONFLICT");
-  return sale;
+  // Renvoi de la même vente (coupure pendant l'envoi) : avec sa facture normalisée si elle existe
+  return { ...sale, mecef: (await saleMecef(sale.id)).invoice };
 }
 
 // ─────────────────────────────────────────────

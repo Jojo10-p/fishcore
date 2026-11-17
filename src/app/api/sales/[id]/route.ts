@@ -9,6 +9,7 @@ import {
   requirePermission,
 } from "@/lib/auth";
 import { hasPermission } from "@/lib/rbac";
+import { emitSale, saleMecef } from "@/lib/mecef";
 
 // GET /api/sales/[id] — Détail d'une vente (ticket, facture A4, retrait au magasin)
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -86,7 +87,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         .map((m) => ({ lotNumber: m.batch!.lotNumber, expiresAt: m.batch!.expiresAt, quantity: m.quantity.negated().toString() })),
     }));
 
-    return NextResponse.json({ success: true, data: { ...sale, lines, deliveries, company } });
+    // Facture normalisée e-MECeF : si elle était restée en attente, on retente
+    // à la réimpression pour que le ticket porte le code de la DGI
+    let mecef = await saleMecef(sale.id);
+    if (mecef.invoice?.status === "PENDING") {
+      await emitSale(companyId, sale.id);
+      mecef = await saleMecef(sale.id);
+    }
+
+    return NextResponse.json({ success: true, data: { ...sale, lines, deliveries, company, mecef } });
   } catch (error) {
     return handleApiError(error, "SALES");
   }

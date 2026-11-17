@@ -268,6 +268,16 @@ model Company {
   // sur présentation de sa facture (dépôts de matériaux, quincailleries…).
   requiresPickup    Boolean @default(false)
 
+  // Facture normalisée e-MECeF (DGI Bénin) : chaque vente est envoyée à la DGI,
+  // qui renvoie le code MECeF/DGI et le QR code imprimés sur la facture.
+  mecefEnabled      Boolean   @default(false)
+  mecefMode         String    @default("TEST") // TEST (bac à sable DGI) ou PROD
+  mecefTokenEnc     String? // Jeton DGI chiffré (jamais renvoyé au navigateur)
+  mecefTaxGroup     String    @default("B") // Groupe de taxe par défaut des articles (A…F)
+  mecefNim          String? // N° de la machine virtuelle e-MCF (renvoyé par la DGI)
+  mecefTokenValid   DateTime? // Date de fin de validité du jeton
+  mecefCheckedAt    DateTime? // Dernier test de connexion réussi
+
   // Statut
   isActive        Boolean   @default(true)
   suspendedAt     DateTime?
@@ -559,6 +569,8 @@ model Product {
   @@unique([companyId, barcode])
   @@index([companyId, name])
   @@index([centerId])
+  mecefTaxGroup String? // Groupe de taxe e-MECeF propre à l'article (sinon celui de l'entreprise)
+
   @@map("products")
 }
 
@@ -1129,7 +1141,39 @@ model Sale {
   @@unique([companyId, saleNumber])
   @@unique([companyId, invoiceSeq])
   @@index([companyId, centerId, createdAt])
+  mecefInvoices MecefInvoice[]
+
   @@map("sales")
+}
+
+// Facture normalisée e-MECeF d'une vente (FV) ou son avoir (FA, à l'annulation)
+model MecefInvoice {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companyId      String
+  saleId         String
+  sale           Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  kind           String // FV (vente) ou FA (avoir)
+  cancellationId String?
+  mode           String // TEST ou PROD
+
+  status      String    @default("PENDING") // PENDING, DONE, ERROR (refus de la DGI : à corriger)
+  lockedAt    DateTime? // Envoi en cours (évite deux envois simultanés)
+  attempts    Int       @default(0)
+  lastError   String?
+  uid         String? // Demande en attente de confirmation chez la DGI
+  codeMecef   String? // Code MECeF/DGI (XXXX-XXXX-…)
+  qrCode      String?
+  counters    String?
+  nim         String?
+  dgiDateTime String?
+  totals      Json?
+
+  @@unique([saleId, kind])
+  @@index([companyId, status])
+  @@map("mecef_invoices")
 }
 
 /// Ligne de vente
