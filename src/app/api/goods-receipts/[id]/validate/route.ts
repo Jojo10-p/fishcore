@@ -14,6 +14,7 @@ import {
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
 import { actorLabel, notifyManagers } from "@/lib/notify";
 import { applyReceiptPayment, receiptPaymentSchema } from "@/lib/receipt-payment";
+import { handleArrivalPrices, proposedPricesSchema, type CostDrop } from "@/lib/price-decisions";
 import { readJson } from "@/lib/auth";
 
 // POST /api/goods-receipts/[id]/validate — Valider une réception : c'est ici, et
@@ -26,10 +27,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const companyId = requireCompany(user);
     const { id } = await params;
     // Déjà payé ou pris à crédit (facultatif pour les anciens écrans)
-    const body = (await readJson(req).catch(() => ({}))) as { payment?: unknown };
+    const body = (await readJson(req).catch(() => ({}))) as { payment?: unknown; proposedPrices?: unknown };
     const parsed = body?.payment === undefined ? null : receiptPaymentSchema.safeParse(body.payment);
     if (parsed && !parsed.success) throw new ApiError(400, parsed.error.issues[0]?.message ?? "Règlement invalide");
     const payment = parsed?.success ? parsed.data : null;
+    // Prix de vente proposés à l'arrivage (baisse : décision de la direction)
+    const proposedParsed = proposedPricesSchema.safeParse(body?.proposedPrices);
+    if (!proposedParsed.success) throw new ApiError(400, "Prix proposés invalides");
+    const proposed = proposedParsed.data;
+    const drops: CostDrop[] = [];
 
     const receipt = await prisma.goodsReceipt.findFirst({
       where: { id, center: { companyId } },
@@ -71,6 +77,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       for (const [index, line] of receipt.lines.entries()) {
         const unitCost = unitCosts[index];
         await tx.goodsReceiptLine.update({ where: { id: line.id }, data: { landedUnitCost: unitCost } });
+        // Ancien stock et son coût, avant l'arrivée de la nouvelle marchandise
+        if (!drops.some((d) => d.productId === line.productId)) {
+          const old = await tx.stock.aggregate({ where: { productId: line.productId, quantity: { gt: 0 } }, _sum: { quantity: true } });
+          const prev = await tx.stock.findFirst({ where: { centerId: receipt.centerId, productId: line.productId }, select: { avgCost: true } });
+          const oldQty = new Prisma.Decimal(old._sum.quantity ?? 0);
+          const oldCost = new Prisma.Decimal(prev?.avgCost ?? 0);
+          if (oldQty.gt(0) && oldCost.gt(0) && unitCost.lt(oldCost.mul(0.999))) {
+            drops.push({ productId: line.productId, oldCost, newCost: unitCost, oldQty });
+          }
+        }
         const stock = await receiveIntoStock(tx, {
           centerId: receipt.centerId,
           productId: line.productId,
@@ -175,6 +191,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
 
     scheduleStockAlerts(companyId);
+    // Prix de vente : hausse appliquée, baisse soumise à la direction
+    const decisions = await handleArrivalPrices({ companyId, centerId: receipt.centerId, receiptId: id, userId: user.id, drops, proposed });
 
     // Résumé pour la direction : qui a ajouté quoi, chez quel fournisseur, pour combien
     const total = receipt.lines.reduce((t, l) => t + Number(l.totalPrice), 0);
@@ -194,7 +212,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         lines: receipt.lines.map((l) => ({ name: l.product.name, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), totalPrice: Number(l.totalPrice) })),
       },
     });
-    return NextResponse.json({ success: true, message: "Réception validée. Stock mis à jour." });
+    return NextResponse.json({
+      success: true,
+      message: decisions.length
+        ? `Réception validée. Stock mis à jour. Prix d'achat en baisse : la direction va choisir le prix de vente (${decisions.length} article${decisions.length > 1 ? "s" : ""}).`
+        : "Réception validée. Stock mis à jour.",
+      data: { priceDecisions: decisions.map((d) => d.id) },
+    });
   } catch (error) {
     return handleApiError(error, "GOODS_RECEIPTS");
   }

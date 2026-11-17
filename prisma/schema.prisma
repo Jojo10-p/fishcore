@@ -572,6 +572,12 @@ model Product {
   @@index([centerId])
   mecefTaxGroup String? // Groupe de taxe e-MECeF propre à l'article (sinon celui de l'entreprise)
 
+  // Baisse du prix d'achat : l'ancien stock garde son prix ; le nouveau prix
+  // (choisi par la direction) s'applique quand cet ancien stock est vendu.
+  pendingPrice      Decimal? @db.Decimal(12, 2)
+  pendingPackagings Json? // [{ unitId, price }]
+  pendingPriceLeft  Decimal? @db.Decimal(12, 3) // Ancien stock encore à vendre (unité de base)
+
   @@map("products")
 }
 
@@ -1631,4 +1637,34 @@ model SetupAttempt {
 
   @@index([createdAt])
   @@map("setup_attempts")
+}
+
+// Le prix d'achat a baissé à l'arrivage : la direction choisit le prix de vente
+// du nouveau stock (l'ancien stock garde son prix jusqu'à épuisement).
+model PriceDecision {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companyId String
+  centerId  String
+  productId String
+  receiptId String
+
+  oldCost            Decimal @db.Decimal(14, 4) // Coût de l'ancien stock (par unité de base)
+  newCost            Decimal @db.Decimal(14, 4) // Coût du nouveau stock
+  currentPrice       Decimal @db.Decimal(12, 2) // Prix de vente au moment de l'arrivage
+  proposedPrice      Decimal? @db.Decimal(12, 2) // Prix proposé à l'arrivage (gérant)
+  proposedPackagings Json? // [{ unitId, price }]
+  oldQty             Decimal @db.Decimal(12, 3) // Ancien stock au moment de l'arrivage
+  proposedById       String
+
+  status       String    @default("PENDING") // PENDING, DECIDED
+  chosenPrice  Decimal?  @db.Decimal(12, 2)
+  decidedById  String?
+  decidedAt    DateTime?
+  appliedAt    DateTime? // Prix effectivement passé à la caisse
+
+  @@index([companyId, status])
+  @@map("price_decisions")
 }

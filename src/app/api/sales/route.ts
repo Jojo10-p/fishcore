@@ -21,6 +21,7 @@ import { nextCompanyNumber, resolveSessionNumber } from "@/lib/invoice-numbers";
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
 import { actorLabel, notifyManagers } from "@/lib/notify";
 import { emitSale, mecefActive, saleMecef, scheduleMecef, type MecefResult } from "@/lib/mecef";
+import { consumePendingPrices } from "@/lib/price-decisions";
 
 
 // Lignes dans l'ordre de saisie (identifiants croissants)
@@ -338,6 +339,8 @@ export async function POST(req: NextRequest) {
 
     scheduleStockAlerts(companyId);
     notifySale(sale, user.id);
+    // Ancien stock vendu : le prix choisi pour le nouveau stock passe à la caisse
+    await consumePendingPrices(companyId, sale.lines, user.id).catch((e) => console.error("[prix en attente]", e));
     // Facture normalisée e-MECeF : à la caisse en ligne, on attend le code de la DGI
     // pour l'imprimer sur le ticket ; une vente arrivée d'une caisse hors connexion
     // est normalisée juste après (sa facture sera réimprimée).

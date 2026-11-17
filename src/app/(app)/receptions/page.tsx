@@ -723,6 +723,11 @@ function ReceiptForm({
       const bidon = units.find((u) => u.symbol === "bidon") ?? units[0];
       const carton = units.find((u) => u.symbol === "carton");
       const lines: Array<{ productId: string; quantity: number; unitPrice: number; totalPrice: number }> = [];
+      // Prix baissé sur un article qui a encore du stock : proposé à la direction avec l'arrivage
+      // (si le prix d'achat a baissé, l'ancien stock garde son prix et le patron choisit)
+      const proposedPrices: Record<string, { price: number; packagings?: Array<{ unitId: string; price: number }> }> = {};
+      const hasStock = (p: ProductFull | null) => (p?.stocks ?? []).some((s) => Number(s.quantity) > 0);
+      const lowering = (p: ProductFull | null, sell: number) => !editId && !!p && hasStock(p) && sell < Number(p.sellingPrice);
       for (const r of filled) {
         if (r.retail) {
           // Vente au détail : stock en litres, prix du litre (½ et ¼ calculés à la caisse), bidon entier
@@ -753,6 +758,8 @@ function ReceiptForm({
               packagings: pk,
             });
             rid = created.data.id;
+          } else if (canPrice && lowering(r.product, r.sell)) {
+            proposedPrices[rid] = { price: r.sell, packagings: pk.map((x) => ({ unitId: x.unitId, price: x.sellingPrice })) };
           } else if (canPrice && (Number(r.product!.sellingPrice) !== r.sell || Number(r.retailBidon?.sellingPrice ?? 0) !== bidonSell || fractionChanged)) {
             const replaced = new Set(pk.map((x) => x.unitId));
             const keep = (r.product!.unitConversions ?? [])
@@ -791,7 +798,9 @@ function ReceiptForm({
             .filter((u) => !packagings.some((p) => p.unitId === u.fromUnitId))
             .map((u) => ({ unitId: u.fromUnitId, factor: Number(u.factor), sellingPrice: u.sellingPrice != null ? Number(u.sellingPrice) : null, barcode: u.barcode }));
           const priceChanged = Number(r.product!.sellingPrice) !== r.sell;
-          if (canPrice && (priceChanged || packagings.length)) {
+          if (canPrice && lowering(r.product, r.sell)) {
+            proposedPrices[id] = { price: r.sell, packagings: packagings.map((x) => ({ unitId: x.unitId, price: x.sellingPrice })) };
+          } else if (canPrice && (priceChanged || packagings.length)) {
             await apiSend(`/api/products/${id}`, { sellingPrice: r.sell, ...(packagings.length ? { packagings: [...keep, ...packagings] } : {}) }, "PATCH");
           }
         }
@@ -816,7 +825,12 @@ function ReceiptForm({
         await apiSend(`/api/goods-receipts/${editId}`, body, "PUT");
       } else {
         const res = await apiSend<{ data: { id: string } }>("/api/goods-receipts", body);
-        await apiSend(`/api/goods-receipts/${res.data.id}/validate`, { payment: body.payment });
+        const v = await apiSend<{ message?: string; data?: { priceDecisions?: string[] } }>(`/api/goods-receipts/${res.data.id}/validate`, { payment: body.payment, proposedPrices });
+        if (v.data?.priceDecisions?.length) {
+          window.alert(
+            "Le prix d'achat a baissé. L'ancien stock garde son prix de vente. Le patron a reçu une notification pour choisir le prix du nouveau stock."
+          );
+        }
       }
       await autosave.clear();
       await onSaved();
