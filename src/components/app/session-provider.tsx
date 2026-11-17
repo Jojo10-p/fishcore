@@ -20,7 +20,7 @@ export interface SessionData {
     /** Le client se fait servir au magasin sur présentation de sa facture. */
     requiresPickup?: boolean;
     /** Facture imprimée à la caisse : ticket thermique 80 mm ou A4. */
-    invoiceFormat?: "TICKET_80" | "A4";
+    invoiceFormat?: "TICKET_80" | "A4" | "A5";
   } | null;
   centers: Array<{ id: string; name: string; code: string; status: string }>;
   permissions: Permission[];

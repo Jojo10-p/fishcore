@@ -20,13 +20,15 @@ export type NotifyType =
   | "CANCEL_DECIDED"
   | "CASH_CLOSED"
   | "SALE_MADE"
-  | "CASH_VALIDATED";
+  | "CASH_VALIDATED"
+  | "SUPPLIER_DUE"
+  | "PRICE_DECISION";
 
 export interface NotifyInput {
   companyId: string;
   centerId?: string | null;
-  /** Auteur de l'action : il ne se notifie pas lui-même. */
-  actorId: string;
+  /** Auteur de l'action : il ne se notifie pas lui-même (absent : rappel automatique). */
+  actorId?: string;
   type: NotifyType;
   title: string;
   message: string;
@@ -72,7 +74,7 @@ async function deliver(n: NotifyInput): Promise<void> {
       type: n.type,
       title: n.title,
       message: n.message,
-      data: { ...(n.data ?? {}), link: n.link ?? null, actorId: n.actorId } as Prisma.InputJsonValue,
+      data: { ...(n.data ?? {}), link: n.link ?? null, actorId: n.actorId ?? null } as Prisma.InputJsonValue,
     })),
   });
   const devices = await prisma.pushSubscription.findMany({

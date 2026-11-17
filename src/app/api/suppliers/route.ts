@@ -15,6 +15,7 @@ import { hasPermission } from "@/lib/rbac";
 const supplierSchema = z.object({
   name: z.string().trim().min(2, "Nom du fournisseur requis"),
   phone: z.string().trim().optional(),
+  otherPhones: z.array(z.string().trim().min(6, "Numéro trop court").max(30)).max(5, "5 autres numéros au plus").optional(),
   email: z.string().trim().toLowerCase().email("Email invalide").optional().or(z.literal("")),
   address: z.string().trim().optional(),
   taxId: z.string().trim().optional(),
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
     const companyId = requireCompany(user);
     const suppliers = await prisma.supplier.findMany({
       where: { companyId, isActive: true },
-      select: { id: true, name: true, phone: true, email: true, address: true, taxId: true, paymentTermDays: true },
+      select: { id: true, name: true, phone: true, otherPhones: true, email: true, address: true, taxId: true, paymentTermDays: true },
       orderBy: { name: "asc" },
     });
 

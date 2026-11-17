@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { applyReceiptPayment, currentReceiptPayment, receiptPaymentSchema } from "@/lib/receipt-payment";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { goodsReceiptSchema } from "@/lib/validations";
@@ -36,7 +37,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     requireEditor(user);
     const companyId = requireCompany(user);
     const { id } = await params;
-    const data = parseBody(goodsReceiptSchema, await readJson(req));
+    const raw = await readJson(req);
+    const data = parseBody(goodsReceiptSchema, raw);
+    const parsedPayment = raw.payment === undefined ? null : receiptPaymentSchema.safeParse(raw.payment);
+    if (parsedPayment && !parsedPayment.success) throw new ApiError(400, parsedPayment.error.issues[0]?.message ?? "Règlement invalide");
+    // Le règlement suit le nouveau total : nouveau choix, ou celui fait à l'arrivage
+    const payment = parsedPayment?.success ? parsedPayment.data : await currentReceiptPayment(id);
 
     const receipt = await prisma.goodsReceipt.findFirst({
       where: { id, center: { companyId } },
@@ -190,6 +196,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           });
           await tx.goodsReceipt.update({ where: { id }, data: { purchaseId: purchase.id } });
         }
+        if (payment) await applyReceiptPayment(tx, { receiptId: id, companyId, userId: user.id, payment, hasSupplier: !!data.supplierId });
       }
 
       await writeAuditLog(
@@ -238,6 +245,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       include: {
         lines: { include: { product: { select: { id: true, name: true, sellingPrice: true, baseUnit: { select: { symbol: true } } } } } },
         supplier: { select: { id: true, name: true, phone: true } },
+        purchase: { select: { dueDate: true, totalAmount: true, paidAmount: true } },
       },
     });
     if (!receipt) throw new ApiError(404, "Arrivage introuvable");
@@ -270,8 +278,12 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     });
     if (!receipt) throw new ApiError(404, "Arrivage introuvable");
     await requireCenterAccess(user, receipt.centerId);
-    if (receipt.purchase && !new D(receipt.purchase.paidAmount).isZero()) {
-      throw new ApiError(409, "Le fournisseur a déjà été (en partie) payé pour cet arrivage : modifiez-le plutôt que de le supprimer", "ALREADY_PAID");
+    // Règlements faits plus tard (page Fournisseurs) : on ne supprime pas. Le « déjà payé » de l'arrivage part avec lui.
+    if (receipt.purchase) {
+      const later = await prisma.supplierPayment.count({ where: { purchaseId: receipt.purchase.id, atReceipt: false } });
+      if (later > 0) {
+        throw new ApiError(409, "Le fournisseur a déjà été (en partie) payé pour cet arrivage : modifiez-le plutôt que de le supprimer", "ALREADY_PAID");
+      }
     }
     const byProduct = sumBy(receipt.lines);
     const names = new Map(receipt.lines.map((l) => [l.productId, l.product]));
@@ -308,6 +320,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       }
       if (receipt.purchase) {
         await tx.goodsReceipt.update({ where: { id }, data: { purchaseId: null } });
+        await tx.supplierPayment.deleteMany({ where: { purchaseId: receipt.purchase.id, atReceipt: true } });
         await tx.purchase.delete({ where: { id: receipt.purchase.id } });
       }
       await tx.goodsReceipt.delete({ where: { id } });

@@ -24,6 +24,8 @@ const ICONS: Record<string, string> = {
   CASH_CLOSED: "💰",
   SALE_MADE: "🛒",
   CASH_VALIDATED: "✅",
+  SUPPLIER_DUE: "💳",
+  PRICE_DECISION: "🏷️",
 };
 
 function ago(iso: string) {

@@ -13,7 +13,6 @@ import {
   DocumentHeader,
   LinesTable,
   PartyBlock,
-  Signatures,
   Stamp,
   type DocCompany,
   type DocParty,
@@ -63,6 +62,19 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
   const { id } = use(params);
   const [sale, setSale] = useState<InvoiceData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Format du papier : A4 par défaut, A5 sur demande (?papier=a5)
+  const [paper, setPaper] = useState<"A4" | "A5">("A4");
+  useEffect(() => {
+    const t = setTimeout(() => setPaper(new URLSearchParams(window.location.search).get("papier") === "a5" ? "A5" : "A4"), 0);
+    return () => clearTimeout(t);
+  }, []);
+  const switchPaper = (p: "A4" | "A5") => {
+    setPaper(p);
+    const url = new URL(window.location.href);
+    if (p === "A5") url.searchParams.set("papier", "a5");
+    else url.searchParams.delete("papier");
+    window.history.replaceState(null, "", url);
+  };
 
   useEffect(() => {
     apiGet<{ data: InvoiceData }>(`/api/sales/${id}`)
@@ -92,10 +104,19 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
 
   return (
     <A4Page
+      paper={paper}
       toolbar={
-        <Link href={`/recu/${sale.id}`} className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm hover:bg-gray-50">
-          Ticket de caisse
-        </Link>
+        <>
+          <button
+            onClick={() => switchPaper(paper === "A4" ? "A5" : "A4")}
+            className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm hover:bg-gray-50"
+          >
+            Format {paper === "A4" ? "A5" : "A4"}
+          </button>
+          <Link href={`/recu/${sale.id}`} className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm hover:bg-gray-50">
+            Ticket de caisse
+          </Link>
+        </>
       }
     >
       <DocumentHeader
@@ -209,7 +230,6 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
         </section>
       )}
 
-      <Signatures labels={pickup ? ["Le client", "La caisse", "Le magasin"] : ["Le client", "La caisse"]} />
       <DocumentFooter company={sale.company} note={`${ROLE_LABELS[sale.cashier.role] ?? "Caissier"} : ${sale.cashier.firstName} — ${stamp(new Date(sale.createdAt))}`} />
     </A4Page>
   );

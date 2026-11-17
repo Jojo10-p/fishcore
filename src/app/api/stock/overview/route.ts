@@ -1,3 +1,4 @@
+import { phonesText } from "@/lib/phones";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ApiError, getCurrentUser, handleApiError, requireCenterAccess, requireCompany, requirePermission } from "@/lib/auth";
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
             quantity: true,
             unitPrice: true,
             totalPrice: true,
-            receipt: { select: { validatedAt: true, receivedAt: true, supplier: { select: { name: true, phone: true } } } },
+            receipt: { select: { validatedAt: true, receivedAt: true, supplier: { select: { name: true, phone: true, otherPhones: true } } } },
           },
           orderBy: { receipt: { validatedAt: "desc" } },
           take: 3000,
@@ -66,7 +67,7 @@ export async function GET(req: NextRequest) {
               total: Number(l.totalPrice),
               date: l.receipt.validatedAt ?? l.receipt.receivedAt,
               supplier: l.receipt.supplier?.name ?? null,
-              supplierPhone: l.receipt.supplier?.phone ?? null,
+              supplierPhone: phonesText(l.receipt.supplier) || null,
             }
           : Number(p.purchasePrice) > 0
             ? { unitPrice: Number(p.purchasePrice), quantity: null, total: null, date: null, supplier: null, supplierPhone: null }

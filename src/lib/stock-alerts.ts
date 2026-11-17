@@ -1,3 +1,4 @@
+import { phonesText } from "@/lib/phones";
 import { after } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -29,7 +30,7 @@ export interface StockEvent {
   quantity: number;
   refQty: number;
   /** Dernier fournisseur de cet article (pour le recommander). */
-  supplier?: { name: string; phone: string | null } | null;
+  supplier?: { name: string; phone: string | null; otherPhones?: string[] } | null;
 }
 
 interface Row {
@@ -104,7 +105,8 @@ const unitLabel = (unit: string, q: number) => (Math.abs(q) > 1 ? (PLURALS[unit.
 /** Texte de la notification. */
 export function stockNotification(e: StockEvent, multiCenter = false): PushPayload {
   const where = multiCenter ? ` (${e.centerName})` : "";
-  const from = e.supplier ? ` Acheté chez ${e.supplier.name}${e.supplier.phone ? ` : contactez-le au ${e.supplier.phone}` : ""}.` : "";
+  const tel = phonesText(e.supplier);
+  const from = e.supplier ? ` Acheté chez ${e.supplier.name}${tel ? ` : contactez-le au ${tel}` : ""}.` : "";
   if (e.kind === "half") {
     return {
       title: "Moitié du stock vendue",
@@ -149,7 +151,7 @@ async function lastSupplier(productId: string, centerId: string): Promise<{ name
   const row = await prisma.goodsReceiptLine.findFirst({
     where: { productId, receipt: { centerId, validatedAt: { not: null }, supplierId: { not: null } } },
     orderBy: { receipt: { validatedAt: "desc" } },
-    select: { receipt: { select: { supplier: { select: { name: true, phone: true } } } } },
+    select: { receipt: { select: { supplier: { select: { name: true, phone: true, otherPhones: true } } } } },
   });
   return row?.receipt.supplier ?? null;
 }

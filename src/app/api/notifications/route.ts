@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
+import { remindSupplierDues } from "@/lib/receipt-payment";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser, handleApiError, parseBody, readJson, requireCompany } from "@/lib/auth";
@@ -12,6 +13,15 @@ export async function GET(req: NextRequest) {
     const before = searchParams.get("before");
     const take = Math.min(Number(searchParams.get("take")) || 30, 100);
     const where = { companyId, userId: user.id };
+    // Rappels « achat à crédit à régler » : vérifiés au plus toutes les 6 heures, après la réponse
+    if (user.role === "COMPANY_OWNER" || user.role === "CENTER_MANAGER") {
+      const job = () => remindSupplierDues(companyId).catch((e) => console.error("[rappels fournisseurs]", e));
+      try {
+        after(job);
+      } catch {
+        void job(); // hors requête (tests)
+      }
+    }
     const [items, unread] = await Promise.all([
       prisma.notification.findMany({
         where: { ...where, ...(before ? { createdAt: { lt: new Date(before) } } : {}) },

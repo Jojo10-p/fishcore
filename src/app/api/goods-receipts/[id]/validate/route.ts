@@ -13,6 +13,8 @@ import {
 } from "@/lib/auth";
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
 import { actorLabel, notifyManagers } from "@/lib/notify";
+import { applyReceiptPayment, receiptPaymentSchema } from "@/lib/receipt-payment";
+import { readJson } from "@/lib/auth";
 
 // POST /api/goods-receipts/[id]/validate — Valider une réception : c'est ici, et
 // seulement ici, que le stock augmente (cahier §8.3). Chaque ligne crée un lot
@@ -23,6 +25,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     await requirePermission(user, "stock:receive");
     const companyId = requireCompany(user);
     const { id } = await params;
+    // Déjà payé ou pris à crédit (facultatif pour les anciens écrans)
+    const body = (await readJson(req).catch(() => ({}))) as { payment?: unknown };
+    const parsed = body?.payment === undefined ? null : receiptPaymentSchema.safeParse(body.payment);
+    if (parsed && !parsed.success) throw new ApiError(400, parsed.error.issues[0]?.message ?? "Règlement invalide");
+    const payment = parsed?.success ? parsed.data : null;
 
     const receipt = await prisma.goodsReceipt.findFirst({
       where: { id, center: { companyId } },
@@ -138,6 +145,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
       }
 
+      if (payment) {
+        await applyReceiptPayment(tx, { receiptId: id, companyId, userId: user.id, payment, hasSupplier: !!receipt.supplier });
+      }
+
       await writeAuditLog(
         {
           eventType: "STOCK_RECEIVED",
@@ -174,7 +185,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       actorId: user.id,
       type: "STOCK_ADDED",
       title: `Stock ajouté${receipt.supplier ? ` — ${receipt.supplier.name}` : ""}`,
-      message: `${await actorLabel(user.id)} a ajouté ${detail}. Achat : ${total.toLocaleString("fr-FR")} F.`,
+      message: `${await actorLabel(user.id)} a ajouté ${detail}. Achat : ${total.toLocaleString("fr-FR")} F${payment?.mode === "CREDIT" ? " — pris à crédit, à régler" : payment?.mode === "PAID" ? " — déjà payé" : ""}.`,
       link: "/receptions",
       data: {
         receiptId: receipt.id,

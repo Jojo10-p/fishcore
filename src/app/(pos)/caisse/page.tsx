@@ -343,8 +343,8 @@ function ActiveRegister({
   const printLast = useCallback(
     (sale = lastSale) => {
       if (!sale) return;
-      if (format === "A4" && !sale.offline && navigator.onLine) {
-        printInFrame(`/facture/${sale.id}`);
+      if ((format === "A4" || format === "A5") && !sale.offline && navigator.onLine) {
+        printInFrame(`/facture/${sale.id}${format === "A5" ? "?papier=a5" : ""}`);
         return;
       }
       const h: TicketHeader = header ?? {

@@ -2,6 +2,8 @@
 
 import { fractionUnits, HALF, QUARTER } from "@/lib/client/fraction-units";
 import { matchesSearch } from "@/lib/search-aliases";
+import { phonesOf } from "@/lib/phones";
+import { PhonesInput, phonesPayload } from "@/components/app/phones-input";
 import { COMMON_FORMATS, FORMAT_SEP, composeName, familyOf, formatLiters, litersLabel } from "@/lib/product-name";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
@@ -21,6 +23,8 @@ interface Receipt {
   handlingCost: string;
   otherCosts: string;
   supplier: { name: string } | null;
+  paymentMode?: string | null;
+  purchase?: { dueDate: string | null; totalAmount: string; paidAmount: string } | null;
   lines: Array<{
     id: string;
     quantity: string;
@@ -42,6 +46,8 @@ interface ProductOption {
 interface Supplier {
   id: string;
   name: string;
+  phone?: string | null;
+  otherPhones?: string[];
 }
 interface Unit {
   id: string;
@@ -83,6 +89,10 @@ interface ReceiptDraft {
   transportCost: string;
   handlingCost: string;
   lines: DraftLine[];
+  /** Déjà payé ou pris à crédit (obligatoire) */
+  paymentMode?: "" | "PAID" | "CREDIT";
+  paymentMethod?: string;
+  dueDate?: string;
 }
 
 const emptyLine = (fresh = false): DraftLine => ({
@@ -107,6 +117,9 @@ const emptyDraft = (fresh = false): ReceiptDraft => ({
   transportCost: "",
   handlingCost: "",
   lines: [emptyLine(fresh)],
+  paymentMode: "",
+  paymentMethod: "CASH",
+  dueDate: "",
 });
 const num = (v: string) => Number((v || "0").replace(",", "."));
 
@@ -255,7 +268,10 @@ export default function ReceptionsPage() {
                     {new Date(r.receivedAt).toLocaleDateString("fr-FR")}
                     {r.reference && <p className="text-xs text-gray-500">{r.reference}</p>}
                   </Td>
-                  <Td>{r.supplier?.name ?? "—"}</Td>
+                  <Td>
+                    {r.supplier?.name ?? "—"}
+                    <PayBadge r={r} />
+                  </Td>
                   <Td className="whitespace-normal">
                     {r.lines.map((l) => (
                       <span key={l.id} className="block">
@@ -370,6 +386,9 @@ interface EditableReceipt {
   transportCost: string;
   handlingCost: string;
   supplier: { id: string } | null;
+  paymentMode?: string | null;
+  paymentMethod?: string | null;
+  purchase?: { dueDate: string | null } | null;
   lines: Array<{ quantity: string; totalPrice: string; product: { id: string; name: string; sellingPrice: string; baseUnit: { symbol: string } } }>;
 }
 
@@ -381,6 +400,9 @@ function draftFromReceipt(r: EditableReceipt): ReceiptDraft {
     receivedAt: r.receivedAt.slice(0, 10),
     transportCost: Number(r.transportCost) ? String(Number(r.transportCost)) : "",
     handlingCost: Number(r.handlingCost) ? String(Number(r.handlingCost)) : "",
+    paymentMode: r.paymentMode === "PAID" || r.paymentMode === "CREDIT" ? r.paymentMode : "",
+    paymentMethod: r.paymentMethod ?? "CASH",
+    dueDate: r.purchase?.dueDate ? r.purchase.dueDate.slice(0, 10) : "",
     lines: r.lines.map((l) => {
       const retail = l.product.baseUnit.symbol === "L";
       const liters = formatLiters(l.product.name);
@@ -506,12 +528,12 @@ function ReceiptForm({
   const canPrice = can("product:price");
   const [draft, setDraft] = useState<ReceiptDraft>(() => initial ?? emptyDraft(startNew));
   const [hydrated, setHydrated] = useState(!editId);
-  const [phoneEdit, setPhoneEdit] = useState<string | null>(null);
+  const [phoneEdit, setPhoneEdit] = useState<string[] | null>(null);
   const [products, setProducts] = useState<ProductFull[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [suppliers, setSuppliers] = useState<Array<Supplier & { phone?: string | null }>>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
-  const [newSupplier, setNewSupplier] = useState<{ name: string; phone: string } | null>(null);
+  const [newSupplier, setNewSupplier] = useState<{ name: string; phones: string[] } | null>(null);
   const [focus, setFocus] = useState<number | null>(null);
   const [showFees, setShowFees] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -527,7 +549,7 @@ function ReceiptForm({
   }, [centerId]);
   useEffect(() => {
     loadProducts();
-    apiGet<{ data: Array<Supplier & { phone?: string | null }> }>("/api/suppliers").then((r) => setSuppliers(r.data)).catch(() => undefined);
+    apiGet<{ data: Supplier[] }>("/api/suppliers").then((r) => setSuppliers(r.data)).catch(() => undefined);
     apiGet<{ data: Unit[] }>("/api/units").then((r) => setUnits(r.data)).catch(() => undefined);
     apiGet<{ data: Suggestion[] }>(`/api/product-suggestions?centerId=${centerId}`).then((r) => setSuggestions(r.data)).catch(() => undefined);
   }, [loadProducts, centerId]);
@@ -643,12 +665,18 @@ function ReceiptForm({
   const filled = rows.filter((r) => !r.blank);
   const goods = filled.reduce((s, r) => s + r.lot, 0);
   const fees = num(draft.transportCost) + num(draft.handlingCost);
-  const canSave = online && filled.length > 0 && filled.every((r) => r.ok);
+  const payErr = !draft.paymentMode
+    ? "Cochez « Déjà payé » ou « Pris à crédit »"
+    : draft.paymentMode === "CREDIT" && !draft.supplierId
+      ? "Pris à crédit : choisissez le fournisseur à qui on doit l'argent"
+      : undefined;
+  const canSave = online && filled.length > 0 && filled.every((r) => r.ok) && !payErr;
 
   const addSupplier = async () => {
     if (!newSupplier?.name.trim()) return;
     try {
-      const res = await apiSend<{ data: Supplier & { phone?: string | null } }>("/api/suppliers", { name: newSupplier.name.trim(), phone: newSupplier.phone.trim() || undefined });
+      const { phone, otherPhones } = phonesPayload(newSupplier.phones);
+      const res = await apiSend<{ data: Supplier }>("/api/suppliers", { name: newSupplier.name.trim(), phone: phone || undefined, otherPhones });
       setSuppliers((s) => [...s, res.data].sort((a, b) => a.name.localeCompare(b.name)));
       setDraft((d) => ({ ...d, supplierId: res.data.id }));
       setNewSupplier(null);
@@ -660,8 +688,9 @@ function ReceiptForm({
   const savePhone = async () => {
     if (!supplier || phoneEdit === null) return;
     try {
-      await apiSend(`/api/suppliers/${supplier.id}`, { phone: phoneEdit.trim() }, "PATCH");
-      setSuppliers((list) => list.map((s) => (s.id === supplier.id ? { ...s, phone: phoneEdit.trim() } : s)));
+      const body = phonesPayload(phoneEdit);
+      await apiSend(`/api/suppliers/${supplier.id}`, body, "PATCH");
+      setSuppliers((list) => list.map((s) => (s.id === supplier.id ? { ...s, ...body } : s)));
       setPhoneEdit(null);
     } catch (e) {
       setError(errorMessage(e));
@@ -681,6 +710,13 @@ function ReceiptForm({
   const save = async () => {
     setTried(true);
     if (!canSave) return;
+    // Prix de vente sous le prix d'achat : on prévient avant d'enregistrer
+    const losses = filled.filter((r) => {
+      const cost = r.qty > 0 && r.lot > 0 ? r.lot / r.qty : 0;
+      const floor = r.retail ? (Number(r.liters) > 0 ? ceil25(cost / Number(r.liters)) : 0) : ceil25(cost);
+      return floor > 0 && r.sell > 0 && r.sell < floor;
+    });
+    if (losses.length && !window.confirm(`Vente à perte : le prix de vente de ${losses.map((r) => r.l.name).join(", ")} est sous le prix d'achat. Enregistrer quand même ?`)) return;
     setBusy(true);
     setError(null);
     try {
@@ -769,13 +805,18 @@ function ReceiptForm({
         transportCost: num(draft.transportCost),
         handlingCost: num(draft.handlingCost),
         lines,
+        payment: {
+          mode: draft.paymentMode,
+          ...(draft.paymentMode === "PAID" ? { method: draft.paymentMethod || "CASH" } : {}),
+          ...(draft.paymentMode === "CREDIT" && draft.dueDate ? { dueDate: draft.dueDate } : {}),
+        },
       };
       if (editId) {
         // Le stock est corrigé de la différence, l'historique garde tout
         await apiSend(`/api/goods-receipts/${editId}`, body, "PUT");
       } else {
         const res = await apiSend<{ data: { id: string } }>("/api/goods-receipts", body);
-        await apiSend(`/api/goods-receipts/${res.data.id}/validate`, {});
+        await apiSend(`/api/goods-receipts/${res.data.id}/validate`, { payment: body.payment });
       }
       await autosave.clear();
       await onSaved();
@@ -866,34 +907,36 @@ function ReceiptForm({
         </div>
         {supplier &&
           (phoneEdit !== null ? (
-            <div className="flex flex-wrap items-end gap-2">
-              <Field label={`Téléphone de ${supplier.name}`}>
-                <Input type="tel" value={phoneEdit} onChange={(e) => setPhoneEdit(e.target.value)} placeholder="+229 …" autoFocus />
-              </Field>
-              <Button variant="secondary" disabled={!online} onClick={() => void savePhone()}>
-                Enregistrer
-              </Button>
-              <Button variant="ghost" onClick={() => setPhoneEdit(null)}>
-                ✕
-              </Button>
+            <div className="space-y-2 rounded-xl bg-gray-50 p-3">
+              <p className="text-sm font-medium text-gray-700">Numéros de {supplier.name}</p>
+              <PhonesInput value={phoneEdit} onChange={setPhoneEdit} />
+              <div className="flex gap-2">
+                <Button variant="secondary" disabled={!online} onClick={() => void savePhone()}>
+                  Enregistrer
+                </Button>
+                <Button variant="ghost" onClick={() => setPhoneEdit(null)}>
+                  Annuler
+                </Button>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-gray-600">
-              📞 Contact du fournisseur : {supplier.phone ? <strong>{supplier.phone}</strong> : <span className="text-gray-400">non renseigné</span>}{" "}
-              <button className="ml-1 text-blue-600 hover:underline" onClick={() => setPhoneEdit(supplier.phone ?? "")}>
-                Modifier
+              📞 {phonesOf(supplier).length > 1 ? "Numéros" : "Contact"} du fournisseur :{" "}
+              {phonesOf(supplier).length ? <strong>{phonesOf(supplier).join(" / ")}</strong> : <span className="text-gray-400">non renseigné</span>}{" "}
+              <button className="ml-1 text-blue-600 hover:underline" onClick={() => setPhoneEdit(phonesOf(supplier).length ? phonesOf(supplier) : [""])}>
+                {phonesOf(supplier).length ? "Modifier / ajouter un numéro" : "Ajouter"}
               </button>
             </p>
           ))}
         {newSupplier ? (
-          <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end rounded-xl bg-gray-50 p-3">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-start rounded-xl bg-gray-50 p-3">
             <Field label="Nom du nouveau fournisseur">
               <Input value={newSupplier.name} onChange={(e) => setNewSupplier({ ...newSupplier, name: e.target.value })} placeholder="ex. Distrilub Cotonou" />
             </Field>
-            <Field label="Contact (téléphone)" hint="Servira dans les alertes de stock">
-              <Input type="tel" value={newSupplier.phone} onChange={(e) => setNewSupplier({ ...newSupplier, phone: e.target.value })} placeholder="+229 …" />
+            <Field label="Téléphones" hint="Servent dans les alertes de stock">
+              <PhonesInput value={newSupplier.phones} onChange={(phones) => setNewSupplier({ ...newSupplier, phones })} />
             </Field>
-            <div className="flex gap-2">
+            <div className="flex gap-2 sm:pt-6">
               <Button variant="secondary" onClick={addSupplier} disabled={!newSupplier.name.trim() || !online}>
                 Ajouter
               </Button>
@@ -903,7 +946,7 @@ function ReceiptForm({
             </div>
           </div>
         ) : (
-          <button className="text-sm text-blue-600 hover:underline" onClick={() => setNewSupplier({ name: "", phone: "" })}>
+          <button className="text-sm text-blue-600 hover:underline" onClick={() => setNewSupplier({ name: "", phones: [""] })}>
             + Nouveau fournisseur
           </button>
         )}
@@ -916,6 +959,10 @@ function ReceiptForm({
           const word = r.retail ? "bidons" : unitWord(r.product?.baseUnit.symbol);
           const one = r.product?.baseUnit.symbol === "btl" ? "bouteille" : word === "seaux" ? "seau" : word.replace(/s$/, "");
           const costPer = r.qty > 0 && r.lot > 0 ? r.lot / r.qty : 0;
+          // Prix d'achat unitaire arrondi au 25 F supérieur : c'est le prix plancher de vente
+          const litres = Number(r.liters) > 0 ? Number(r.liters) : 0;
+          const floor = r.retail ? (litres > 0 ? ceil25(costPer / litres) : 0) : ceil25(costPer);
+          const belowFloor = floor > 0 && r.sell > 0 && r.sell < floor;
           const stock = r.product?.stocks?.[0] ? Number(r.product.stocks[0].quantity) : null;
           const typed = norm(r.l.name);
           // Un clic dans le champ ouvre toute la liste des produits ; taper la filtre (abréviations comprises)
@@ -1062,7 +1109,7 @@ function ReceiptForm({
               {r.retail ? (
                 <>
                   <fieldset disabled={!!r.product && !canPrice} className="grid grid-cols-2 gap-3 disabled:opacity-60">
-                    <Field label="Prix du litre" error={err(r.errors.sellingPrice)}>
+                    <Field label="Prix du litre" error={err(r.errors.sellingPrice) ?? (belowFloor ? "Vente à perte !" : undefined)}>
                       <Input inputMode="numeric" value={r.l.sellingPrice} onChange={(e) => setLine(i, { sellingPrice: e.target.value })} placeholder="ex. 1 500" />
                     </Field>
                     <Field label={Number(r.liters) > 0 ? `Le bidon entier (${fmtL(Number(r.liters))})` : "Le bidon entier"} hint="Vide : litres × prix du litre">
@@ -1086,16 +1133,12 @@ function ReceiptForm({
                       <strong><Money value={num(r.l.quarterPrice ?? "") > 0 ? num(r.l.quarterPrice ?? "") : r.sell / 4} currency={currency} /></strong>
                     </p>
                   )}
-                  {costPer > 0 && r.sell > 0 && Number(r.liters) > 0 && (
-                    <p className={`text-sm font-medium ${r.sell - costPer / Number(r.liters) > 0 ? "text-green-700" : "text-red-700"}`}>
-                      {r.sell - costPer / Number(r.liters) >= 0 ? "Bénéfice" : "Perte"} : <Money value={Math.abs(r.sell - costPer / Number(r.liters))} currency={currency} /> par litre
-                    </p>
-                  )}
+                  {floor > 0 && <FloorPrice floor={floor} sell={r.sell} per="litre" bidon={litres > 0 ? ceil25(costPer) : 0} currency={currency} />}
                 </>
               ) : (
               <>
               <fieldset disabled={!!r.product && !canPrice} className="grid grid-cols-2 sm:grid-cols-4 gap-3 disabled:opacity-60">
-                <Field label={`1 ${one}`} error={err(r.errors.sellingPrice)}>
+                <Field label={`1 ${one}`} error={err(r.errors.sellingPrice) ?? (belowFloor ? "Vente à perte !" : undefined)}>
                   <Input inputMode="numeric" value={r.l.sellingPrice} onChange={(e) => setLine(i, { sellingPrice: e.target.value })} placeholder="ex. 3 500" />
                 </Field>
                 <Field label={r.perCarton > 0 ? `Le carton (${r.perCarton})` : "Le carton"} hint="Facultatif">
@@ -1108,11 +1151,7 @@ function ReceiptForm({
                   <Input inputMode="numeric" value={r.l.lotPrice2} onChange={(e) => setLine(i, { lotPrice2: e.target.value })} placeholder="ex. 10 000" />
                 </Field>
               </fieldset>
-              {costPer > 0 && r.sell > 0 && (
-                <p className={`text-sm font-medium ${r.sell - costPer > 0 ? "text-green-700" : "text-red-700"}`}>
-                  {r.sell - costPer >= 0 ? "Bénéfice" : "Perte"} : <Money value={Math.abs(r.sell - costPer)} currency={currency} /> par {one}
-                </p>
-              )}
+              {floor > 0 && <FloorPrice floor={floor} sell={r.sell} per={one} currency={currency} />}
               </>
               )}
             </div>
@@ -1144,9 +1183,46 @@ function ReceiptForm({
         </button>
       )}
 
+      {/* 4. Règlement : déjà payé ou à crédit */}
+      <section className={`space-y-3 rounded-xl border p-3 ${tried && payErr ? "border-red-300 bg-red-50" : "border-gray-200"}`}>
+        <p className="text-sm font-semibold text-gray-900">La marchandise est…</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {(
+            [
+              ["PAID", "✅ Déjà payée", "Le fournisseur est réglé : rien à rappeler."],
+              ["CREDIT", "🕒 Prise à crédit", "À régler plus tard : la direction recevra un rappel."],
+            ] as const
+          ).map(([v, label, hint]) => (
+            <label key={v} className={`flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm ${draft.paymentMode === v ? "border-blue-500 bg-blue-50" : "border-gray-200 bg-white"}`}>
+              <input type="radio" name="paymentMode" className="mt-1" checked={draft.paymentMode === v} onChange={() => setDraft((d) => ({ ...d, paymentMode: v }))} />
+              <span>
+                <span className="font-semibold">{label}</span>
+                <span className="block text-xs text-gray-500">{hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        {draft.paymentMode === "PAID" && (
+          <Field label="Payée comment ?">
+            <Select value={draft.paymentMethod || "CASH"} onChange={(e) => setDraft((d) => ({ ...d, paymentMethod: e.target.value }))}>
+              <option value="CASH">Espèces</option>
+              <option value="MOBILE_MONEY">Mobile money</option>
+              <option value="TRANSFER">Virement</option>
+              <option value="CARD">Carte</option>
+            </Select>
+          </Field>
+        )}
+        {draft.paymentMode === "CREDIT" && (
+          <Field label="À payer avant le (facultatif)" hint="Vide : selon le délai du fournisseur. Rappel 2 jours avant, puis chaque jour en cas de retard.">
+            <Input type="date" value={draft.dueDate ?? ""} onChange={(e) => setDraft((d) => ({ ...d, dueDate: e.target.value }))} />
+          </Field>
+        )}
+        {tried && payErr && <p className="text-sm font-medium text-red-700">{payErr}</p>}
+      </section>
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-gray-100 pt-4">
         <p className="text-sm text-gray-700">
-          Total payé : <strong><Money value={goods + fees} currency={currency} /></strong>
+          {draft.paymentMode === "CREDIT" ? "Total à payer" : "Total payé"} : <strong><Money value={goods + fees} currency={currency} /></strong>
           {fees > 0 && <span className="text-gray-500"> (dont frais <Money value={fees} currency={currency} />)</span>}
         </p>
         <div className="flex flex-wrap gap-2">
@@ -1161,5 +1237,53 @@ function ReceiptForm({
       {tried && !canSave && filled.length > 0 && <Alert tone="amber">Complétez les champs en rouge pour enregistrer.</Alert>}
       {tried && filled.length === 0 && <Alert tone="amber">Ajoutez au moins un article.</Alert>}
     </Card>
+  );
+}
+
+/** Arrondi au 25 F supérieur : 1 119 → 1 125, 1 137 → 1 150, 1 180 → 1 200 (1 100 reste 1 100). */
+function ceil25(n: number): number {
+  return n > 0 ? Math.ceil(Math.round(n * 100) / 100 / 25) * 25 : 0;
+}
+
+/** Prix d'achat unitaire (arrondi) = on ne vend pas en dessous. */
+function FloorPrice({ floor, sell, per, bidon, currency }: { floor: number; sell: number; per: string; bidon?: number; currency: string }) {
+  const loss = sell > 0 && sell < floor;
+  const gain = sell > 0 ? sell - floor : 0;
+  return (
+    <div className={`rounded-xl border p-3 text-sm ${loss ? "border-red-300 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+      <p>
+        Prix d&apos;achat unitaire : <strong><Money value={floor} currency={currency} /></strong> le {per}
+        {bidon ? (
+          <>
+            {" "}(<Money value={bidon} currency={currency} /> le bidon)
+          </>
+        ) : null}
+      </p>
+      <p className="font-semibold">⛔ Ne pas vendre en dessous de <Money value={floor} currency={currency} /> le {per}.</p>
+      {loss ? (
+        <p className="mt-1 font-bold">⚠️ Vente à perte : {(floor - sell).toLocaleString("fr-FR")} F de perte par {per}.</p>
+      ) : (
+        sell > 0 && (
+          <p className="mt-1 text-green-800">
+            Bénéfice : <strong><Money value={gain} currency={currency} /></strong> par {per}.
+          </p>
+        )
+      )}
+    </div>
+  );
+}
+
+/** Déjà payé / à crédit (reste à payer, échéance) sous le nom du fournisseur. */
+function PayBadge({ r }: { r: Receipt }) {
+  if (r.paymentMode === "PAID") return <span className="mt-0.5 block text-xs font-medium text-green-700">✅ Payé</span>;
+  if (r.paymentMode !== "CREDIT" || !r.purchase) return null;
+  const left = Number(r.purchase.totalAmount) - Number(r.purchase.paidAmount);
+  if (left <= 0) return <span className="mt-0.5 block text-xs font-medium text-green-700">✅ Crédit soldé</span>;
+  const late = r.purchase.dueDate && new Date(r.purchase.dueDate).getTime() < Date.now();
+  return (
+    <span className={`mt-0.5 block text-xs font-medium ${late ? "text-red-700" : "text-amber-700"}`}>
+      🕒 À crédit : {left.toLocaleString("fr-FR")} F à payer
+      {r.purchase.dueDate ? ` ${late ? "— en retard depuis le" : "avant le"} ${new Date(r.purchase.dueDate).toLocaleDateString("fr-FR")}` : ""}
+    </span>
   );
 }

@@ -25,7 +25,7 @@ interface CompanySettings {
   quoteValidityDays: number;
   invoiceNotes: string | null;
   requiresPickup: boolean;
-  invoiceFormat: "TICKET_80" | "A4";
+  invoiceFormat: "TICKET_80" | "A4" | "A5";
   invoiceCounter: number;
 }
 
@@ -134,7 +134,8 @@ export default function SettingsPage() {
             {(
               [
                 ["TICKET_80", "Ticket 80 mm", "Imprimante thermique (XP-80C…) : la facture sort sur le rouleau, comme un ticket."],
-                ["A4", "Page A4", "Imprimante de bureau : facture complète avec en-tête, signatures et montant en lettres."],
+                ["A4", "Page A4", "Imprimante de bureau : facture complète avec en-tête et montant en lettres."],
+                ["A5", "Page A5 (demi-feuille)", "La même facture complète, en plus petit : moitié d'une feuille A4."],
               ] as const
             ).map(([value, label, hint]) => (
               <label key={value} className="flex items-start gap-2 text-sm">

@@ -277,6 +277,7 @@ model Company {
   mecefNim          String? // N° de la machine virtuelle e-MCF (renvoyé par la DGI)
   mecefTokenValid   DateTime? // Date de fin de validité du jeton
   mecefCheckedAt    DateTime? // Dernier test de connexion réussi
+  dueRemindersAt    DateTime? // Dernière vérification des achats à crédit à régler
 
   // Statut
   isActive        Boolean   @default(true)
@@ -747,7 +748,8 @@ model Supplier {
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   name            String
-  phone           String?
+  phone           String? // Numéro principal
+  otherPhones     String[] @default([]) // Autres numéros (WhatsApp, livreur, bureau…)
   email           String?
   address         String?
   taxId           String?
@@ -781,6 +783,7 @@ model Purchase {
   dueDate     DateTime?
   notes       String?
   createdById String
+  lastReminderAt DateTime? // Dernier rappel « à régler » envoyé à la direction
 
   receipts GoodsReceipt[]
   payments SupplierPayment[]
@@ -806,6 +809,7 @@ model SupplierPayment {
   allocations    Json? // [{ purchaseId, amount }] : imputation réelle
   paidById       String
   notes          String?
+  atReceipt      Boolean       @default(false) // Payé à l'arrivage (case « déjà payé »)
 
   @@index([companyId, supplierId])
   @@map("supplier_payments")
@@ -919,6 +923,9 @@ model GoodsReceipt {
 
   reference     String?
   receivedAt    DateTime  @default(now())
+  // Règlement de la marchandise : PAID (déjà payé) ou CREDIT (pris à crédit, à régler)
+  paymentMode   String?
+  paymentMethod PaymentMethod?
   isValidated   Boolean   @default(false) // Validation = augmentation du stock
   validatedAt   DateTime?
   validatedById String?

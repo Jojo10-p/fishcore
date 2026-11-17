@@ -72,11 +72,17 @@ export function Barcode({ value, height = 38 }: { value: string; height?: number
   return <svg ref={ref} aria-label={`Code-barres ${value}`} />;
 }
 
-/** Page A4 + barre d'outils (masquée à l'impression). */
-export function A4Page({ children, toolbar }: { children: React.ReactNode; toolbar?: React.ReactNode }) {
+/** Page A4 (ou A5 : la même mise en page, réduite) + barre d'outils (masquée à l'impression). */
+export function A4Page({ children, toolbar, paper = "A4" }: { children: React.ReactNode; toolbar?: React.ReactNode; paper?: "A4" | "A5" }) {
+  const a5 = paper === "A5";
   return (
     <div className="min-h-dvh bg-gray-100 py-6 print:bg-white print:py-0">
-      <style>{`@page { size: A4; margin: 12mm; } @media print { html, body { background: #fff; } article { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }`}</style>
+      <style>{
+        a5
+          ? // A5 = 148 × 210 mm : la page A4 réduite à 72 % tient dans la zone imprimable
+            `@page { size: A5; margin: 7mm; } article.doc-page { zoom: 0.72; } @media print { html, body { background: #fff; } article { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }`
+          : `@page { size: A4; margin: 12mm; } @media print { html, body { background: #fff; } article { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }`
+      }</style>
       <div className="mx-auto mb-4 flex max-w-[210mm] flex-wrap justify-center gap-2 px-4 print:hidden">
         <button onClick={() => window.print()} className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">
           Imprimer
@@ -86,7 +92,7 @@ export function A4Page({ children, toolbar }: { children: React.ReactNode; toolb
           Fermer
         </button>
       </div>
-      <article className="mx-auto w-full max-w-[210mm] min-h-[297mm] bg-white px-[14mm] py-[12mm] text-[12px] leading-snug text-gray-900 shadow print:min-h-0 print:max-w-none print:p-0 print:shadow-none">
+      <article className="doc-page mx-auto w-full max-w-[210mm] min-h-[297mm] bg-white px-[14mm] py-[12mm] text-[12px] leading-snug text-gray-900 shadow print:min-h-0 print:max-w-none print:p-0 print:shadow-none">
         {children}
       </article>
     </div>

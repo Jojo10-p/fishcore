@@ -5,6 +5,8 @@ import { useSession } from "@/components/app/session-provider";
 import { DrawerSelect } from "@/components/app/drawer-select";
 import { PAYMENT_METHOD_LABELS } from "@/components/app/period-picker";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, Money, PageHeader, Select, Spinner, Table, Td } from "@/components/ui";
+import { phonesText } from "@/lib/phones";
+import { PhonesInput, phonesPayload } from "@/components/app/phones-input";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
 import { formatCurrency, currencyLabel } from "@/lib/utils";
 
@@ -12,6 +14,7 @@ interface SupplierRow {
   id: string;
   name: string;
   phone: string | null;
+  otherPhones?: string[];
   paymentTermDays: number;
   debt: string;
   overdue: string;
@@ -82,7 +85,7 @@ export default function SuppliersPage() {
                 <tr key={r.id}>
                   <Td>
                     <p className="font-medium">{r.name}</p>
-                    {r.phone && <p className="text-xs text-gray-500">{r.phone}</p>}
+                    {phonesText(r) && <p className="text-xs text-gray-500">{phonesText(r)}</p>}
                   </Td>
                   <Td>{r.paymentTermDays ? `${r.paymentTermDays} j` : "comptant"}</Td>
                   <Td className={debt > 0 ? "font-semibold" : "text-gray-500"}>
@@ -262,7 +265,8 @@ function SupplierModal({ id, currency, now, onClose, onChanged }: { id: string; 
 }
 
 function CreateSupplierModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
-  const [form, setForm] = useState({ name: "", phone: "", address: "", taxId: "", paymentTermDays: "0" });
+  const [form, setForm] = useState({ name: "", address: "", taxId: "", paymentTermDays: "0" });
+  const [phones, setPhones] = useState<string[]>([""]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -271,7 +275,10 @@ function CreateSupplierModal({ onClose, onCreated }: { onClose: () => void; onCr
     try {
       await apiSend("/api/suppliers", {
         name: form.name,
-        phone: form.phone || undefined,
+        ...(() => {
+          const { phone, otherPhones } = phonesPayload(phones);
+          return { phone: phone || undefined, otherPhones };
+        })(),
         address: form.address || undefined,
         taxId: form.taxId || undefined,
         paymentTermDays: Number(form.paymentTermDays || 0),
@@ -304,10 +311,10 @@ function CreateSupplierModal({ onClose, onCreated }: { onClose: () => void; onCr
       <Field label="Nom">
         <Input value={form.name} onChange={set("name")} autoFocus />
       </Field>
+      <Field label="Téléphones">
+        <PhonesInput value={phones} onChange={setPhones} />
+      </Field>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Téléphone">
-          <Input value={form.phone} onChange={set("phone")} />
-        </Field>
         <Field label="Délai de paiement (jours)" hint="0 = paiement comptant">
           <Input inputMode="numeric" value={form.paymentTermDays} onChange={set("paymentTermDays")} />
         </Field>

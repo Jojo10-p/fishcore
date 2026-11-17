@@ -98,6 +98,7 @@ export async function GET(req: NextRequest) {
       include: {
         lines: { include: { product: { select: { name: true, baseUnit: { select: { symbol: true } } } } } },
         supplier: { select: { name: true } },
+        purchase: { select: { dueDate: true, totalAmount: true, paidAmount: true } },
       },
       orderBy: { createdAt: "desc" },
       take: 100,
