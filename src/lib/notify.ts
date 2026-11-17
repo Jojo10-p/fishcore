@@ -18,6 +18,7 @@ export type NotifyType =
   | "PRODUCT_CREATED"
   | "CANCEL_REQUESTED"
   | "CANCEL_DECIDED"
+  | "CANCEL_MESSAGE"
   | "CASH_CLOSED"
   | "SALE_MADE"
   | "CASH_VALIDATED"

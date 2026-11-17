@@ -21,6 +21,7 @@ const ICONS: Record<string, string> = {
   PRODUCT_CREATED: "✨",
   CANCEL_REQUESTED: "↩️",
   CANCEL_DECIDED: "✅",
+  CANCEL_MESSAGE: "🎤",
   CASH_CLOSED: "💰",
   SALE_MADE: "🛒",
   CASH_VALIDATED: "✅",

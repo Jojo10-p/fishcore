@@ -337,7 +337,8 @@ export const goodsReceiptSchema = z.object({
 
 export const cancellationRequestSchema = z.object({
   saleId: z.string().min(1),
-  requestReason: z.string().min(5, "Motif requis (min. 5 caractères)"),
+  // Écrit (5 caractères au moins) ou remplacé par une note vocale
+  requestReason: z.string().trim().min(5, "Motif requis : écrivez-le (5 caractères au moins) ou enregistrez une note vocale"),
 });
 
 export const cancellationDecisionSchema = z.object({

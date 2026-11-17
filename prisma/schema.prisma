@@ -1256,7 +1256,26 @@ model Cancellation {
   stockImpact Json? // Détail des mouvements de stock liés
   cashImpact  Decimal?  @db.Decimal(12, 2)
 
+  messages CancellationMessage[]
+
   @@map("cancellations")
+}
+
+// Échange sur une demande d'annulation : texte et/ou note vocale
+// (le caissier explique, le patron ou le gérant demande des précisions ou répond)
+model CancellationMessage {
+  id             String       @id @default(cuid())
+  createdAt      DateTime     @default(now())
+  cancellationId String
+  cancellation   Cancellation @relation(fields: [cancellationId], references: [id], onDelete: Cascade)
+  authorId       String
+  text           String?
+  audio          Bytes? // Note vocale (quelques dizaines de Ko)
+  audioMime      String?
+  audioSeconds   Int?
+
+  @@index([cancellationId, createdAt])
+  @@map("cancellation_messages")
 }
 
 /// Remboursement

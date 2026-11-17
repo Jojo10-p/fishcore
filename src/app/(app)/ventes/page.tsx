@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, Money, PageHeader, Spinner, Table, Td, Textarea } from "@/components/ui";
+import { VoiceRecorder, type VoiceNote } from "@/components/app/voice-recorder";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
 import { formatCurrency } from "@/lib/utils";
 
@@ -132,16 +133,24 @@ function CancelRequestModal({ sale, onClose, onDone }: { sale: SaleRow | null; o
   const { session } = useSession();
   const pickup = !!session?.company?.requiresPickup;
   const [reason, setReason] = useState("");
+  const [voice, setVoice] = useState<VoiceNote | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Motif obligatoire : écrit (5 caractères au moins) ou note vocale
+  const ready = reason.trim().length >= 5 || !!voice;
 
   const submit = async () => {
     if (!sale) return;
     setBusy(true);
     setError(null);
     try {
-      await apiSend(`/api/sales/${sale.id}/cancel`, { action: "request", reason });
+      await apiSend(`/api/sales/${sale.id}/cancel`, {
+        action: "request",
+        reason: reason.trim(),
+        ...(voice ? { voice: { data: voice.data, mime: voice.mime, seconds: voice.seconds } } : {}),
+      });
       setReason("");
+      setVoice(null);
       await onDone();
       onClose();
     } catch (e) {
@@ -161,7 +170,7 @@ function CancelRequestModal({ sale, onClose, onDone }: { sale: SaleRow | null; o
           <Button variant="secondary" onClick={onClose}>
             Fermer
           </Button>
-          <Button variant="danger" onClick={submit} loading={busy} disabled={reason.trim().length < 5}>
+          <Button variant="danger" onClick={submit} loading={busy} disabled={!ready}>
             Envoyer la demande
           </Button>
         </>
@@ -174,9 +183,11 @@ function CancelRequestModal({ sale, onClose, onDone }: { sale: SaleRow | null; o
         </Alert>
       )}
       {error && <Alert>{error}</Alert>}
-      <Field label="Motif" hint="Au moins 5 caractères.">
-        <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
+      <Field label="Motif (obligatoire)" hint="Écrivez pourquoi, ou expliquez-le en note vocale.">
+        <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ex. Le client s'est trompé de bidon" />
       </Field>
+      <VoiceRecorder value={voice} onChange={setVoice} disabled={busy} />
+      {!ready && <p className="text-xs text-gray-500">Sans motif écrit ou vocal, la demande ne peut pas être envoyée.</p>}
     </Modal>
   );
 }

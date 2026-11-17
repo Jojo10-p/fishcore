@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Badge, Button, Card, EmptyState, Field, Modal, Money, PageHeader, Select, Spinner, Table, Td, Textarea } from "@/components/ui";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
+import { CancellationThread } from "@/components/app/cancellation-thread";
 
 interface CancellationRow {
   id: string;
@@ -16,6 +17,7 @@ interface CancellationRow {
   sale: { id: string; saleNumber: string; totalAmount: string; createdAt: string; centerId: string; sessionId: string };
   requester: { id: string; firstName: string; lastName: string };
   approver: { firstName: string; lastName: string } | null;
+  _count?: { messages: number };
 }
 
 const STATUS = {
@@ -31,6 +33,7 @@ export default function CancellationsPage() {
   const [rows, setRows] = useState<CancellationRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deciding, setDeciding] = useState<{ row: CancellationRow; decision: "APPROVED" | "REJECTED" } | null>(null);
+  const [talking, setTalking] = useState<CancellationRow | null>(null);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams();
@@ -89,6 +92,13 @@ export default function CancellationsPage() {
                 <Td className="whitespace-normal max-w-xs">
                   {r.requestReason}
                   {r.rejectionReason && <p className="text-xs text-red-700 mt-1">Refus : {r.rejectionReason}</p>}
+                  <button className="mt-1 block text-xs font-semibold text-blue-600 hover:underline" onClick={() => setTalking(r)}>
+                    {(r._count?.messages ?? 0) > 0
+                      ? `💬 Écouter / répondre (${r._count?.messages})`
+                      : canDecide && r.requester.id !== session?.user.id && r.status === "PENDING"
+                        ? "💬 Demander des précisions"
+                        : "💬 Discussion"}
+                  </button>
                 </Td>
                 <Td>
                   <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
@@ -112,6 +122,11 @@ export default function CancellationsPage() {
         )}
       </Card>
       <DecisionModal state={deciding} currency={currency} onClose={() => setDeciding(null)} onDone={load} />
+      {talking && (
+        <Modal open onClose={() => { setTalking(null); void load(); }} title={`Annulation de ${talking.sale.saleNumber} — ${talking.requester.firstName}`}>
+          <CancellationThread cancellationId={talking.id} reason={talking.requestReason} />
+        </Modal>
+      )}
     </>
   );
 }
@@ -187,6 +202,14 @@ function DecisionModal({
       }
     >
       {error && <Alert>{error}</Alert>}
+      {(state.row._count?.messages ?? 0) > 0 && (
+        <details className="rounded-xl border border-gray-200 p-2" open>
+          <summary className="cursor-pointer text-sm font-semibold text-gray-700">🎤 Explications du caissier</summary>
+          <div className="mt-2">
+            <CancellationThread cancellationId={state.row.id} reason={state.row.requestReason} canWrite={false} />
+          </div>
+        </details>
+      )}
       {approve ? (
         <>
           <Alert tone="amber">

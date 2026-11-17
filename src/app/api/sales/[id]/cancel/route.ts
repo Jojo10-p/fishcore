@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { emitCreditNote } from "@/lib/mecef";
+import { decodeVoice, voiceSchema } from "@/lib/voice";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
 import { cancellationDecisionSchema, cancellationRequestSchema } from "@/lib/validations";
@@ -49,9 +50,12 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     if (body.action === "request") {
       await requirePermission(user, "sale:cancel_request");
+      // Motif obligatoire : écrit, ou note vocale (ou les deux)
+      const voice = body.voice ? decodeVoice(parseBody(voiceSchema, body.voice)) : null;
+      const written = String(body.reason ?? body.requestReason ?? "").trim();
       const { requestReason } = parseBody(cancellationRequestSchema, {
         saleId,
-        requestReason: body.reason ?? body.requestReason,
+        requestReason: written || (voice ? `🎤 Note vocale (${voice.audioSeconds} s)` : ""),
       });
       const sale = await loadSale(user, saleId);
 
@@ -73,6 +77,9 @@ export async function POST(req: NextRequest, { params }: Params) {
         const created = await tx.cancellation.create({
           data: { saleId, requesterId: user.id, requestReason, status: "PENDING" },
         });
+        if (voice) {
+          await tx.cancellationMessage.create({ data: { cancellationId: created.id, authorId: user.id, text: written || null, ...voice } });
+        }
         await writeAuditLog(
           {
             eventType: "CANCELLATION_REQUESTED",
@@ -99,7 +106,9 @@ export async function POST(req: NextRequest, { params }: Params) {
         actorId: user.id,
         type: "CANCEL_REQUESTED",
         title: `Annulation demandée — ${sale.saleNumber}`,
-        message: `${await actorLabel(user.id)} demande d'annuler la vente ${sale.saleNumber} (${Number(sale.totalAmount).toLocaleString("fr-FR")} F). Raison : ${requestReason}`,
+        message: `${await actorLabel(user.id)} demande d'annuler la vente ${sale.saleNumber} (${Number(sale.totalAmount).toLocaleString("fr-FR")} F). ${
+          voice ? `🎤 Note vocale de ${voice.audioSeconds} s à écouter.${written ? ` Écrit : ${written}` : ""}` : `Raison : ${requestReason}`
+        }`,
         link: "/annulations",
         data: { saleId, cancellationId: cancellation.id },
       });

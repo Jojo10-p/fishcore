@@ -33,6 +33,7 @@ export async function GET(req: NextRequest) {
         sale: { select: { id: true, saleNumber: true, totalAmount: true, createdAt: true, centerId: true, sessionId: true } },
         requester: { select: { id: true, firstName: true, lastName: true } },
         approver: { select: { firstName: true, lastName: true } },
+        _count: { select: { messages: true } },
       },
       orderBy: { createdAt: "desc" },
       take: 100,
