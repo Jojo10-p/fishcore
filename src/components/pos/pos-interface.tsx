@@ -666,7 +666,7 @@ export default function POSInterface({
       {/* ── Panier ── */}
       <aside
         className={cn(
-          "bg-white flex-col md:w-96 md:flex md:static",
+          "bg-white flex-col md:w-96 md:flex md:static md:min-h-0",
           showCartMobile ? "flex fixed inset-x-0 bottom-0 top-24 z-40 shadow-2xl rounded-t-2xl" : "hidden"
         )}
       >
@@ -706,7 +706,7 @@ export default function POSInterface({
           </form>
         )}
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="min-h-[88px] flex-1 overflow-y-auto">
           {quote ? (
             <div>
               <div className="flex items-center justify-between bg-blue-50 px-4 py-2 text-sm">
@@ -818,7 +818,7 @@ export default function POSInterface({
           )}
         </div>
 
-        <div className="border-t border-gray-200 p-4 space-y-3">
+        <div className="min-h-0 shrink overflow-y-auto overscroll-contain border-t border-gray-200 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-3">
           {!quote && (
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-gray-600">Nom du client (facultatif)</span>
