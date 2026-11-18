@@ -193,3 +193,9 @@ export function settlePayments(payments: PaymentInput[], total: Decimal) {
     })
     .filter((p) => p.amount.gt(0));
 }
+
+/** Bénéfice de la vente après réduction : prix payé hors taxe − coût d'achat des articles. */
+export function saleMargin(sale: { totalAmount: Prisma.Decimal; taxAmount: Prisma.Decimal; lines: Array<{ costAmount: Prisma.Decimal }> }) {
+  const cost = sale.lines.reduce((s, l) => s + Number(l.costAmount), 0);
+  return Math.round((Number(sale.totalAmount) - Number(sale.taxAmount) - cost) * 100) / 100;
+}

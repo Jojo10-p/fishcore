@@ -87,10 +87,13 @@ export async function computeFinance(scope: FinanceScope) {
 
   // Marge par centre (requête dédiée : coût et TVA par centre)
   const centerMargins = await prisma.$queryRaw<Array<{ centerId: string; ttc: Prisma.Decimal; tax: Prisma.Decimal; cost: Prisma.Decimal }>>`
-    SELECT s."centerId", SUM(sl."lineTotal") AS ttc, SUM(sl."taxAmount") AS tax, SUM(sl."costAmount") AS cost
-      FROM "sale_lines" sl JOIN "sales" s ON s."id" = sl."saleId"
-     WHERE ${saleScope} AND s."status" <> 'CANCELLED'
-     GROUP BY s."centerId"`;
+    SELECT x."centerId", SUM(x.ttc) AS ttc, SUM(x.tax) AS tax, SUM(x.cost) AS cost FROM (
+      -- Par vente : lignes moins la réduction accordée sur le panier
+      SELECT s."centerId", SUM(sl."lineTotal") - MAX(s."cartDiscount") AS ttc, MAX(s."taxAmount") AS tax, SUM(sl."costAmount") AS cost
+        FROM "sale_lines" sl JOIN "sales" s ON s."id" = sl."saleId"
+       WHERE ${saleScope} AND s."status" <> 'CANCELLED'
+       GROUP BY s."id", s."centerId") x
+     GROUP BY x."centerId"`;
   const marginByCenter = new Map(centerMargins.map((m) => [m.centerId, m]));
 
   const revenueTTC = num(sales[0].ttc);

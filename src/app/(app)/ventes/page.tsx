@@ -21,6 +21,9 @@ interface SaleRow {
   customer: { name: string; phone: string | null } | null;
   customerName?: string | null;
   payments: Array<{ method: string; amount: string }>;
+  cartDiscount?: string;
+  discountReason?: string | null;
+  discountStatus?: "PENDING" | "VALIDATED" | null;
 }
 
 const SALE_STATUS: Record<string, { label: string; tone: "green" | "red" | "amber" | "gray" }> = {
@@ -39,21 +42,45 @@ export default function SalesPage() {
   const [sales, setSales] = useState<SaleRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cancelFor, setCancelFor] = useState<SaleRow | null>(null);
+  // Réductions accordées par un caissier, en attente de validation (lien de la notification)
+  const [pendingOnly, setPendingOnly] = useState(false);
+  const [validating, setValidating] = useState<string | null>(null);
+  const canValidate = can("sale:discount");
+  useEffect(() => {
+    const t = setTimeout(() => setPendingOnly(new URLSearchParams(window.location.search).get("reductions") === "a-valider"), 0);
+    return () => clearTimeout(t);
+  }, []);
 
   const load = useCallback(async () => {
     if (!centerId) return;
     const from = new Date(`${day}T00:00:00`);
     const to = new Date(`${day}T23:59:59.999`);
     try {
-      // Recherche par n° de facture ou client : toutes dates confondues
-      const range = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : `&dateFrom=${from.toISOString()}&dateTo=${to.toISOString()}`;
+      // Recherche par n° de facture ou client : toutes dates confondues ; réductions à valider : toutes dates
+      const range = pendingOnly
+        ? "&reductions=a-valider"
+        : search.trim()
+          ? `&search=${encodeURIComponent(search.trim())}`
+          : `&dateFrom=${from.toISOString()}&dateTo=${to.toISOString()}`;
       const res = await apiGet<{ data: SaleRow[] }>(`/api/sales?centerId=${centerId}${range}&limit=200`);
       setSales(res.data);
       setError(null);
     } catch (e) {
       setError(errorMessage(e));
     }
-  }, [centerId, day, search]);
+  }, [centerId, day, search, pendingOnly]);
+
+  const validateDiscount = async (s: SaleRow) => {
+    setValidating(s.id);
+    try {
+      await apiSend(`/api/sales/${s.id}/discount`, {});
+      await load();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setValidating(null);
+    }
+  };
 
   useEffect(() => {
     const t = setTimeout(() => void load(), search ? 300 : 0);
@@ -70,7 +97,12 @@ export default function SalesPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             <Input placeholder="N° de facture ou client" value={search} onChange={(e) => setSearch(e.target.value)} className="w-56" aria-label="Rechercher une facture" />
-            <Input type="date" aria-label="Jour" value={day} onChange={(e) => setDay(e.target.value)} className="w-auto" disabled={!!search.trim()} />
+            <Input type="date" aria-label="Jour" value={day} onChange={(e) => setDay(e.target.value)} className="w-auto" disabled={!!search.trim() || pendingOnly} />
+            {canValidate && (
+              <Button variant={pendingOnly ? "primary" : "secondary"} onClick={() => setPendingOnly((v) => !v)}>
+                🏷️ Réductions à valider
+              </Button>
+            )}
           </div>
         }
       />
@@ -79,7 +111,7 @@ export default function SalesPage() {
         {!sales ? (
           <Spinner />
         ) : sales.length === 0 ? (
-          <EmptyState title="Aucune vente ce jour-là" />
+          <EmptyState title={pendingOnly ? "Aucune réduction à valider" : "Aucune vente ce jour-là"} />
         ) : (
           <Table head={["N°", "Date", "Client", "Caissier", "Paiement", "Montant", "Statut", "Documents", ""]}>
             {sales.map((s) => (
@@ -96,6 +128,23 @@ export default function SalesPage() {
                 <Td className="text-gray-500">{[...new Set(s.payments.map((p) => p.method))].join(" + ")}</Td>
                 <Td>
                   <Money value={s.totalAmount} currency={currency} />
+                  {Number(s.cartDiscount ?? 0) > 0 && (
+                    <div className="mt-0.5 text-xs">
+                      <span className="font-semibold text-amber-700">🏷️ Réduction −{formatCurrency(Number(s.cartDiscount), currency)}</span>
+                      {s.discountReason && <span className="block text-gray-500">« {s.discountReason} »</span>}
+                      {s.discountStatus === "PENDING" ? (
+                        canValidate ? (
+                          <Button variant="success" className="mt-1 px-2 py-1 text-xs" loading={validating === s.id} onClick={() => void validateDiscount(s)}>
+                            ✅ Valider la réduction
+                          </Button>
+                        ) : (
+                          <span className="block text-amber-700">À valider par le gérant</span>
+                        )
+                      ) : (
+                        <span className="block text-green-700">Validée</span>
+                      )}
+                    </div>
+                  )}
                 </Td>
                 <Td>
                   <Badge tone={SALE_STATUS[s.status]?.tone ?? "gray"}>{SALE_STATUS[s.status]?.label ?? s.status}</Badge>

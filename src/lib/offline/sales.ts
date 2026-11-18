@@ -20,6 +20,9 @@ interface CreateOfflineSaleParams {
   idempotencyKey?: string;
   /** Numéro de facture pris dans la plage de la caisse (imprimé sur le ticket). */
   invoice?: { seq: number; saleNumber: string };
+  /** Réduction accordée sur le total du panier. */
+  cartDiscount?: number;
+  discountReason?: string;
 }
 
 /**
@@ -51,7 +54,8 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
   const idempotencyKey = params.idempotencyKey ?? generateIdempotencyKey("sale");
 
   const subtotal = params.lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
-  const discountAmount = params.lines.reduce((sum, l) => sum + l.discount * l.quantity, 0);
+  const cart = params.cartDiscount ?? 0;
+  const discountAmount = params.lines.reduce((sum, l) => sum + l.discount * l.quantity, 0) + cart;
   const totalAmount = subtotal - discountAmount;
 
   // Quantités demandées par produit (un produit peut figurer sur plusieurs lignes)
@@ -112,6 +116,7 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
         })),
         payments: params.payments,
         notes: params.notes,
+        ...(cart > 0 ? { cartDiscount: cart, discountReason: params.discountReason } : {}),
         ...(params.invoice ? { invoiceSeq: params.invoice.seq } : {}),
         soldAt,
         createdOffline: true,

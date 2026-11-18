@@ -233,8 +233,8 @@ export function TotalsBlock({
   const money = (n: number) => formatCurrency(n, currency);
   const rows: Array<[string, string, boolean?]> = [];
   if (discount > 0) {
-    rows.push(["Total brut", money(subtotal)]);
-    rows.push(["Remises", `−${money(discount)}`]);
+    rows.push(["Total", money(subtotal)]);
+    rows.push(["Réduction", `−${money(discount)}`]);
   }
   if (tax > 0) {
     rows.push(["Total HT", money(total - tax)]);

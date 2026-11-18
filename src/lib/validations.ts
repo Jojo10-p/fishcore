@@ -195,6 +195,9 @@ export const createSaleSchema = z.object({
     })
   ).min(1, "Au moins un paiement"),
   notes: z.string().optional(),
+  // « Réduction accordée » : montant retiré du total du panier, et son motif (facultatif)
+  cartDiscount: z.coerce.number().min(0).default(0),
+  discountReason: z.string().trim().max(200).optional(),
   idempotencyKey: z.string().min(1),
   createdOffline: z.boolean().default(false),
   deviceId: z.string().optional(),

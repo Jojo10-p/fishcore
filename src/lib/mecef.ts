@@ -187,6 +187,22 @@ async function buildRequest(saleId: string, kind: "FV" | "FA", ifu: string, defa
     };
   });
 
+  // Réduction accordée sur le panier : répartie sur les lignes au prorata (la DGI
+  // n'a pas de ligne de remise globale) ; la dernière ligne prend l'arrondi
+  const cart = Math.round(Number(sale.cartDiscount ?? 0));
+  if (cart > 0) {
+    const gross = sale.lines.map((l) => Math.round(Number(l.lineTotal)));
+    const sum = gross.reduce((a, b) => a + b, 0);
+    let left = cart;
+    items.forEach((it, i) => {
+      const cut = i === items.length - 1 ? left : Math.round((cart * gross[i]) / sum);
+      left -= cut;
+      if (it.quantity !== 1 || it.price !== gross[i]) it.name = `${it.name} × ${Number(sale.lines[i].quantity).toLocaleString("fr-FR")}`;
+      it.price = gross[i] - cut;
+      it.quantity = 1;
+    });
+  }
+
   const payment = sale.payments
     .filter((p) => Number(p.amount) > 0)
     .map((p) => ({ name: PAYMENT_NAMES[p.method] ?? "AUTRE", amount: Math.round(Number(p.amount)) }));

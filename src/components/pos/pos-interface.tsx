@@ -137,6 +137,11 @@ export default function POSInterface({
   const [quote, setQuote] = useState<LoadedQuote | null>(null);
   const [quoteInput, setQuoteInput] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  // « Réduction accordée » : montant retiré du total, motif facultatif
+  const [reductionOn, setReductionOn] = useState(false);
+  const [reductionInput, setReductionInput] = useState("");
+  const [reductionReason, setReductionReason] = useState("");
+  const [reductionCheck, setReductionCheck] = useState<{ status: "PROFIT" | "LOSS"; margin?: number; needsValidation?: boolean } | "offline" | null>(null);
   const [notification, setNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   // Une clé d'idempotence par vente (et non par clic) : si la connexion coupe
@@ -339,8 +344,42 @@ export default function POSInterface({
     setNotification({ type: "error", message: `Aucun article pour « ${code} »` });
   };
 
+  // Réduction sur le total du panier (pas sur un devis : ses prix sont figés)
+  const reductionRaw = Number(reductionInput.replace(/\s/g, "").replace(",", "."));
+  const reduction = !quote && reductionOn && reductionRaw > 0 ? round2(reductionRaw) : 0;
+  const reductionError = reduction > 0 && reduction >= totals.total ? "La réduction doit être inférieure au total" : null;
   // Montant à encaisser : celui du devis s'il y en a un, sinon celui du panier
-  const payTotal = quote ? quote.total : totals.total;
+  const payTotal = quote ? quote.total : round2(totals.total - (reductionError ? 0 : reduction));
+
+  // Avec cette réduction, est-on encore en bénéfice ? (indication, ne bloque pas)
+  useEffect(() => {
+    if (!reduction || reductionError || cart.length === 0) {
+      const t = setTimeout(() => setReductionCheck(null), 0);
+      return () => clearTimeout(t);
+    }
+    if (!isOnline) {
+      const t = setTimeout(() => setReductionCheck("offline"), 0);
+      return () => clearTimeout(t);
+    }
+    let alive = true;
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/sales/discount-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ centerId, cartDiscount: reduction, lines: cart.map((i) => ({ productId: i.productId, unitId: i.unitId, quantity: i.quantity })) }),
+        });
+        const j = await res.json();
+        if (alive && j.success) setReductionCheck(j.data);
+      } catch {
+        if (alive) setReductionCheck("offline");
+      }
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [reduction, reductionError, cart, isOnline, centerId]);
   const hasItems = quote ? true : cart.length > 0;
   const paid = round2(payments.reduce((s, p) => s + (p.amount || 0), 0));
   const change = Math.max(0, round2(paid - payTotal));
@@ -348,6 +387,8 @@ export default function POSInterface({
   const paymentError =
     quote && !isOnline
       ? "L'encaissement d'un devis nécessite une connexion"
+      : reductionError
+      ? reductionError
       : paid < payTotal
       ? `Il manque ${fmt(payTotal - paid)}`
       : change > cashPaid
@@ -361,6 +402,9 @@ export default function POSInterface({
     setPayments([{ method: "CASH", amount: 0 }]);
     setCustomer(null);
     setCustomerName("");
+    setReductionOn(false);
+    setReductionInput("");
+    setReductionReason("");
     setShowPayment(false);
     setShowCartMobile(false);
     searchRef.current?.focus();
@@ -413,6 +457,8 @@ export default function POSInterface({
           payments: cleanPayments,
           idempotencyKey,
           invoice: { seq: invoice.seq, saleNumber: invoice.saleNumber },
+          cartDiscount: reduction,
+          discountReason: reduction > 0 ? reductionReason.trim() || undefined : undefined,
         });
         if (!result.success) throw new Error(result.error);
         shortfalls = result.shortfalls ?? [];
@@ -428,7 +474,17 @@ export default function POSInterface({
             body: JSON.stringify(
               quote
                 ? { sessionId, quoteId: quote.id, lines: [], payments: cleanPayments, idempotencyKey, invoiceSeq: invoice?.seq, createdOffline: false }
-                : { sessionId, lines, payments: cleanPayments, customerId: customer?.id, customerName: customerName.trim() || undefined, idempotencyKey, invoiceSeq: invoice?.seq, createdOffline: false }
+                : {
+                    sessionId,
+                    lines,
+                    payments: cleanPayments,
+                    customerId: customer?.id,
+                    customerName: customerName.trim() || undefined,
+                    idempotencyKey,
+                    invoiceSeq: invoice?.seq,
+                    createdOffline: false,
+                    ...(reduction > 0 ? { cartDiscount: reduction, discountReason: reductionReason.trim() || undefined } : {}),
+                  }
             ),
           });
         } catch {
@@ -474,9 +530,11 @@ export default function POSInterface({
               discount: i.discount,
               lineTotal: lineTotal(i),
             })),
-        discountAmount: quote ? round2(quote.lines.reduce((s, l) => s + l.discount * l.quantity, 0)) : totals.discount,
+        discountAmount: quote ? round2(quote.lines.reduce((s, l) => s + l.discount * l.quantity, 0)) : round2(totals.discount + reduction),
         total: payTotal,
-        tax: quote ? quote.tax : round2(cart.reduce((s, i) => s + taxOf(lineTotal(i), i.taxRate), 0)),
+        tax: quote
+          ? quote.tax
+          : round2(cart.reduce((s, i) => s + taxOf(lineTotal(i), i.taxRate), 0) * (totals.total > 0 ? payTotal / totals.total : 1)),
         payments: settleLocally(cleanPayments, payTotal),
         change,
         tendered: round2(cleanPayments.filter((p) => p.method === "CASH").reduce((s, p) => s + p.amount, 0)),
@@ -773,6 +831,53 @@ export default function POSInterface({
               />
             </label>
           )}
+          {!quote && cart.length > 0 && (
+            <div className={`rounded-xl border p-3 text-sm ${reductionOn ? "border-amber-300 bg-amber-50" : "border-gray-200"}`}>
+              <label className="flex cursor-pointer items-center gap-2 font-medium text-gray-800">
+                <input type="checkbox" checked={reductionOn} onChange={(e) => setReductionOn(e.target.checked)} className="h-4 w-4" />
+                🏷️ Réduction accordée
+              </label>
+              {reductionOn && (
+                <div className="mt-2 space-y-2">
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-gray-600">Montant à retirer du total ({fmt(totals.total)})</span>
+                    <input
+                      inputMode="numeric"
+                      autoFocus
+                      value={reductionInput}
+                      onChange={(e) => setReductionInput(e.target.value)}
+                      placeholder="ex. 700"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-base font-semibold"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-gray-600">Motif (facultatif)</span>
+                    <input
+                      value={reductionReason}
+                      onChange={(e) => setReductionReason(e.target.value)}
+                      maxLength={200}
+                      placeholder="ex. Client fidèle, ordre du patron"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2"
+                    />
+                  </label>
+                  {reductionError ? (
+                    <p className="text-xs font-semibold text-red-700">{reductionError}</p>
+                  ) : reductionCheck === "offline" ? (
+                    <p className="text-xs text-gray-500">Hors connexion : bénéfice non vérifié. La vente passe quand même.</p>
+                  ) : reductionCheck ? (
+                    <p className={`rounded-lg px-2 py-1.5 text-xs font-semibold ${reductionCheck.status === "PROFIT" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+                      {reductionCheck.status === "PROFIT"
+                        ? `✅ Toujours en bénéfice${reductionCheck.margin !== undefined ? ` : +${fmt(reductionCheck.margin)}` : ""}`
+                        : `⚠️ Vente à perte${reductionCheck.margin !== undefined ? ` : ${fmt(reductionCheck.margin)}` : ""} — la vente passe quand même`}
+                    </p>
+                  ) : null}
+                  {reduction > 0 && !reductionError && reductionCheck !== null && reductionCheck !== "offline" && reductionCheck.needsValidation && (
+                    <p className="text-xs text-amber-800">La vente passe tout de suite ; le gérant ou la direction validera la réduction.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <div className="space-y-1 text-sm">
             {totals.discount > 0 && (
               <div className="flex justify-between text-green-700">
@@ -780,8 +885,20 @@ export default function POSInterface({
                 <span>−{fmt(totals.discount)}</span>
               </div>
             )}
+            {reduction > 0 && !reductionError && (
+              <>
+                <div className="flex justify-between text-gray-600">
+                  <span>Total</span>
+                  <span className="tabular-nums">{fmt(totals.total)}</span>
+                </div>
+                <div className="flex justify-between font-semibold text-amber-700">
+                  <span>Réduction</span>
+                  <span className="tabular-nums">−{fmt(reduction)}</span>
+                </div>
+              </>
+            )}
             <div className="flex justify-between font-bold text-base text-gray-900">
-              <span>TOTAL</span>
+              <span>{reduction > 0 && !reductionError ? "À PAYER" : "TOTAL"}</span>
               <span className="text-blue-700 tabular-nums">{fmt(payTotal)}</span>
             </div>
             {(quote ? quote.tax : totals.tax) > 0 && (

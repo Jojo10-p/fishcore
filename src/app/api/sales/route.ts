@@ -15,7 +15,7 @@ import {
   resolveCenterScope,
 } from "@/lib/auth";
 import { hasPermission } from "@/lib/rbac";
-import { priceLines, settlePayments } from "@/lib/sales";
+import { priceLines, saleMargin, settlePayments } from "@/lib/sales";
 import { consumeStockForSale, type BatchAllocation } from "@/lib/stock";
 import { nextCompanyNumber, resolveSessionNumber } from "@/lib/invoice-numbers";
 import { scheduleStockAlerts } from "@/lib/stock-alerts";
@@ -126,6 +126,20 @@ export async function POST(req: NextRequest) {
     const pricing = await priceLines(companyId, data.lines, data.createdOffline, { fixedPrices });
     const { requiresPickup } = await prisma.company.findUniqueOrThrow({ where: { id: companyId }, select: { requiresPickup: true } });
 
+    // 5b. Réduction accordée sur le total du panier (tous les vendeurs : le caissier
+    //     agit sur ordre du patron ; sa réduction reste « à valider » par le gérant
+    //     ou la direction, la vente, elle, passe tout de suite).
+    const cartDiscount = quoteId ? new Prisma.Decimal(0) : new Prisma.Decimal(data.cartDiscount ?? 0).toDecimalPlaces(2);
+    if (cartDiscount.gt(0)) {
+      if (cartDiscount.gte(pricing.totalAmount)) throw new ApiError(400, "La réduction doit être inférieure au total", "INVALID_DISCOUNT");
+      const before = pricing.totalAmount;
+      pricing.totalAmount = before.sub(cartDiscount);
+      pricing.taxAmount = pricing.taxAmount.mul(pricing.totalAmount).div(before).toDecimalPlaces(2);
+      pricing.discountAmount = pricing.discountAmount.add(cartDiscount);
+    }
+    const discountValidated = cartDiscount.gt(0) && hasPermission(user.role, "sale:discount");
+    const discountStatus = cartDiscount.gt(0) ? (discountValidated ? "VALIDATED" : "PENDING") : null;
+
     // 6. Paiements : la somme doit couvrir le total ; l'excédent n'est admis
     //    que sous forme de rendu monnaie sur les espèces.
     const payments = settlePayments(data.payments, pricing.totalAmount);
@@ -228,6 +242,10 @@ export async function POST(req: NextRequest) {
           discountAmount: pricing.discountAmount,
           totalAmount: pricing.totalAmount,
           taxAmount: pricing.taxAmount,
+          cartDiscount,
+          discountReason: cartDiscount.gt(0) ? data.discountReason || null : null,
+          discountStatus,
+          ...(discountValidated ? { discountValidatedById: user.id, discountValidatedAt: new Date() } : {}),
           notes: data.notes,
           deliveryStatus: requiresPickup ? "PENDING" : "DELIVERED",
           // Vente hors connexion : la date est celle de la vente, pas celle de l'envoi
@@ -323,6 +341,7 @@ export async function POST(req: NextRequest) {
             total: pricing.totalAmount.toString(),
             discount: pricing.discountAmount.toString(),
             tax: pricing.taxAmount.toString(),
+            ...(cartDiscount.gt(0) ? { cartDiscount: cartDiscount.toString(), discountReason: data.discountReason ?? null, discountStatus } : {}),
             createdOffline: data.createdOffline ?? false,
             ...(quoteId ? { quoteId } : {}),
           },
@@ -401,6 +420,7 @@ export async function GET(req: NextRequest) {
     const sessionId = searchParams.get("sessionId");
     const search = searchParams.get("search")?.trim();
     const delivery = searchParams.get("deliveryStatus");
+    const reductions = searchParams.get("reductions"); // « a-valider » : réductions de caissier en attente
     const dateFrom = searchParams.get("dateFrom");
     const dateTo = searchParams.get("dateTo");
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1") || 1);
@@ -417,6 +437,7 @@ export async function GET(req: NextRequest) {
       ...(search
         ? { OR: [{ saleNumber: { contains: search, mode: "insensitive" } }, { customer: { name: { contains: search, mode: "insensitive" } } }] }
         : {}),
+      ...(reductions === "a-valider" ? { discountStatus: "PENDING" } : reductions === "toutes" ? { cartDiscount: { gt: 0 } } : {}),
       ...(delivery === "PENDING" ? { deliveryStatus: { in: ["PENDING", "PARTIAL"] }, status: { not: "CANCELLED" } } : {}),
       ...(dateFrom || dateTo
         ? {
@@ -469,15 +490,21 @@ const PAY_LABELS: Record<string, string> = {
 type CreatedSale = Prisma.SaleGetPayload<{ include: typeof saleInclude }>;
 
 function notifySale(sale: CreatedSale, actorId: string) {
+  const f = (n: number) => Math.round(n).toLocaleString("fr-FR");
+  const cart = Number(sale.cartDiscount);
+  const pending = sale.discountStatus === "PENDING";
+  const margin = saleMargin(sale);
   notifyManagers({
     companyId: sale.companyId,
     centerId: sale.centerId,
     actorId,
     type: "SALE_MADE",
-    title: `Vente ${sale.saleNumber} — ${Number(sale.totalAmount).toLocaleString("fr-FR")} F`,
+    title:
+      `Vente ${sale.saleNumber} — ${Number(sale.totalAmount).toLocaleString("fr-FR")} F` +
+      (cart > 0 ? ` · réduction −${f(cart)} F${margin <= 0 ? " · vente à perte" : ""}${pending ? " (à valider)" : ""}` : ""),
     message: "",
-    link: "/ventes",
-    data: { saleId: sale.id, saleNumber: sale.saleNumber, total: Number(sale.totalAmount) },
+    link: pending ? "/ventes?reductions=a-valider" : "/ventes",
+    data: { saleId: sale.id, saleNumber: sale.saleNumber, total: Number(sale.totalAmount), ...(cart > 0 ? { cartDiscount: cart, margin, discountStatus: sale.discountStatus } : {}) },
   }, async () => {
     const [products, units, who] = await Promise.all([
       prisma.product.findMany({ where: { id: { in: sale.lines.map((l) => l.productId) } }, select: { id: true, name: true } }),
@@ -496,6 +523,12 @@ function notifySale(sale: CreatedSale, actorId: string) {
       .join(", ");
     const pays = [...new Set(sale.payments.map((p) => PAY_LABELS[p.method] ?? p.method))].join(" + ");
     const offline = sale.createdOffline ? " (vendue hors connexion)" : "";
-    return `${who} a vendu ${detail}. Total : ${Number(sale.totalAmount).toLocaleString("fr-FR")} F${pays ? ` en ${pays}` : ""}${offline}.`;
+    const reduction =
+      cart > 0
+        ? ` 🏷️ Réduction de ${f(cart)} F (total ${f(Number(sale.totalAmount) + cart)} → ${f(Number(sale.totalAmount))} F)${sale.discountReason ? `, motif : « ${sale.discountReason} »` : ""}. ` +
+          (margin > 0 ? `Bénéfice réduit : +${f(margin)} F.` : `⚠️ Vente à perte : ${f(margin)} F.`) +
+          (pending ? " Réduction accordée par le caissier : à valider dans Ventes." : "")
+        : "";
+    return `${who} a vendu ${detail}. Total : ${Number(sale.totalAmount).toLocaleString("fr-FR")} F${pays ? ` en ${pays}` : ""}${offline}.${reduction}`;
   });
 }

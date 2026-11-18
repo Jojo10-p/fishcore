@@ -150,8 +150,8 @@ export function Ticket80({ t }: { t: TicketData }) {
           ))}
           {t.discountAmount > 0 && (
             <tr className="border-b border-gray-400">
-              <td colSpan={3} className="px-1 py-0.5">
-                Remises
+              <td colSpan={3} className="px-1 py-0.5 font-semibold">
+                Réduction
               </td>
               <td className="px-1 py-0.5 text-right">−{n(t.discountAmount)}</td>
             </tr>
@@ -161,7 +161,7 @@ export function Ticket80({ t }: { t: TicketData }) {
 
       <div className="mt-1 border-t-2 pt-1" style={{ borderColor: GOLD }}>
         <div className="flex items-baseline justify-between text-[15px] font-black" style={{ color: NAVY }}>
-          <span>TOTAL</span>
+          <span>{t.discountAmount > 0 ? "NET À PAYER" : "TOTAL"}</span>
           <span>{n(t.total)}</span>
         </div>
         <p className="text-right text-[10px]">Montants en {c.currency === "XOF" || c.currency === "XAF" ? "francs CFA" : c.currency}</p>
