@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { INVOICE_FORMATS, type InvoiceFormat } from "@/lib/invoice-formats";
 import { useSession } from "@/components/app/session-provider";
 import { Alert, Button, Card, Field, Input, PageHeader, Spinner, Textarea } from "@/components/ui";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
@@ -25,7 +26,7 @@ interface CompanySettings {
   quoteValidityDays: number;
   invoiceNotes: string | null;
   requiresPickup: boolean;
-  invoiceFormat: "TICKET_80" | "A4" | "A5";
+  invoiceFormat: InvoiceFormat;
   invoiceCounter: number;
 }
 
@@ -131,13 +132,7 @@ export default function SettingsPage() {
           <h2 className="font-semibold text-gray-900">Tickets et factures</h2>
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium text-gray-700">Facture imprimée à la caisse</legend>
-            {(
-              [
-                ["TICKET_80", "Ticket 80 mm", "Imprimante thermique (XP-80C…) : la facture sort sur le rouleau, comme un ticket."],
-                ["A4", "Page A4", "Imprimante de bureau : facture complète avec en-tête et montant en lettres."],
-                ["A5", "Page A5 (demi-feuille)", "La même facture complète, en plus petit : moitié d'une feuille A4."],
-              ] as const
-            ).map(([value, label, hint]) => (
+            {INVOICE_FORMATS.map(({ value, label, hint }) => (
               <label key={value} className="flex items-start gap-2 text-sm">
                 <input
                   type="radio"
@@ -156,7 +151,10 @@ export default function SettingsPage() {
                 </span>
               </label>
             ))}
-            <p className="text-xs text-gray-500">L&apos;autre format reste disponible à tout moment depuis la facture.</p>
+            <p className="text-xs text-gray-500">
+              Les autres formats restent disponibles à tout moment depuis la facture (Ventes › réimprimer). Thermique : réglez l&apos;imprimante sur le
+              papier du même nom (« 80(72.1) x 3276 mm » pour le rouleau) et marges « Aucune ».
+            </p>
           </fieldset>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <Field label="Préfixe des factures">

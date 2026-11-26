@@ -295,7 +295,14 @@ export const cancelReasonSchema = z.object({
 export const openSessionSchema = z.object({
   cashRegisterId: z.string().min(1, "Caisse requise"),
   openingBalance: z.coerce.number().min(0, "Fond de caisse invalide"),
-  deviceId: z.string().optional(),
+  deviceId: z.string().max(100).optional(),
+  // Caisse ouverte sur l'appareil sans Internet, envoyée au retour du réseau
+  clientId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{8,64}$/, "Identifiant de caisse invalide")
+    .optional(),
+  openedAt: z.coerce.date().optional(),
+  standbyDeviceId: z.string().min(4).max(100).optional(),
 });
 
 export const closeSessionSchema = z.object({

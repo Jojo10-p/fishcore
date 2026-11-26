@@ -2,7 +2,8 @@
 
 import { useCallback, useState } from "react";
 import type { SaleSnapshot } from "@/components/pos/pos-interface";
-import { TICKET_PRINT_CSS, Ticket80, type TicketData } from "@/components/documents/ticket-80";
+import { Ticket, type TicketData } from "@/components/documents/ticket-80";
+import { ticketPrintCss, type TicketFormat } from "@/lib/invoice-formats";
 import type { TicketHeader } from "@/lib/offline/db";
 
 // ─────────────────────────────────────────────
@@ -73,11 +74,11 @@ export function snapshotToTicket(sale: SaleSnapshot, header: TicketHeader): Tick
 }
 
 /** Invisible à l'écran ; seul élément imprimé quand la caisse appelle window.print(). */
-export function PrintArea({ ticket }: { ticket: TicketData }) {
+export function PrintArea({ ticket, format = "TICKET_80" }: { ticket: TicketData; format?: TicketFormat }) {
   return (
     <div className="hidden print:block" data-print-area>
-      <style>{TICKET_PRINT_CSS}</style>
-      <Ticket80 t={ticket} />
+      <style>{ticketPrintCss(format)}</style>
+      <Ticket t={ticket} format={format} />
     </div>
   );
 }

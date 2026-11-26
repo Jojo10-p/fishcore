@@ -2,7 +2,7 @@
 
 import { invoiceFileName } from "@/components/pos/printing";
 import Link from "next/link";
-import { ROLE_LABELS, stamp } from "@/components/documents/ticket-80";
+import { sellerLabel, sellerMeta, stamp } from "@/components/documents/ticket-80";
 import { use, useEffect, useState } from "react";
 import { apiGet, errorMessage } from "@/lib/client/api";
 import { formatCurrency } from "@/lib/utils";
@@ -127,7 +127,7 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
         meta={[
           ["Date", dateTime(sale.createdAt)],
           ["Caisse", sale.session.cashRegister.name],
-          [ROLE_LABELS[sale.cashier.role] ?? "Caissier", sale.cashier.firstName],
+          sellerMeta(sale.cashier.role, sale.cashier.firstName),
           ...(sale.quote ? ([["Devis", sale.quote.number]] as Array<[string, string]>) : []),
         ]}
       />
@@ -230,7 +230,7 @@ export default function InvoicePage({ params }: { params: Promise<{ id: string }
         </section>
       )}
 
-      <DocumentFooter company={sale.company} note={`${ROLE_LABELS[sale.cashier.role] ?? "Caissier"} : ${sale.cashier.firstName} — ${stamp(new Date(sale.createdAt))}`} />
+      <DocumentFooter company={sale.company} note={`${sellerLabel(sale.cashier.role, sale.cashier.firstName)} — ${stamp(new Date(sale.createdAt))}`} />
     </A4Page>
   );
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { INVOICE_FORMAT_VALUES } from "@/lib/invoice-formats";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/lib/audit";
@@ -63,7 +64,7 @@ const settingsSchema = z
     quoteValidityDays: z.coerce.number().int().min(1).max(365).optional(),
     invoiceNotes: z.string().trim().max(600).optional(),
     requiresPickup: z.boolean().optional(),
-    invoiceFormat: z.enum(["TICKET_80", "A4", "A5"]).optional(),
+    invoiceFormat: z.enum(INVOICE_FORMAT_VALUES).optional(),
     // Numérotation : reprendre la suite d'un ancien logiciel (ex. Sage : facture 2768 → 2769)
     invoicePrefix: z.string().trim().regex(/^[A-Za-z0-9]{1,10}$/, "Préfixe : lettres et chiffres, 10 au plus").optional(),
     quotePrefix: z.string().trim().regex(/^[A-Za-z0-9]{1,10}$/, "Préfixe : lettres et chiffres, 10 au plus").optional(),

@@ -19,7 +19,7 @@ import {
   resolveCenterScope,
 } from "@/lib/auth";
 import { hasPermission } from "@/lib/rbac";
-import { releaseSessionNumbers } from "@/lib/invoice-numbers";
+import { attachStandbyToSession, releaseSessionNumbers } from "@/lib/invoice-numbers";
 import { releaseSessionReservations } from "@/lib/stock";
 
 const D = Prisma.Decimal;
@@ -65,7 +65,22 @@ export async function POST(req: NextRequest) {
     // ── Ouverture ───────────────────────────────
     if (body.action === "open") {
       await requirePermission(user, "cash:open_session");
-      const { cashRegisterId, openingBalance, deviceId } = parseBody(openSessionSchema, body);
+      const { cashRegisterId, openingBalance, deviceId, clientId, openedAt, standbyDeviceId } = parseBody(openSessionSchema, body);
+
+      // Caisse ouverte hors ligne, renvoyée au retour du réseau : déjà reçue ? (idempotent)
+      if (clientId) {
+        const known = await prisma.cashSession.findUnique({
+          where: { id: clientId },
+          include: { cashRegister: { select: { name: true, centerId: true } }, cashier: { select: { firstName: true, lastName: true } } },
+        });
+        if (known) {
+          if (known.cashierId !== user.id) throw new ApiError(409, "Identifiant de caisse déjà utilisé", "SESSION_ID_TAKEN");
+          return NextResponse.json({ success: true, data: known }, { status: 200 });
+        }
+      }
+      // Heure d'ouverture réelle (sur l'appareil) : jamais dans le futur, au plus 7 jours avant
+      const openedAtSafe =
+        clientId && openedAt && openedAt.getTime() <= Date.now() + 5 * 60_000 && openedAt.getTime() >= Date.now() - 7 * 86_400_000 ? openedAt : undefined;
 
       const register = await prisma.cashRegister.findFirst({
         where: { id: cashRegisterId, center: { companyId } },
@@ -98,6 +113,8 @@ export async function POST(req: NextRequest) {
 
         const created = await tx.cashSession.create({
           data: {
+            ...(clientId ? { id: clientId } : {}),
+            ...(openedAtSafe ? { openedAt: openedAtSafe } : {}),
             cashRegisterId,
             cashierId: user.id,
             openingBalance,
@@ -110,6 +127,8 @@ export async function POST(req: NextRequest) {
           },
         });
         await tx.cashRegister.update({ where: { id: cashRegisterId }, data: { state: "OPEN" } });
+        // Ouverte hors ligne : les numéros réservés sur l'appareil deviennent ceux de la session
+        if (clientId && standbyDeviceId) await attachStandbyToSession(tx, { userId: user.id, deviceId: standbyDeviceId, sessionId: created.id });
 
         await writeAuditLog(
           {
@@ -120,7 +139,7 @@ export async function POST(req: NextRequest) {
             referenceType: "CashSession",
             referenceId: created.id,
             result: "SUCCESS",
-            newValues: { openingBalance, cashRegisterId },
+            newValues: { openingBalance, cashRegisterId, ...(clientId ? { horsLigne: true, openedAt: openedAtSafe ?? null } : {}) },
             deviceId,
             sessionId: created.id,
             ...meta,
@@ -246,7 +265,7 @@ export async function POST(req: NextRequest) {
       });
 
       // Journal de caisse : imprimé ou enregistré par le caissier, gardé pour la direction
-      const journal = await sessionJournal(sessionId);
+      const journal = await sessionJournal(sessionId, { withProfit: hasPermission(user.role, "report:view") });
       notifyManagers({
         companyId,
         centerId: session.cashRegister.centerId,

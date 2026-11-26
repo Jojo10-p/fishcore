@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import type { InvoiceFormat } from "@/lib/invoice-formats";
 import type { Permission } from "@/lib/rbac";
 import { apiGet } from "@/lib/client/api";
 import { getBusinessProfile, type BusinessProfile } from "@/lib/business-profiles";
@@ -20,7 +21,7 @@ export interface SessionData {
     /** Le client se fait servir au magasin sur présentation de sa facture. */
     requiresPickup?: boolean;
     /** Facture imprimée à la caisse : ticket thermique 80 mm ou A4. */
-    invoiceFormat?: "TICKET_80" | "A4" | "A5";
+    invoiceFormat?: InvoiceFormat;
   } | null;
   centers: Array<{ id: string; name: string; code: string; status: string }>;
   permissions: Permission[];
@@ -134,6 +135,13 @@ export function useSession(): SessionContextValue {
 export function clearSessionCache() {
   try {
     localStorage.removeItem(CACHE_KEY);
+  } catch {
+    /* ignore */
+  }
+  // Données gardées pour le hors connexion (tableau de bord, ventes…) : effacées aussi
+  try {
+    navigator.serviceWorker?.controller?.postMessage({ type: "logout" });
+    if (typeof caches !== "undefined") void caches.delete("fishcore-data");
   } catch {
     /* ignore */
   }

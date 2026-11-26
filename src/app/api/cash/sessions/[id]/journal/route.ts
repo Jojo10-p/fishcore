@@ -21,7 +21,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (session.cashierId !== user.id && !hasPermission(user.role, "cash:view_all_sessions")) {
       throw new ApiError(404, "Caisse introuvable");
     }
-    const journal = await sessionJournal(id);
+    const journal = await sessionJournal(id, { withProfit: hasPermission(user.role, "report:view") });
     if (!journal) throw new ApiError(409, "Cette caisse n'est pas encore fermée", "NOT_CLOSED");
     return NextResponse.json({ success: true, data: journal });
   } catch (error) {

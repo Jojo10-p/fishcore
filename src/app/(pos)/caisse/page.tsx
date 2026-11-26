@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import POSInterface, { type SaleSnapshot } from "@/components/pos/pos-interface";
 import { PrintArea, invoiceFileName, printInFrame, snapshotToTicket, useAutoPrint } from "@/components/pos/printing";
+import { asTicketFormat } from "@/lib/invoice-formats";
 import type { TicketData } from "@/components/documents/ticket-80";
 import type { TicketHeader } from "@/lib/offline/db";
 import { getNumbering, refreshNumbering, remainingOf } from "@/lib/offline/numbering";
@@ -17,6 +18,9 @@ import { currencyLabel } from "@/lib/utils";
 import { useOfflineSync } from "@/hooks/use-offline-sync";
 import { apiGet, apiSend, errorMessage } from "@/lib/client/api";
 import { getDeviceId, hasUnsyncedSales } from "@/lib/offline/sales";
+import { OfflineWarmup } from "@/components/pwa/offline-warmup";
+import { getStandby, isOpeningPending, openSessionOffline, refreshStandby } from "@/lib/offline/standby";
+import { syncPendingOperations } from "@/lib/offline/sync";
 
 // ─────────────────────────────────────────────
 // Caisse (cahier §7, §9, §11) — fonctionne aussi sans réseau :
@@ -62,6 +66,7 @@ function storeSession(userId: string, s: OpenSession | null) {
 export default function CaissePage() {
   return (
     <SessionProvider>
+      <OfflineWarmup />
       <Caisse />
     </SessionProvider>
   );
@@ -79,12 +84,17 @@ function Caisse() {
     let cancelled = false;
     const run = async () => {
       const stored = readStoredSession(session.user.id);
+      // Caisse ouverte hors ligne pas encore envoyée : on l'envoie d'abord (avec ses ventes)
+      const pending = stored ? await isOpeningPending(stored.id) : false;
+      if (pending && navigator.onLine) await syncPendingOperations().catch(() => undefined);
       try {
         const res = await apiGet<{
           data: Array<{ id: string; cashierId: string; cashRegisterId: string; openedAt: string; cashRegister: { name: string } }>;
         }>("/api/cash/sessions?open=true");
         const mine = res.data.find((s) => s.cashierId === session.user.id);
         let next: OpenSession | null = null;
+        // Pas encore reçue par le serveur (envoi en attente) : on garde la caisse de l'appareil
+        if (!mine && stored && (await isOpeningPending(stored.id))) next = stored;
         if (mine) {
           const reg = await apiGet<{ data: Register[] }>("/api/cash/registers");
           const register = reg.data.find((r) => r.id === mine.cashRegisterId);
@@ -129,6 +139,7 @@ function Caisse() {
   if (!cashSession) {
     return (
       <OpenSessionScreen
+        userId={session.user.id}
         online={online}
         centers={session.centers}
         centerId={centerId}
@@ -158,6 +169,7 @@ function Caisse() {
 
 // ── Ouverture de session ─────────────────────
 function OpenSessionScreen({
+  userId,
   online,
   centers,
   centerId,
@@ -165,6 +177,7 @@ function OpenSessionScreen({
   currency,
   onOpened,
 }: {
+  userId: string;
   online: boolean;
   centers: Array<{ id: string; name: string; code: string }>;
   centerId: string | null;
@@ -177,6 +190,24 @@ function OpenSessionScreen({
   const [openingBalance, setOpeningBalance] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Réserve hors ligne de l'appareil (caisses, numéros, en-tête)
+  const [standby, setStandby] = useState(() => getStandby(userId));
+  useEffect(() => {
+    if (online) void refreshStandby(userId).then(setStandby);
+  }, [online, userId]);
+  const offlineRegisters = (standby?.registers ?? []).filter((r) => !centerId || r.centerId === centerId);
+  useEffect(() => {
+    if (online) return;
+    const t = setTimeout(() => {
+      const first = offlineRegisters[0];
+      if (first && !registerId) {
+        setRegisterId(first.id);
+        setOpeningBalance(String(Math.round(first.lastClosing)));
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, [online, offlineRegisters, registerId]);
 
   useEffect(() => {
     if (!centerId || !online) return;
@@ -194,6 +225,17 @@ function OpenSessionScreen({
   const open = async () => {
     setBusy(true);
     setError(null);
+    // Sans Internet : la caisse s'ouvre sur l'appareil, le serveur la reçoit au retour du réseau
+    if (!online) {
+      try {
+        onOpened(await openSessionOffline({ userId, registerId, openingBalance: Number(openingBalance || 0) }));
+      } catch (e) {
+        setError(errorMessage(e));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     try {
       const res = await apiSend<{ data: { id: string; cashRegisterId: string; openedAt: string; cashRegister: { name: string; centerId: string } } }>(
         "/api/cash/sessions",
@@ -220,9 +262,15 @@ function OpenSessionScreen({
           <h1 className="text-xl font-bold text-gray-900">Ouvrir ma caisse</h1>
           <ConnectionBadge compact />
         </div>
-        {!online && (
+        {!online && standby && (
           <Alert tone="amber">
-            L&apos;ouverture d&apos;une caisse nécessite une connexion. Elle reste ensuite utilisable hors connexion.
+            Pas d&apos;Internet : la caisse s&apos;ouvre sur cet appareil. Vos ventes et l&apos;ouverture partiront toutes seules au retour du réseau.
+          </Alert>
+        )}
+        {!online && !standby && (
+          <Alert tone="amber">
+            Pas d&apos;Internet, et cet appareil n&apos;a pas encore servi de caisse avec Internet. Ouvrez la caisse une fois avec Internet : ensuite,
+            elle pourra s&apos;ouvrir même sans réseau.
           </Alert>
         )}
         {error && <Alert>{error}</Alert>}
@@ -240,8 +288,17 @@ function OpenSessionScreen({
         )}
 
         <Field label="Caisse">
-          {registers === null ? (
-            <p className="text-sm text-gray-500">{online ? "Chargement des caisses…" : "—"}</p>
+          {!online ? (
+            <Select value={registerId} onChange={(e) => setRegisterId(e.target.value)} disabled={!standby}>
+              <option value="">Choisir une caisse</option>
+              {offlineRegisters.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </Select>
+          ) : registers === null ? (
+            <p className="text-sm text-gray-500">Chargement des caisses…</p>
           ) : (
             <Select value={registerId} onChange={(e) => setRegisterId(e.target.value)}>
               <option value="">Choisir une caisse</option>
@@ -266,8 +323,8 @@ function OpenSessionScreen({
           <Input inputMode="numeric" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" />
         </Field>
 
-        <Button className="w-full" onClick={open} loading={busy} disabled={!online || !registerId}>
-          Ouvrir la session
+        <Button className="w-full" onClick={open} loading={busy} disabled={!registerId || (!online && !standby)}>
+          {online ? "Ouvrir la session" : "Ouvrir la session (hors connexion)"}
         </Button>
         <p className="flex items-center justify-center gap-4 text-center">
           <Link href="/dashboard" className="text-sm text-gray-500 hover:underline">
@@ -304,8 +361,9 @@ function ActiveRegister({
   const [numbersLeft, setNumbersLeft] = useState<number | null>(null);
   const { session, centerId: shopId } = useSession();
   const shop = session?.centers.find((c) => c.id === shopId);
-  // Le ticket 80 mm est le format par défaut ; A4 si l'entreprise l'a choisi
-  const format = header?.company.invoiceFormat ?? session?.company?.invoiceFormat ?? "TICKET_80";
+  // Format choisi dans Paramètres (ticket détaillé, compact, 80×210, 80×297, 58 mm, A5, A4).
+  // Le réglage du serveur passe avant celui gardé sur l'appareil (il peut avoir changé).
+  const format = session?.company?.invoiceFormat ?? header?.company.invoiceFormat ?? "TICKET_80";
 
   // Numérotation et en-tête des tickets gardés sur l'appareil (impression sans connexion)
   const refreshNumbers = useCallback(async () => {
@@ -510,7 +568,7 @@ function ActiveRegister({
         />
       )}
     </div>
-    {printJob && <PrintArea key={printJob.nonce} ticket={printJob.ticket} />}
+    {printJob && <PrintArea key={printJob.nonce} ticket={printJob.ticket} format={asTicketFormat(format)} />}
     </>
   );
 }
@@ -549,6 +607,9 @@ function CloseModal({
       await syncNow();
       if (await hasUnsyncedSales(sessionId)) {
         throw new Error("Des ventes de cette caisse n'ont pas encore été envoyées au serveur. Réessayez quand la connexion est stable.");
+      }
+      if (await isOpeningPending(sessionId)) {
+        throw new Error("Cette caisse a été ouverte sans Internet et n'est pas encore arrivée au serveur. Réessayez quand la connexion est stable.");
       }
       const res = await apiSend<{ data: CloseResult }>(
         "/api/cash/sessions",

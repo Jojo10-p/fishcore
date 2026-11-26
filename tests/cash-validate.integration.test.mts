@@ -109,3 +109,40 @@ test("la direction clôture : validée d'office aussi", async () => {
   const id = await openAndSell(ctx.owner, reg3);
   assert.equal((await prisma.cashSession.findUniqueOrThrow({ where: { id } })).isValidated, true);
 });
+
+test("clôture : ventes, dépenses, reste en caisse et bénéfice net estimé bien séparés", async () => {
+  const expensesRoute = await import("@/app/api/expenses/route");
+  await prisma.stock.updateMany({ where: { productId: ctx.product }, data: { avgCost: 600 } });
+  const s = await call(cashRoute.POST, { path: "/api/cash/sessions", cookie: ctx.cashier, body: { action: "open", cashRegisterId: ctx.reg1, openingBalance: 5000 } });
+  assert.equal(s.status, 201, JSON.stringify(s.json));
+  const sid = s.json.data.id;
+  // 4 × 750 = 3 000 F de ventes (2 000 espèces + 1 000 Mobile Money), achetés 600 F → 600 F de bénéfice
+  const sale = await call(salesRoute.POST, {
+    path: "/api/sales",
+    cookie: ctx.cashier,
+    body: { sessionId: sid, idempotencyKey: randomUUID(), lines: [{ productId: ctx.product, quantity: 4, unitPrice: 750 }], payments: [{ method: "CASH", amount: 2000 }, { method: "MOBILE_MONEY", amount: 1000 }] },
+  });
+  assert.equal(sale.status, 201, JSON.stringify(sale.json));
+  // Dépense de 400 F payée avec la caisse
+  const e = await call(expensesRoute.POST, { path: "/api/expenses", cookie: ctx.cashier, body: { centerId: ctx.center, category: "Transport", amount: 400, sessionId: sid } });
+  assert.equal(e.status, 201, JSON.stringify(e.json));
+  // Reste attendu : 5 000 + 2 000 − 400 = 6 600
+  const c = await call(cashRoute.POST, { path: "/api/cash/sessions", cookie: ctx.cashier, body: { action: "close", sessionId: sid, declaredBalance: 6600 } });
+  assert.equal(c.status, 200, JSON.stringify(c.json));
+  const closed = c.json.data;
+  assert.equal(Number(closed.theoreticalBalance), 6600);
+  assert.equal(Number(closed.discrepancy), 0);
+  assert.equal(Number(closed.journal.totalExpenses), 400);
+  assert.equal(Number(closed.journal.otherCashOut), 0);
+  // Le caissier ne voit pas le bénéfice
+  assert.equal(closed.profit, undefined);
+  // La direction voit le résultat estimé : 3 000 − 2 400 = 600 de bénéfice, − 400 de dépenses = 200 net
+  const j = await call(journalRoute.GET, { path: `/api/cash/sessions/${sid}/journal`, cookie: ctx.owner, params: { id: sid } });
+  assert.equal(j.status, 200, JSON.stringify(j.json));
+  const p = j.json.data.profit;
+  assert.equal(Number(p.revenue), 3000);
+  assert.equal(Number(p.costOfSales), 2400);
+  assert.equal(Number(p.grossProfit), 600);
+  assert.equal(Number(p.expenses), 400);
+  assert.equal(Number(p.netProfit), 200);
+});

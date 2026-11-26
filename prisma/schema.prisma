@@ -836,8 +836,12 @@ model InvoiceNumberBlock {
   last       Int
   sessionId  String?
   releasedAt DateTime?
+  /// Réserve d'un appareil : numéros gardés d'avance pour ouvrir sa caisse sans Internet
+  standbyUserId   String?
+  standbyDeviceId String?
 
   @@index([companyId, sessionId])
+  @@index([standbyUserId, standbyDeviceId])
   @@map("invoice_number_blocks")
 }
 

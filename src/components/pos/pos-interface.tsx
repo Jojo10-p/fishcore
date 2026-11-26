@@ -462,6 +462,7 @@ export default function POSInterface({
         });
         if (!result.success) throw new Error(result.error);
         shortfalls = result.shortfalls ?? [];
+        setStockTick((t) => t + 1); // stock affiché à jour tout de suite, même hors ligne
         return result.saleId!;
       };
 

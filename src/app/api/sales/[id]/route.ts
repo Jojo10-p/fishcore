@@ -60,6 +60,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         vatEnabled: true,
         invoiceNotes: true,
         requiresPickup: true,
+        invoiceFormat: true,
       },
     });
     // Noms des personnes ayant servi la marchandise

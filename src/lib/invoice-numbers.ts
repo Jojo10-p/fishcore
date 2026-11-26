@@ -45,7 +45,7 @@ export async function sessionBlocks(db: Tx | Prisma.DefaultPrismaClient, session
 export async function allocateBlock(tx: Tx, params: { companyId: string; sessionId: string; size?: number }) {
   const company = await lockCompany(tx, params.companyId);
   const free = await tx.invoiceNumberBlock.findFirst({
-    where: { companyId: params.companyId, sessionId: null, prefix: company.invoicePrefix },
+    where: { companyId: params.companyId, sessionId: null, standbyUserId: null, prefix: company.invoicePrefix },
     orderBy: { first: "asc" },
   });
   if (free) {
@@ -125,7 +125,7 @@ export async function releaseSessionNumbers(tx: Tx, params: { companyId: string;
   // Des numéros rendus plus tôt peuvent maintenant toucher la fin : les absorber aussi
   for (;;) {
     const tail = await tx.invoiceNumberBlock.findFirst({
-      where: { companyId: params.companyId, sessionId: null, prefix: company.invoicePrefix, last: counter - 1 },
+      where: { companyId: params.companyId, sessionId: null, standbyUserId: null, prefix: company.invoicePrefix, last: counter - 1 },
     });
     if (!tail) break;
     await tx.invoiceNumberBlock.delete({ where: { id: tail.id } });
@@ -136,4 +136,48 @@ export async function releaseSessionNumbers(tx: Tx, params: { companyId: string;
   }
   await tx.invoiceNumberBlock.updateMany({ where: { id: { in: blocks.map((b) => b.id) } }, data: { releasedAt: new Date() } });
   return { returned: ranges.map((r) => r.range), used: used.length };
+}
+
+// ─────────────────────────────────────────────
+// Réserve de l'appareil : ouvrir sa caisse sans Internet
+// ─────────────────────────────────────────────
+// Tant qu'il y a du réseau, chaque appareil où un caissier travaille garde une
+// petite plage de numéros à son nom. Sans Internet, la caisse s'ouvre sur
+// l'appareil avec cette plage ; au retour du réseau, la session est créée sur le
+// serveur et la plage lui est rattachée (les ventes gardent leurs numéros).
+
+export const STANDBY_SIZE = 50;
+
+/** La réserve de cet appareil pour ce caissier (créée si besoin). */
+export async function ensureStandbyBlock(tx: Tx, params: { companyId: string; userId: string; deviceId: string }) {
+  const existing = await tx.invoiceNumberBlock.findFirst({
+    where: { companyId: params.companyId, sessionId: null, releasedAt: null, standbyUserId: params.userId, standbyDeviceId: params.deviceId },
+    select: { id: true, prefix: true, first: true, last: true },
+  });
+  const company = await lockCompany(tx, params.companyId);
+  // Préfixe changé entre-temps : l'ancienne réserve retourne au stock commun
+  if (existing && existing.prefix === company.invoicePrefix) return existing;
+  if (existing) await tx.invoiceNumberBlock.update({ where: { id: existing.id }, data: { standbyUserId: null, standbyDeviceId: null } });
+  const first = company.invoiceCounter;
+  await tx.company.update({ where: { id: params.companyId }, data: { invoiceCounter: first + STANDBY_SIZE } });
+  return tx.invoiceNumberBlock.create({
+    data: {
+      companyId: params.companyId,
+      prefix: company.invoicePrefix,
+      first,
+      last: first + STANDBY_SIZE - 1,
+      standbyUserId: params.userId,
+      standbyDeviceId: params.deviceId,
+    },
+    select: { id: true, prefix: true, first: true, last: true },
+  });
+}
+
+/** Caisse ouverte hors ligne : la réserve de l'appareil devient la plage de la session. */
+export async function attachStandbyToSession(tx: Tx, params: { userId: string; deviceId: string; sessionId: string }) {
+  const r = await tx.invoiceNumberBlock.updateMany({
+    where: { sessionId: null, releasedAt: null, standbyUserId: params.userId, standbyDeviceId: params.deviceId },
+    data: { sessionId: params.sessionId, standbyUserId: null, standbyDeviceId: null },
+  });
+  return r.count;
 }
