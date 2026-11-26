@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { A4Page, DocumentHeader, type DocCompany, type DocCenter } from "@/components/documents/a4-document";
 import { DailyReportBody, frDay, type DailyReport } from "@/components/reports/daily-report";
 import { apiGet, errorMessage } from "@/lib/client/api";
@@ -11,8 +11,23 @@ type Report = DailyReport & { company: DocCompany; center: DocCenter | null };
 // Rapport journalier à imprimer (A4) : ?date=AAAA-MM-JJ&centerId=…
 function ReportPage() {
   const sp = useSearchParams();
+  const router = useRouter();
   const date = sp.get("date") ?? "";
-  const centerId = sp.get("centerId") ?? "";
+  // Sans boutique dans l'adresse (menu) : la boutique ouverte dans l'application
+  const [savedCenter] = useState(() => {
+    try {
+      return typeof window !== "undefined" ? (localStorage.getItem("fishcore-selected-center") ?? "") : "";
+    } catch {
+      return "";
+    }
+  });
+  const centerId = sp.get("centerId") ?? savedCenter;
+  const pickDate = (d: string) => {
+    if (!d) return;
+    const q = new URLSearchParams({ date: d, ...(centerId ? { centerId } : {}) });
+    setR(null);
+    router.replace(`/rapport-jour?${q}`);
+  };
   const [r, setR] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,7 +45,17 @@ function ReportPage() {
   if (!r) return <p className="p-6 text-sm text-gray-500">Chargement du rapport…</p>;
 
   return (
-    <A4Page>
+    <A4Page
+      toolbar={
+        <input
+          type="date"
+          aria-label="Choisir le jour"
+          value={r.date}
+          onChange={(e) => pickDate(e.target.value)}
+          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+        />
+      }
+    >
       <DocumentHeader
         company={r.company}
         center={r.center}

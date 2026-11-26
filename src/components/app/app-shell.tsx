@@ -40,8 +40,9 @@ const NAV: Array<{ group: string | null; items: NavItem[] }> = [
     group: "Ventes",
     items: [
       { href: "/caisse", label: "Nouvelle vente", icon: "🛒", any: ["sale:create"] },
+      // Un clic : le rapport du jour (boutique ouverte) en A4, prêt à imprimer
+      { href: "/rapport-jour", label: "Rapport de la journée", icon: "🖨️", any: ["report:view"] },
       { href: "/ventes", label: "Ventes & tickets", icon: "🧾", any: ["sale:view"] },
-      { href: "/rapport-journalier", label: "Rapport journalier", icon: "📋", any: ["report:view"] },
       { href: "/annulations", label: "Annulations", icon: "↩️", any: ["sale:cancel_request", "sale:cancel_approve"] },
     ],
   },
