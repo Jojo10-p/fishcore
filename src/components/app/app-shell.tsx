@@ -41,6 +41,7 @@ const NAV: Array<{ group: string | null; items: NavItem[] }> = [
     items: [
       { href: "/caisse", label: "Nouvelle vente", icon: "🛒", any: ["sale:create"] },
       { href: "/ventes", label: "Ventes & tickets", icon: "🧾", any: ["sale:view"] },
+      { href: "/rapport-journalier", label: "Rapport journalier", icon: "📋", any: ["report:view"] },
       { href: "/annulations", label: "Annulations", icon: "↩️", any: ["sale:cancel_request", "sale:cancel_approve"] },
     ],
   },

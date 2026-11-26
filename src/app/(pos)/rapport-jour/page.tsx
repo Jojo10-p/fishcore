@@ -1,0 +1,59 @@
+"use client";
+
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { A4Page, DocumentHeader, type DocCompany, type DocCenter } from "@/components/documents/a4-document";
+import { DailyReportBody, frDay, type DailyReport } from "@/components/reports/daily-report";
+import { apiGet, errorMessage } from "@/lib/client/api";
+
+type Report = DailyReport & { company: DocCompany; center: DocCenter | null };
+
+// Rapport journalier à imprimer (A4) : ?date=AAAA-MM-JJ&centerId=…
+function ReportPage() {
+  const sp = useSearchParams();
+  const date = sp.get("date") ?? "";
+  const centerId = sp.get("centerId") ?? "";
+  const [r, setR] = useState<Report | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const q = new URLSearchParams({ ...(date ? { date } : {}), ...(centerId ? { centerId } : {}) });
+    apiGet<{ data: Report }>(`/api/reports/daily?${q}`)
+      .then((res) => {
+        setR(res.data);
+        document.title = `Rapport journalier ${res.data.date}`;
+      })
+      .catch((e) => setError(errorMessage(e)));
+  }, [date, centerId]);
+
+  if (error) return <p className="p-6 text-sm text-red-700">{error}</p>;
+  if (!r) return <p className="p-6 text-sm text-gray-500">Chargement du rapport…</p>;
+
+  return (
+    <A4Page>
+      <DocumentHeader
+        company={r.company}
+        center={r.center}
+        title="RAPPORT JOURNALIER"
+        number={r.date.split("-").reverse().join("")}
+        meta={[
+          ["Date", <span key="d" className="capitalize">{frDay(r.date)}</span>],
+          ["Boutique", r.center?.name ?? "Toutes"],
+          ["Imprimé le", new Date().toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })],
+          ...(r.printedBy ? ([["Par", r.printedBy]] as Array<[string, string]>) : []),
+        ]}
+      />
+      <div className="mt-6">
+        <DailyReportBody r={r} />
+      </div>
+    </A4Page>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={null}>
+      <ReportPage />
+    </Suspense>
+  );
+}
