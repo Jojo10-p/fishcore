@@ -70,6 +70,9 @@ before(async () => {
   await sell([[ctx.oil, 12, 1000], [ctx.moto, 2, 5000]], "MOBILE_MONEY", 2000);
   await sell([[ctx.moto, 1, 5000]]);
   const gone = await sell([[ctx.oil, 3, 1000]]);
+  const expensesRoute = await import("@/app/api/expenses/route");
+  const e = await call(expensesRoute.POST, { path: "/api/expenses", cookie: ctx.owner, body: { centerId: ctx.center, category: "Transport", amount: 1000, method: "CASH" } });
+  assert.equal(e.status, 201, JSON.stringify(e.json));
   const req = await call(cancelRoute.POST, { path: `/api/sales/${gone}/cancel`, cookie: ctx.owner, params: { id: gone }, body: { action: "request", reason: "Erreur" } });
   const ok = await call(cancelRoute.POST, {
     path: `/api/sales/${gone}/cancel`,
@@ -110,6 +113,12 @@ test("chaque article : quantité, prix unitaire, total ; annulation à part", as
   assert.equal(d.summary.netTotal, 35000);
   assert.equal(d.summary.cancelledCount, 1);
   assert.equal(d.summary.cancelledTotal, 3000);
+  // Bénéfice : achat à 80 % → 37 000 − 2 000 (réduction) = 35 000 de ventes, 22 × 800 + 3 × 4 000 = 29 600 d'achat (la vente annulée ne compte pas)
+  assert.equal(d.profit.salesHT, 35000);
+  assert.equal(d.profit.costOfSales, 29600);
+  assert.equal(d.profit.grossProfit, 5400);
+  assert.equal(d.profit.expenses, 1000);
+  assert.equal(d.profit.netProfit, 4400);
   const pay = Object.fromEntries(d.payments.map((p: Json) => [p.method, p.amount]));
   assert.deepEqual(pay, { CASH: 15000, MOBILE_MONEY: 20000 });
 });

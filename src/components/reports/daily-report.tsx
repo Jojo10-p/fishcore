@@ -17,6 +17,8 @@ export interface DailyReport {
     cancelledTotal: number;
     refunds: number;
   };
+  /** Résultat de la journée (gérant, direction) */
+  profit?: { salesHT: number; costOfSales: number; grossProfit: number; expenses: number; netProfit: number };
   payments: Array<{ method: string; amount: number }>;
   printedBy: string;
 }
@@ -127,6 +129,37 @@ export function DailyReportBody({ r }: { r: DailyReport }) {
           </tbody>
         </table>
       </div>
+
+      {r.profit && (
+        <div className="rounded-lg border-2 border-[#0b1f4b] p-3 text-[12.5px] [break-inside:avoid]">
+          <p className="mb-1.5 font-bold uppercase tracking-wide text-[#0b1f4b]">Bénéfice de la journée</p>
+          <div className="space-y-0.5">
+            <p className="flex justify-between gap-4">
+              <span>Ventes de la journée{r.profit.salesHT !== s.netTotal ? " (hors TVA)" : ""}</span>
+              <span className="tabular-nums">{money(r.profit.salesHT)}</span>
+            </p>
+            <p className="flex justify-between gap-4">
+              <span>− Prix d&apos;achat des articles vendus</span>
+              <span className="tabular-nums">{money(r.profit.costOfSales)}</span>
+            </p>
+            <p className="flex justify-between gap-4 border-t border-gray-300 pt-0.5 font-semibold">
+              <span>= Bénéfice sur les ventes</span>
+              <span className="tabular-nums">{money(r.profit.grossProfit)}</span>
+            </p>
+            <p className="flex justify-between gap-4">
+              <span>− Dépenses de la journée</span>
+              <span className="tabular-nums">{money(r.profit.expenses)}</span>
+            </p>
+          </div>
+          <p
+            className={`mt-2 flex justify-between gap-4 rounded px-2 py-1.5 text-[14px] font-black text-white ${r.profit.netProfit < 0 ? "bg-red-700" : "bg-emerald-700"}`}
+          >
+            <span>{r.profit.netProfit < 0 ? "PERTE DE LA JOURNÉE" : "BÉNÉFICE DE LA JOURNÉE"}</span>
+            <span className="tabular-nums">{money(Math.abs(r.profit.netProfit))}</span>
+          </p>
+          <p className="mt-1 text-[10.5px] text-gray-500">Prix d&apos;achat : celui du stock au moment de chaque vente.</p>
+        </div>
+      )}
     </div>
   );
 }
