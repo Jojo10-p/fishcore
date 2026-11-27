@@ -95,8 +95,15 @@ test("le caissier tire le rapport de sa boutique, sans le bénéfice", async () 
   assert.equal(r.json.data.summary.netTotal, 35000);
   assert.equal(r.json.data.profit, undefined);
   const other = await prisma.center.create({ data: { companyId: (await prisma.company.findFirstOrThrow()).id, name: "Autre", code: "AUT" } });
-  const no = await call(dailyRoute.GET, { path: `/api/reports/daily?date=${today}&centerId=${other.id}`, cookie: ctx.cashier });
-  assert.equal(no.status, 403);
+  // Boutique non autorisée ou inconnue (ancien choix gardé sur l'appareil) : sa propre boutique
+  for (const bad of [other.id, "ancien-id-inexistant"]) {
+    const r2 = await call(dailyRoute.GET, { path: `/api/reports/daily?date=${today}&centerId=${bad}`, cookie: ctx.cashier });
+    assert.equal(r2.status, 200, JSON.stringify(r2.json));
+    assert.equal(r2.json.data.center.name, "Calavi");
+    assert.equal(r2.json.data.summary.netTotal, 35000);
+  }
+  const owner = await call(dailyRoute.GET, { path: `/api/reports/daily?date=${today}&centerId=ancien-id-inexistant`, cookie: ctx.owner });
+  assert.equal(owner.status, 200, JSON.stringify(owner.json));
 });
 
 test("le gérant y a accès", async () => {

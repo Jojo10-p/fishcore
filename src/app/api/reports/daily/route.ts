@@ -40,10 +40,16 @@ export async function GET(req: NextRequest) {
     const tz = company.timezone || "Africa/Porto-Novo";
     const date = sp.get("date") ?? todayIn(tz);
     if (!ISO_DATE.test(date)) throw new ApiError(400, "Date invalide");
+    // Boutique demandée ; une boutique inconnue ou non autorisée (ancien choix gardé sur
+    // l'appareil) est ignorée au lieu de bloquer le rapport.
     let centerId = sp.get("centerId") || null;
+    if (centerId) {
+      const ok = await prisma.center.findFirst({ where: { id: centerId, companyId }, select: { id: true } });
+      if (!ok || (!hasCompanyWideAccess(user) && !user.centerIds.includes(centerId))) centerId = null;
+    }
     if (!centerId && !hasCompanyWideAccess(user)) {
-      // Caissier sans boutique précisée : sa boutique (une seule), sinon il doit choisir
-      if (user.centerIds.length !== 1) throw new ApiError(400, "Choisissez la boutique", "CENTER_REQUIRED");
+      // Caissier : sa boutique (la première s'il en a plusieurs)
+      if (user.centerIds.length === 0) throw new ApiError(400, "Aucune boutique ne vous est affectée", "CENTER_REQUIRED");
       centerId = user.centerIds[0];
     }
     if (centerId) await requireCenterAccess(user, centerId);

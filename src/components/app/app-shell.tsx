@@ -159,7 +159,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               return (
                 <Link
                   key={item.href}
-                  href={item.href}
+                  // Le rapport prend la boutique ouverte dans l'application (déjà vérifiée)
+                  href={item.href === "/rapport-jour" && centerId ? `/rapport-jour?centerId=${centerId}` : item.href}
                   onClick={() => setMenuOpen(false)}
                   aria-current={active ? "page" : undefined}
                   className={cn(

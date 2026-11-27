@@ -41,7 +41,15 @@ function ReportPage() {
       .catch((e) => setError(errorMessage(e)));
   }, [date, centerId]);
 
-  if (error) return <p className="p-6 text-sm text-red-700">{error}</p>;
+  if (error)
+    return (
+      <div className="p-6 text-sm">
+        <p className="text-red-700">{error}</p>
+        <button type="button" onClick={() => router.back()} className="mt-3 rounded-lg border border-gray-300 px-3 py-1.5">
+          ← Retour
+        </button>
+      </div>
+    );
   if (!r) return <p className="p-6 text-sm text-gray-500">Chargement du rapport…</p>;
 
   return (
