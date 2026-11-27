@@ -88,7 +88,7 @@ after(async () => {
   await prisma.$disconnect();
 });
 
-test("le caissier tire le rapport de sa boutique, sans le bénéfice", async () => {
+test("le caissier tire le rapport de sa boutique", async () => {
   const r = await call(dailyRoute.GET, { path: `/api/reports/daily?date=${today}`, cookie: ctx.cashier });
   assert.equal(r.status, 200, JSON.stringify(r.json));
   assert.equal(r.json.data.center.name, "Calavi");
@@ -126,12 +126,7 @@ test("chaque article : quantité, prix unitaire, total ; annulation à part", as
   assert.equal(d.summary.netTotal, 35000);
   assert.equal(d.summary.cancelledCount, 1);
   assert.equal(d.summary.cancelledTotal, 3000);
-  // Bénéfice : achat à 80 % → 37 000 − 2 000 (réduction) = 35 000 de ventes, 22 × 800 + 3 × 4 000 = 29 600 d'achat (la vente annulée ne compte pas)
-  assert.equal(d.profit.salesHT, 35000);
-  assert.equal(d.profit.costOfSales, 29600);
-  assert.equal(d.profit.grossProfit, 5400);
-  assert.equal(d.profit.expenses, 1000);
-  assert.equal(d.profit.netProfit, 4400);
+  assert.equal(d.profit, undefined, "pas de bénéfice dans le rapport : tout le monde y a accès");
   const pay = Object.fromEntries(d.payments.map((p: Json) => [p.method, p.amount]));
   assert.deepEqual(pay, { CASH: 15000, MOBILE_MONEY: 20000 });
 });

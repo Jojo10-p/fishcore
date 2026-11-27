@@ -73,7 +73,18 @@ export function Barcode({ value, height = 38 }: { value: string; height?: number
 }
 
 /** Page A4 (ou A5 : la même mise en page, réduite) + barre d'outils (masquée à l'impression). */
-export function A4Page({ children, toolbar, paper = "A4" }: { children: React.ReactNode; toolbar?: React.ReactNode; paper?: "A4" | "A5" }) {
+export function A4Page({
+  children,
+  toolbar,
+  paper = "A4",
+  responsive = false,
+}: {
+  children: React.ReactNode;
+  toolbar?: React.ReactNode;
+  paper?: "A4" | "A5";
+  /** Marges réduites sur téléphone (l'impression ne change pas) */
+  responsive?: boolean;
+}) {
   const a5 = paper === "A5";
   return (
     <div className="min-h-dvh bg-gray-100 py-6 print:bg-white print:py-0">
@@ -92,7 +103,9 @@ export function A4Page({ children, toolbar, paper = "A4" }: { children: React.Re
           Fermer
         </button>
       </div>
-      <article className="doc-page mx-auto w-full max-w-[210mm] min-h-[297mm] bg-white px-[14mm] py-[12mm] text-[12px] leading-snug text-gray-900 shadow print:min-h-0 print:max-w-none print:p-0 print:shadow-none">
+      <article
+        className={`doc-page mx-auto w-full max-w-[210mm] bg-white text-[12px] ${responsive ? "px-3 py-5 sm:min-h-[297mm] sm:px-[14mm] sm:py-[12mm]" : "min-h-[297mm] px-[14mm] py-[12mm]"} leading-snug text-gray-900 shadow print:min-h-0 print:max-w-none print:p-0 print:shadow-none`}
+      >
         {children}
       </article>
     </div>

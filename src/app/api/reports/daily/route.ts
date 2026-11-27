@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ApiError, getCurrentUser, handleApiError, hasCompanyWideAccess, requireCenterAccess, requireCompany } from "@/lib/auth";
-import { hasPermission } from "@/lib/rbac";
 import { ISO_DATE, periodBounds, todayIn } from "@/lib/time";
 
 const num = (v: Prisma.Decimal | number | bigint | null | undefined) => Number(v ?? 0);
@@ -14,8 +13,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 export async function GET(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
-    // Tout utilisateur de l'entreprise peut tirer le rapport ; le bénéfice reste pour le gérant et la direction
-    const seesProfit = hasPermission(user.role, "report:view");
+    // Tout utilisateur de l'entreprise peut tirer le rapport (pas de bénéfice dedans)
     const companyId = requireCompany(user);
     const sp = req.nextUrl.searchParams;
     const company = await prisma.company.findUniqueOrThrow({
@@ -56,8 +54,7 @@ export async function GET(req: NextRequest) {
     const { start, end } = periodBounds(date, date, tz);
     const centerSql = centerId ? Prisma.sql`AND s."centerId" = ${centerId}` : Prisma.empty;
 
-    const expenseCenterSql = centerId ? Prisma.sql`AND e."centerId" = ${centerId}` : Prisma.empty;
-    const [lines, totals, payments, refunds, cancelled, center, costs, expenses] = await Promise.all([
+    const [lines, totals, payments, refunds, cancelled, center] = await Promise.all([
       // Une ligne par article et par façon de le vendre (bidon, litre, ½ L…) ; prix moyen si plusieurs prix
       prisma.$queryRaw<Array<{ productId: string; name: string; unit: string | null; qty: Prisma.Decimal; total: Prisma.Decimal; sales: bigint; minPrice: Prisma.Decimal; maxPrice: Prisma.Decimal }>>`
         SELECT sl."productId", p."name", u."symbol" AS unit, SUM(sl."quantity") AS qty, SUM(sl."lineTotal") AS total,
@@ -86,14 +83,6 @@ export async function GET(req: NextRequest) {
         SELECT COUNT(*) AS count, SUM(s."totalAmount") AS total FROM "sales" s
          WHERE s."companyId" = ${companyId} AND s."status" = 'CANCELLED' AND s."createdAt" BETWEEN ${start} AND ${end} ${centerSql}`,
       centerId ? prisma.center.findUnique({ where: { id: centerId }, select: { name: true, address: true, city: true, phone: true } }) : null,
-      // Prix d'achat des articles vendus (figé sur chaque ligne au moment de la vente)
-      prisma.$queryRaw<[{ cost: Prisma.Decimal | null }]>`
-        SELECT SUM(sl."costAmount") AS cost FROM "sale_lines" sl JOIN "sales" s ON s."id" = sl."saleId"
-         WHERE s."companyId" = ${companyId} AND s."status" <> 'CANCELLED' AND s."createdAt" BETWEEN ${start} AND ${end} ${centerSql}`,
-      // Dépenses du jour (non annulées)
-      prisma.$queryRaw<[{ amount: Prisma.Decimal | null }]>`
-        SELECT SUM(e."amount") AS amount FROM "expenses" e
-         WHERE e."companyId" = ${companyId} AND e."isCancelled" = FALSE AND e."date" BETWEEN ${start} AND ${end} ${expenseCenterSql}`,
     ]);
 
     const items = lines.map((l) => ({
@@ -107,17 +96,6 @@ export async function GET(req: NextRequest) {
       total: r2(num(l.total)),
     }));
     const t = totals[0];
-    // Bénéfice de la journée : ventes (hors TVA) − prix d'achat des articles vendus − dépenses
-    const salesHT = num(t.total) - num(t.tax);
-    const costOfSales = num(costs[0].cost);
-    const expensesTotal = num(expenses[0].amount);
-    const profit = {
-      salesHT: r2(salesHT),
-      costOfSales: r2(costOfSales),
-      grossProfit: r2(salesHT - costOfSales),
-      expenses: r2(expensesTotal),
-      netProfit: r2(salesHT - costOfSales - expensesTotal),
-    };
     return NextResponse.json({
       success: true,
       data: {
@@ -137,7 +115,6 @@ export async function GET(req: NextRequest) {
           cancelledTotal: r2(num(cancelled[0].total)),
           refunds: r2(num(refunds[0].amount)),
         },
-        ...(seesProfit ? { profit } : {}),
         payments: payments.map((p) => ({ method: p.method, amount: r2(num(p.amount)) })),
         printedBy: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim(),
       },

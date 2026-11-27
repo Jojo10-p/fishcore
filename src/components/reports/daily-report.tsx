@@ -17,8 +17,6 @@ export interface DailyReport {
     cancelledTotal: number;
     refunds: number;
   };
-  /** Résultat de la journée (gérant, direction) */
-  profit?: { salesHT: number; costOfSales: number; grossProfit: number; expenses: number; netProfit: number };
   payments: Array<{ method: string; amount: number }>;
   printedBy: string;
 }
@@ -43,40 +41,40 @@ export function DailyReportBody({ r }: { r: DailyReport }) {
             ["Heures", s.salesCount ? `${hour(s.firstSale)} → ${hour(s.lastSale)}` : "—"],
           ] as const
         ).map(([k, v]) => (
-          <div key={k} className="rounded-lg border border-gray-200 p-2.5">
+          <div key={k} className="rounded-lg border border-gray-200 p-2.5 text-center">
             <p className="text-[11px] uppercase tracking-wide text-gray-500">{k}</p>
             <p className="text-base font-bold text-gray-900">{v}</p>
           </div>
         ))}
       </div>
 
-      <table className="w-full border-collapse text-[12.5px]">
+      <table className="w-full border-collapse text-[11.5px] sm:text-[12.5px]">
         <thead>
           <tr className="bg-[#0b1f4b] text-left text-white print:bg-[#0b1f4b]">
-            <th className="px-2 py-1.5 font-semibold">N°</th>
-            <th className="px-2 py-1.5 font-semibold">Article</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Quantité vendue</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Prix unitaire</th>
-            <th className="px-2 py-1.5 text-right font-semibold">Total</th>
+            <th className="hidden px-1.5 py-1.5 sm:px-2 font-semibold sm:table-cell">N°</th>
+            <th className="px-1.5 py-1.5 sm:px-2 font-semibold">Article</th>
+            <th className="px-1.5 py-1.5 text-right font-semibold sm:px-2">Qté vendue</th>
+            <th className="px-1.5 py-1.5 text-right font-semibold sm:px-2">Prix unit.</th>
+            <th className="px-1.5 py-1.5 sm:px-2 text-right font-semibold">Total</th>
           </tr>
         </thead>
         <tbody>
           {r.items.map((i, k) => (
             <tr key={`${i.productId}-${i.unit}`} className="border-b border-gray-200 [break-inside:avoid]">
-              <td className="px-2 py-1.5 text-gray-500">{k + 1}</td>
-              <td className="px-2 py-1.5">
+              <td className="hidden px-1.5 py-1.5 sm:px-2 text-gray-500 sm:table-cell">{k + 1}</td>
+              <td className="px-1.5 py-1.5 sm:px-2">
                 <span className="font-medium">{i.name}</span>
                 <span className="block text-[11px] text-gray-500">
                   {i.sales} vente{i.sales > 1 ? "s" : ""}
                 </span>
               </td>
-              <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
+              <td className="px-1.5 py-1.5 sm:px-2 text-right tabular-nums whitespace-nowrap">
                 <strong>{qty(i.quantity)}</strong> {i.unit ?? ""}
               </td>
-              <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
+              <td className="px-1.5 py-1.5 sm:px-2 text-right tabular-nums whitespace-nowrap">
                 {i.unitPrice !== null ? money(i.unitPrice) : <span title="Plusieurs prix dans la journée">{money(i.averagePrice)} (moy.)</span>}
               </td>
-              <td className="px-2 py-1.5 text-right font-semibold tabular-nums whitespace-nowrap">{money(i.total)}</td>
+              <td className="px-1.5 py-1.5 sm:px-2 text-right font-semibold tabular-nums whitespace-nowrap">{money(i.total)}</td>
             </tr>
           ))}
           {r.items.length === 0 && (
@@ -130,36 +128,6 @@ export function DailyReportBody({ r }: { r: DailyReport }) {
         </table>
       </div>
 
-      {r.profit && (
-        <div className="rounded-lg border-2 border-[#0b1f4b] p-3 text-[12.5px] [break-inside:avoid]">
-          <p className="mb-1.5 font-bold uppercase tracking-wide text-[#0b1f4b]">Bénéfice de la journée</p>
-          <div className="space-y-0.5">
-            <p className="flex justify-between gap-4">
-              <span>Ventes de la journée{r.profit.salesHT !== s.netTotal ? " (hors TVA)" : ""}</span>
-              <span className="tabular-nums">{money(r.profit.salesHT)}</span>
-            </p>
-            <p className="flex justify-between gap-4">
-              <span>− Prix d&apos;achat des articles vendus</span>
-              <span className="tabular-nums">{money(r.profit.costOfSales)}</span>
-            </p>
-            <p className="flex justify-between gap-4 border-t border-gray-300 pt-0.5 font-semibold">
-              <span>= Bénéfice sur les ventes</span>
-              <span className="tabular-nums">{money(r.profit.grossProfit)}</span>
-            </p>
-            <p className="flex justify-between gap-4">
-              <span>− Dépenses de la journée</span>
-              <span className="tabular-nums">{money(r.profit.expenses)}</span>
-            </p>
-          </div>
-          <p
-            className={`mt-2 flex justify-between gap-4 rounded px-2 py-1.5 text-[14px] font-black text-white ${r.profit.netProfit < 0 ? "bg-red-700" : "bg-emerald-700"}`}
-          >
-            <span>{r.profit.netProfit < 0 ? "PERTE DE LA JOURNÉE" : "BÉNÉFICE DE LA JOURNÉE"}</span>
-            <span className="tabular-nums">{money(Math.abs(r.profit.netProfit))}</span>
-          </p>
-          <p className="mt-1 text-[10.5px] text-gray-500">Prix d&apos;achat : celui du stock au moment de chaque vente.</p>
-        </div>
-      )}
     </div>
   );
 }
