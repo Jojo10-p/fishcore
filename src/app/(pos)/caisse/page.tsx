@@ -470,6 +470,15 @@ function ActiveRegister({
         <input type="checkbox" checked={autoPrint} onChange={(e) => setAutoPrint(e.target.checked)} />
         Impression auto
       </label>
+      {online && (
+        <Link
+          href={`/rapport-jour?centerId=${cashSession.centerId}`}
+          target="_blank"
+          className="rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          📋 Rapport du jour
+        </Link>
+      )}
       <Button variant="secondary" className="px-3 py-1.5" onClick={() => setShowExpense(true)} disabled={!online}>
         💸 Dépense
       </Button>

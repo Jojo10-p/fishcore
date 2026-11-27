@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { ApiError, getCurrentUser, handleApiError, requireCenterAccess, requireCompany, requirePermission } from "@/lib/auth";
+import { ApiError, getCurrentUser, handleApiError, hasCompanyWideAccess, requireCenterAccess, requireCompany } from "@/lib/auth";
+import { hasPermission } from "@/lib/rbac";
 import { ISO_DATE, periodBounds, todayIn } from "@/lib/time";
 
 const num = (v: Prisma.Decimal | number | bigint | null | undefined) => Number(v ?? 0);
@@ -13,7 +14,8 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 export async function GET(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
-    await requirePermission(user, "report:view");
+    // Tout utilisateur de l'entreprise peut tirer le rapport ; le bénéfice reste pour le gérant et la direction
+    const seesProfit = hasPermission(user.role, "report:view");
     const companyId = requireCompany(user);
     const sp = req.nextUrl.searchParams;
     const company = await prisma.company.findUniqueOrThrow({
@@ -38,7 +40,12 @@ export async function GET(req: NextRequest) {
     const tz = company.timezone || "Africa/Porto-Novo";
     const date = sp.get("date") ?? todayIn(tz);
     if (!ISO_DATE.test(date)) throw new ApiError(400, "Date invalide");
-    const centerId = sp.get("centerId") || null;
+    let centerId = sp.get("centerId") || null;
+    if (!centerId && !hasCompanyWideAccess(user)) {
+      // Caissier sans boutique précisée : sa boutique (une seule), sinon il doit choisir
+      if (user.centerIds.length !== 1) throw new ApiError(400, "Choisissez la boutique", "CENTER_REQUIRED");
+      centerId = user.centerIds[0];
+    }
     if (centerId) await requireCenterAccess(user, centerId);
     const { start, end } = periodBounds(date, date, tz);
     const centerSql = centerId ? Prisma.sql`AND s."centerId" = ${centerId}` : Prisma.empty;
@@ -124,7 +131,7 @@ export async function GET(req: NextRequest) {
           cancelledTotal: r2(num(cancelled[0].total)),
           refunds: r2(num(refunds[0].amount)),
         },
-        profit,
+        ...(seesProfit ? { profit } : {}),
         payments: payments.map((p) => ({ method: p.method, amount: r2(num(p.amount)) })),
         printedBy: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim(),
       },

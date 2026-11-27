@@ -88,9 +88,15 @@ after(async () => {
   await prisma.$disconnect();
 });
 
-test("réservé au gérant et à la direction", async () => {
+test("le caissier tire le rapport de sa boutique, sans le bénéfice", async () => {
   const r = await call(dailyRoute.GET, { path: `/api/reports/daily?date=${today}`, cookie: ctx.cashier });
-  assert.equal(r.status, 403);
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.data.center.name, "Calavi");
+  assert.equal(r.json.data.summary.netTotal, 35000);
+  assert.equal(r.json.data.profit, undefined);
+  const other = await prisma.center.create({ data: { companyId: (await prisma.company.findFirstOrThrow()).id, name: "Autre", code: "AUT" } });
+  const no = await call(dailyRoute.GET, { path: `/api/reports/daily?date=${today}&centerId=${other.id}`, cookie: ctx.cashier });
+  assert.equal(no.status, 403);
 });
 
 test("le gérant y a accès", async () => {

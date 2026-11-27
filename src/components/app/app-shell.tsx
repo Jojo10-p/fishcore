@@ -27,6 +27,8 @@ interface NavItem {
   pickupOnly?: boolean;
   /** Réservé à ces rôles (en plus des permissions) */
   roles?: string[];
+  /** Bouton mis en avant (bien visible en haut du menu) */
+  highlight?: boolean;
 }
 
 // Chaque rôle ne voit que ce qui sert à son travail (cahier §2.1, §20)
@@ -35,13 +37,18 @@ interface NavItem {
 // Édition GJH : menu réduit à l'essentiel (vendre, ajouter du stock, suivre).
 // Les autres écrans existent toujours mais ne sont plus dans le menu.
 const NAV: Array<{ group: string | null; items: NavItem[] }> = [
-  { group: null, items: [{ href: "/dashboard", label: "Tableau de bord", icon: "📊", any: ["dashboard:view"] }] },
+  {
+    group: null,
+    items: [
+      { href: "/dashboard", label: "Tableau de bord", icon: "📊", any: ["dashboard:view"] },
+      // Pour tout le monde, bien en vue : un clic → le rapport du jour (boutique ouverte) en A4, prêt à imprimer
+      { href: "/rapport-jour", label: "Rapport de la journée", icon: "🖨️", any: [], highlight: true },
+    ],
+  },
   {
     group: "Ventes",
     items: [
       { href: "/caisse", label: "Nouvelle vente", icon: "🛒", any: ["sale:create"] },
-      // Un clic : le rapport du jour (boutique ouverte) en A4, prêt à imprimer
-      { href: "/rapport-jour", label: "Rapport de la journée", icon: "🖨️", any: ["report:view"] },
       { href: "/ventes", label: "Ventes & tickets", icon: "🧾", any: ["sale:view"] },
       { href: "/annulations", label: "Annulations", icon: "↩️", any: ["sale:cancel_request", "sale:cancel_approve"] },
     ],
@@ -157,7 +164,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   aria-current={active ? "page" : undefined}
                   className={cn(
                     "flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
-                    active ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-100"
+                    item.highlight
+                      ? "my-1 bg-amber-400 font-semibold text-[#0b1f4b] shadow-sm hover:bg-amber-300"
+                      : active
+                        ? "bg-blue-50 text-blue-700"
+                        : "text-gray-700 hover:bg-gray-100"
                   )}
                 >
                   <span aria-hidden>{item.icon}</span>

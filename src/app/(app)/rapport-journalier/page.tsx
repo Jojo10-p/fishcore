@@ -8,14 +8,13 @@ import { apiGet, errorMessage } from "@/lib/client/api";
 
 // Rapport journalier : le point de la journée sans imprimer chaque facture.
 export default function DailyReportPage() {
-  const { centerId, can } = useSession();
+  const { centerId } = useSession();
   const [date, setDate] = useState(() => new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Porto-Novo" }).format(new Date()));
   const [r, setR] = useState<DailyReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const query = new URLSearchParams({ date, ...(centerId ? { centerId } : {}) }).toString();
 
   useEffect(() => {
-    if (!can("report:view")) return;
     let alive = true;
     const t = setTimeout(async () => {
       try {
@@ -32,9 +31,8 @@ export default function DailyReportPage() {
       alive = false;
       clearTimeout(t);
     };
-  }, [query, can]);
+  }, [query]);
 
-  if (!can("report:view")) return <Alert tone="amber">Le rapport journalier est réservé au gérant et à la direction.</Alert>;
 
   return (
     <>
